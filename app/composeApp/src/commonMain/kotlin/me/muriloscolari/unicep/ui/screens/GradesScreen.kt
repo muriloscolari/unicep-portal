@@ -7,6 +7,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
@@ -67,6 +68,8 @@ data class UnifiedSubject(
     val report: ReportCardItem?
 )
 
+private fun ReportCardItem.isFrequencyAtLimit(): Boolean = hours > 0 && remainingAbsences <= 3
+
 @Composable
 fun SemesterScreen(
     dashboard: DashboardResponse?,
@@ -76,9 +79,12 @@ fun SemesterScreen(
     report: ReportCardResponse,
     unreadNotifications: List<NotificationItem>,
     selectedSubjectCode: String?,
+    showRiskyAttendance: Boolean,
     onSelectPeriod: (String) -> Unit,
     onOpenSubject: (String) -> Unit,
     onCloseSubject: () -> Unit,
+    onOpenRiskyAttendance: () -> Unit,
+    onCloseRiskyAttendance: () -> Unit,
     onOpenNotifications: () -> Unit
 ) {
     val colors = LocalPortalColors.current
@@ -100,8 +106,10 @@ fun SemesterScreen(
         }
     }
 
-    val riskyCount = remember(report.items) {
-        report.items.count { it.hours > 0 && it.remainingAbsences <= 3 }
+    val riskySubjects = remember(mergedSubjects) {
+        mergedSubjects
+            .filter { it.report?.isFrequencyAtLimit() == true }
+            .sortedBy { it.report?.remainingAbsences ?: Int.MAX_VALUE }
     }
 
     val studentFirstName = remember(dashboard?.student?.name) {
@@ -179,12 +187,36 @@ fun SemesterScreen(
                             style = tabularNumberStyle(MaterialTheme.typography.headlineSmall)
                         )
                     }
-                    PortalCard(modifier = Modifier.weight(1f), contentPadding = PaddingValues(14.dp)) {
-                        Text("Frequência", color = colors.textSecondary, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
+                    val hasRisky = riskySubjects.isNotEmpty()
+                    val alertColor = when {
+                        !hasRisky -> colors.green
+                        riskySubjects.any { (it.report?.remainingAbsences ?: 1) <= 0 } -> colors.red
+                        else -> colors.orange
+                    }
+                    PortalCard(
+                        modifier = Modifier.weight(1f),
+                        onClick = if (hasRisky) onOpenRiskyAttendance else null,
+                        contentPadding = PaddingValues(14.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Frequência", color = colors.textSecondary, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
+                            if (hasRisky) {
+                                Icon(
+                                    imageVector = PortalIcons.ChevronRight,
+                                    contentDescription = "Ver disciplinas no limite",
+                                    tint = alertColor,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            text = if (riskyCount == 0) "Tranquila" else "$riskyCount no limite",
-                            color = if (riskyCount == 0) colors.green else colors.orange,
+                            text = if (!hasRisky) "Tranquila" else "${riskySubjects.size} no limite",
+                            color = alertColor,
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1
@@ -252,10 +284,15 @@ fun SemesterScreen(
         }
 
         val activeSubject = mergedSubjects.firstOrNull { it.code == selectedSubjectCode }
-        if (activeSubject != null) {
-            SubjectDetailModal(
+        when {
+            activeSubject != null -> SubjectDetailModal(
                 subject = activeSubject,
                 onDismiss = onCloseSubject
+            )
+            showRiskyAttendance && riskySubjects.isNotEmpty() -> AttendanceLimitModal(
+                subjects = riskySubjects,
+                onSelectSubject = onOpenSubject,
+                onDismiss = onCloseRiskyAttendance
             )
         }
     }
@@ -346,64 +383,70 @@ private fun UnifiedSubjectCard(
         }
 
         if (report != null && report.maxAbsences > 0) {
-            val ratio = (report.absences.toFloat() / report.maxAbsences.toFloat()).coerceIn(0f, 1f)
-            val barColor = when {
-                report.remainingAbsences <= 0 -> colors.red
-                ratio >= 0.75f -> colors.orange
-                else -> colors.green
-            }
             Spacer(Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Faltas: ${report.absences}/${report.maxAbsences}" +
-                        (report.freqPercent?.let { " • ${it.toInt()}% freq." } ?: ""),
-                    color = colors.textSecondary,
-                    fontSize = 12.sp
-                )
-                Text(
-                    text = if (report.remainingAbsences >= 0) "Restam ${report.remainingAbsences}" else "Excedeu ${-report.remainingAbsences}",
-                    color = if (report.remainingAbsences <= 3) barColor else colors.textSecondary,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium
-                )
-            }
-            Spacer(Modifier.height(5.dp))
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(5.dp)
-                    .clip(CircleShape)
-                    .background(colors.surfaceSecondary)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(ratio)
-                        .fillMaxHeight()
-                        .clip(CircleShape)
-                        .background(barColor)
-                )
-            }
+            AttendanceProgressBlock(report = report)
         }
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SubjectDetailModal(
-    subject: UnifiedSubject,
-    onDismiss: () -> Unit
+private fun AttendanceProgressBlock(report: ReportCardItem) {
+    val colors = LocalPortalColors.current
+    val ratio = (report.absences.toFloat() / report.maxAbsences.toFloat()).coerceIn(0f, 1f)
+    val barColor = when {
+        report.remainingAbsences <= 0 -> colors.red
+        ratio >= 0.75f || report.remainingAbsences <= 3 -> colors.orange
+        else -> colors.green
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "Faltas: ${report.absences}/${report.maxAbsences}" +
+                (report.freqPercent?.let { " • ${it.toInt()}% freq." } ?: ""),
+            color = colors.textSecondary,
+            fontSize = 12.sp
+        )
+        Text(
+            text = when {
+                report.remainingAbsences < 0 -> "Excedeu ${-report.remainingAbsences}"
+                report.remainingAbsences == 0 -> "Sem margem"
+                else -> "Restam ${report.remainingAbsences}"
+            },
+            color = if (report.remainingAbsences <= 3) barColor else colors.textSecondary,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium
+        )
+    }
+    Spacer(Modifier.height(5.dp))
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(5.dp)
+            .clip(CircleShape)
+            .background(colors.surfaceSecondary)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(ratio)
+                .fillMaxHeight()
+                .clip(CircleShape)
+                .background(barColor)
+        )
+    }
+}
+
+@Composable
+private fun PortalOverlayModal(
+    title: String,
+    subtitle: String?,
+    onDismiss: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit
 ) {
     val colors = LocalPortalColors.current
     val style = LocalDesignStyle.current
-    val grade = subject.grade
-    val report = subject.report
-    val slots = remember(grade) { buildEvalSlots(grade) }
-    val sim = remember(slots) { computeNeededGrade(slots, targetAvg = 6.0) }
-
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -442,16 +485,11 @@ private fun SubjectDetailModal(
                     verticalAlignment = Alignment.Top
                 ) {
                     Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                        Text(subject.name, color = colors.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                        Text(
-                            text = listOfNotNull(
-                                subject.code,
-                                report?.classGroup?.takeIf { it.isNotBlank() },
-                                report?.statusLabel?.takeIf { it.isNotBlank() }
-                            ).joinToString(" • "),
-                            color = colors.textSecondary,
-                            fontSize = 12.sp
-                        )
+                        Text(title, color = colors.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        if (!subtitle.isNullOrBlank()) {
+                            Spacer(Modifier.height(2.dp))
+                            Text(subtitle, color = colors.textSecondary, fontSize = 12.sp)
+                        }
                     }
                     IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
                         Icon(PortalIcons.Close, contentDescription = "Fechar", tint = colors.textSecondary)
@@ -462,74 +500,176 @@ private fun SubjectDetailModal(
                 PortalDivider()
                 Spacer(Modifier.height(14.dp))
 
-                Text("Avaliações e Pesos", color = colors.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(8.dp))
-                if (slots.isEmpty()) {
-                    Text("Aguardando lançamento de notas ou pesos nesta disciplina.", color = colors.textSecondary, fontSize = 13.sp)
-                } else {
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        slots.forEach { slot ->
-                            Column(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(colors.surfaceSecondary.copy(alpha = 0.72f))
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                Text(
-                                    text = if (slot.weightDisplay.isNotBlank()) "${slot.label} (${slot.weightDisplay}%)" else slot.label,
-                                    color = colors.textSecondary,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Spacer(Modifier.height(2.dp))
-                                Text(
-                                    text = slot.gradeDisplay.ifBlank { "—" },
-                                    color = if (slot.gradeDisplay.isBlank()) colors.textSecondary else colors.textPrimary,
-                                    fontSize = 17.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    style = tabularNumberStyle(MaterialTheme.typography.titleMedium)
-                                )
-                            }
-                        }
-                    }
+                content()
+            }
+        }
+    }
+}
+
+@Composable
+private fun AttendanceLimitModal(
+    subjects: List<UnifiedSubject>,
+    onSelectSubject: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val colors = LocalPortalColors.current
+    val countLabel = if (subjects.size == 1) "1 disciplina" else "${subjects.size} disciplinas"
+    PortalOverlayModal(
+        title = "Frequência no limite",
+        subtitle = "$countLabel com até 3 faltas restantes",
+        onDismiss = onDismiss
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            subjects.forEach { subject ->
+                val report = subject.report ?: return@forEach
+                val badgeColor = if (report.remainingAbsences <= 0) colors.red else colors.orange
+                val badgeText = when {
+                    report.remainingAbsences < 0 -> "Excedeu ${-report.remainingAbsences}"
+                    report.remainingAbsences == 0 -> "Sem margem"
+                    report.remainingAbsences == 1 -> "Resta 1 falta"
+                    else -> "Restam ${report.remainingAbsences} faltas"
                 }
 
-                if (sim != null) {
-                    Spacer(Modifier.height(14.dp))
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(colors.accentSoft)
-                            .padding(12.dp)
+                PortalCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { onSelectSubject(subject.code) },
+                    contentPadding = PaddingValues(14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.Top
                     ) {
-                        Column {
-                            Text("Simulador Automático (Meta 6,0)", color = colors.accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                            Spacer(Modifier.height(3.dp))
-                            Text(sim, color = colors.textPrimary, fontSize = 13.sp)
+                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                            Text(
+                                text = subject.name,
+                                color = colors.textPrimary,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = listOfNotNull(
+                                    subject.code,
+                                    report.classGroup.takeIf { it.isNotBlank() },
+                                    "${report.hours}h"
+                                ).joinToString(" • "),
+                                color = colors.textSecondary,
+                                fontSize = 12.sp
+                            )
                         }
+                        PortalBadge(badgeText, badgeColor)
                     }
-                }
 
-                if (report != null) {
-                    Spacer(Modifier.height(16.dp))
-                    Text("Frequência e Boletim", color = colors.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(8.dp))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        DetailMetric("Média Final", report.finalAverage.ifBlank { "—" })
-                        DetailMetric("Carga Horária", "${report.hours}h")
-                        DetailMetric("Faltas", "${report.absences}/${if (report.maxAbsences > 0) report.maxAbsences else "—"}")
-                        DetailMetric("Frequência", report.freqPercent?.let { "${it.toInt()}%" } ?: "—")
-                    }
-                    if (report.updatedAt.isNotBlank()) {
+                    if (report.maxAbsences > 0) {
+                        Spacer(Modifier.height(10.dp))
+                        AttendanceProgressBlock(report = report)
+                    } else {
                         Spacer(Modifier.height(8.dp))
-                        Text("Faltas atualizadas em: ${report.updatedAt}", color = colors.textSecondary, fontSize = 12.sp)
+                        Text(
+                            text = "Faltas: ${report.absences}" +
+                                (report.freqPercent?.let { " • ${it.toInt()}% freq." } ?: ""),
+                            color = colors.textSecondary,
+                            fontSize = 12.sp
+                        )
+                    }
+
+                    if (report.updatedAt.isNotBlank()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text("Atualizado em: ${report.updatedAt}", color = colors.textSecondary, fontSize = 11.sp)
                     }
                 }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SubjectDetailModal(
+    subject: UnifiedSubject,
+    onDismiss: () -> Unit
+) {
+    val colors = LocalPortalColors.current
+    val grade = subject.grade
+    val report = subject.report
+    val slots = remember(grade) { buildEvalSlots(grade) }
+    val sim = remember(slots) { computeNeededGrade(slots, targetAvg = 6.0) }
+
+    PortalOverlayModal(
+        title = subject.name,
+        subtitle = listOfNotNull(
+            subject.code,
+            report?.classGroup?.takeIf { it.isNotBlank() },
+            report?.statusLabel?.takeIf { it.isNotBlank() }
+        ).joinToString(" • "),
+        onDismiss = onDismiss
+    ) {
+        Text("Avaliações e Pesos", color = colors.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+        if (slots.isEmpty()) {
+            Text("Aguardando lançamento de notas ou pesos nesta disciplina.", color = colors.textSecondary, fontSize = 13.sp)
+        } else {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                slots.forEach { slot ->
+                    Column(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(colors.surfaceSecondary.copy(alpha = 0.72f))
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = if (slot.weightDisplay.isNotBlank()) "${slot.label} (${slot.weightDisplay}%)" else slot.label,
+                            color = colors.textSecondary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = slot.gradeDisplay.ifBlank { "—" },
+                            color = if (slot.gradeDisplay.isBlank()) colors.textSecondary else colors.textPrimary,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            style = tabularNumberStyle(MaterialTheme.typography.titleMedium)
+                        )
+                    }
+                }
+            }
+        }
+
+        if (sim != null) {
+            Spacer(Modifier.height(14.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(colors.accentSoft)
+                    .padding(12.dp)
+            ) {
+                Column {
+                    Text("Simulador Automático (Meta 6,0)", color = colors.accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(3.dp))
+                    Text(sim, color = colors.textPrimary, fontSize = 13.sp)
+                }
+            }
+        }
+
+        if (report != null) {
+            Spacer(Modifier.height(16.dp))
+            Text("Frequência e Boletim", color = colors.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                DetailMetric("Média Final", report.finalAverage.ifBlank { "—" })
+                DetailMetric("Carga Horária", "${report.hours}h")
+                DetailMetric("Faltas", "${report.absences}/${if (report.maxAbsences > 0) report.maxAbsences else "—"}")
+                DetailMetric("Frequência", report.freqPercent?.let { "${it.toInt()}%" } ?: "—")
+            }
+            if (report.updatedAt.isNotBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Text("Faltas atualizadas em: ${report.updatedAt}", color = colors.textSecondary, fontSize = 12.sp)
             }
         }
     }

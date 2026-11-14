@@ -80,10 +80,21 @@ fun App(initialTab: Int = 0) {
     var currentTab by remember { mutableStateOf(MainTab.entries.getOrElse(initialTab) { MainTab.SEMESTER }) }
     var courseSubTab by remember { mutableStateOf(0) }
     var selectedSubjectCode by remember { mutableStateOf<String?>(null) }
+    var showRiskyAttendanceModal by remember { mutableStateOf(false) }
     var suppressHistoryPush by remember { mutableStateOf(false) }
 
+    fun navigateToTab(tab: MainTab) {
+        selectedSubjectCode = null
+        showRiskyAttendanceModal = false
+        currentTab = tab
+    }
+
     fun encodeRoute(): String = when (currentTab) {
-        MainTab.SEMESTER -> if (!selectedSubjectCode.isNullOrBlank()) "semestre/subject/$selectedSubjectCode" else "semestre"
+        MainTab.SEMESTER -> when {
+            !selectedSubjectCode.isNullOrBlank() -> "semestre/subject/$selectedSubjectCode"
+            showRiskyAttendanceModal -> "semestre/frequencia-limite"
+            else -> "semestre"
+        }
         MainTab.COURSE -> "curso/$courseSubTab"
         MainTab.CENTRAL -> "central"
     }
@@ -93,20 +104,29 @@ fun App(initialTab: Int = 0) {
         when {
             route.startsWith("semestre/subject/") -> {
                 currentTab = MainTab.SEMESTER
+                showRiskyAttendanceModal = false
                 selectedSubjectCode = route.removePrefix("semestre/subject/").ifBlank { null }
+            }
+            route == "semestre/frequencia-limite" -> {
+                currentTab = MainTab.SEMESTER
+                selectedSubjectCode = null
+                showRiskyAttendanceModal = true
             }
             route == "semestre" -> {
                 currentTab = MainTab.SEMESTER
                 selectedSubjectCode = null
+                showRiskyAttendanceModal = false
             }
             route.startsWith("curso") -> {
                 currentTab = MainTab.COURSE
                 selectedSubjectCode = null
+                showRiskyAttendanceModal = false
                 courseSubTab = route.substringAfter('/', "0").toIntOrNull()?.coerceIn(0, 2) ?: 0
             }
             route == "central" -> {
                 currentTab = MainTab.CENTRAL
                 selectedSubjectCode = null
+                showRiskyAttendanceModal = false
             }
         }
     }
@@ -124,6 +144,10 @@ fun App(initialTab: Int = 0) {
                     selectedSubjectCode = null
                     true
                 }
+                showRiskyAttendanceModal -> {
+                    showRiskyAttendanceModal = false
+                    true
+                }
                 currentTab != MainTab.SEMESTER -> {
                     currentTab = MainTab.SEMESTER
                     true
@@ -136,7 +160,7 @@ fun App(initialTab: Int = 0) {
         }
     }
 
-    LaunchedEffect(currentTab, courseSubTab, selectedSubjectCode, state.loggedIn) {
+    LaunchedEffect(currentTab, courseSubTab, selectedSubjectCode, showRiskyAttendanceModal, state.loggedIn) {
         if (!state.loggedIn) return@LaunchedEffect
         val route = encodeRoute()
         if (suppressHistoryPush) {
@@ -202,10 +226,7 @@ fun App(initialTab: Int = 0) {
                                 }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Box {
-                                        IconButton(onClick = {
-                                            selectedSubjectCode = null
-                                            currentTab = MainTab.CENTRAL
-                                        }) {
+                                        IconButton(onClick = { navigateToTab(MainTab.CENTRAL) }) {
                                             Icon(PortalIcons.Bell, contentDescription = "Central e Notificações", tint = colors.accent)
                                         }
                                         if (unreadCount > 0) {
@@ -268,13 +289,23 @@ fun App(initialTab: Int = 0) {
                                 report = state.report ?: state.dashboard?.currentReport ?: ReportCardResponse(),
                                 unreadNotifications = state.notifications.filter { it.readAt == null },
                                 selectedSubjectCode = selectedSubjectCode,
-                                onSelectPeriod = { id -> scope.launch { repo.selectSemesterPeriod(id) } },
-                                onOpenSubject = { code -> selectedSubjectCode = code },
-                                onCloseSubject = { selectedSubjectCode = null },
-                                onOpenNotifications = {
+                                showRiskyAttendance = showRiskyAttendanceModal,
+                                onSelectPeriod = { id ->
                                     selectedSubjectCode = null
-                                    currentTab = MainTab.CENTRAL
-                                }
+                                    showRiskyAttendanceModal = false
+                                    scope.launch { repo.selectSemesterPeriod(id) }
+                                },
+                                onOpenSubject = { code ->
+                                    showRiskyAttendanceModal = false
+                                    selectedSubjectCode = code
+                                },
+                                onCloseSubject = { selectedSubjectCode = null },
+                                onOpenRiskyAttendance = {
+                                    selectedSubjectCode = null
+                                    showRiskyAttendanceModal = true
+                                },
+                                onCloseRiskyAttendance = { showRiskyAttendanceModal = false },
+                                onOpenNotifications = { navigateToTab(MainTab.CENTRAL) }
                             )
 
                             MainTab.COURSE -> AcademicScreen(
@@ -307,10 +338,7 @@ fun App(initialTab: Int = 0) {
                             DesktopSideNav(
                                 style = style,
                                 currentTab = currentTab,
-                                onSelect = {
-                                    selectedSubjectCode = null
-                                    currentTab = it
-                                }
+                                onSelect = { navigateToTab(it) }
                             )
                             Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
                                 topBar()
@@ -328,10 +356,7 @@ fun App(initialTab: Int = 0) {
                                             MainTab.entries.forEach { tab ->
                                                 NavigationBarItem(
                                                     selected = tab == currentTab,
-                                                    onClick = {
-                                                        selectedSubjectCode = null
-                                                        currentTab = tab
-                                                    },
+                                                    onClick = { navigateToTab(tab) },
                                                     icon = { Icon(tab.icon, contentDescription = tab.label) },
                                                     label = { Text(tab.label, fontSize = 11.sp) }
                                                 )
@@ -348,10 +373,7 @@ fun App(initialTab: Int = 0) {
                             if (style == DesignStyle.APPLE) {
                                 AppleFloatingTabDock(
                                     currentTab = currentTab,
-                                    onSelect = {
-                                        selectedSubjectCode = null
-                                        currentTab = it
-                                    },
+                                    onSelect = { navigateToTab(it) },
                                     modifier = Modifier.align(Alignment.BottomCenter)
                                 )
                             }
