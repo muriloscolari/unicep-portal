@@ -221,3 +221,12 @@ data class ErrorResponse(val error: String = "Erro desconhecido")
 
 @Serializable
 data class MarkReadRequest(val ids: List<Long> = emptyList())
+
+@Serializable
+data class ProxyTicketRequest(val path: String)
+
+@Serializable
+data class ProxyTicketResponse(
+    val ticket: String,
+    val expiresIn: Int = 60
+)

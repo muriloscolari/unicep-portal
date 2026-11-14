@@ -5,13 +5,23 @@ services:
       dockerfile: Dockerfile
     container_name: unicep-portal
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     env_file:
       - path: .env
-        required: false
+        required: true
     environment:
       PORT: ${PORT:-47832}
-      APP_SECRET: ${APP_SECRET:-dev-only-change-me-in-production-unicep-portal}
+      REQUIRE_SECRET: "true"
+      APP_SECRET: "${APP_SECRET:?Defina APP_SECRET com pelo menos 32 caracteres no .env}"
       CORS_ORIGIN: ${CORS_ORIGIN:-https://unicep.muriloscolari.me}
+      ALLOW_DEV_CORS: "false"
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-127.0.0.1/8,::1/128,172.16.0.0/12}
       DATA_DIR: /app/data
       WEB_DIR: /app/web
       POLL_INTERVAL_MINUTES: ${POLL_INTERVAL_MINUTES:-15}

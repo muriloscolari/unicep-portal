@@ -1,5 +1,10 @@
-# Exemplo de configuração Nginx para o homelab
-# Salve em /etc/nginx/sites-available/unicep.muriloscolari.me e ative com Certbot/SSL
+# Configuração recomendada Nginx + Cloudflare (Nuvem Laranja / Full Strict + mTLS)
+# Salve em /etc/nginx/sites-available/unicep.muriloscolari.me
+#
+# ALTERNATIVA MAIS SEGURA (ZERO PORT FORWARD):
+# Em vez de abrir portas 80/443 no roteador, rode cloudflared apontando para:
+#   service: http://127.0.0.1:47832
+# Assim nenhum scanner consegue atingir seu IP residencial diretamente.
 
 server {
     listen 80;
@@ -14,16 +19,50 @@ server {
     listen [::]:443 ssl http2;
     server_name unicep.muriloscolari.me;
 
-    # Certificados gerenciados pelo Certbot ou seu ACME client
-    ssl_certificate     /etc/letsencrypt/live/unicep.muriloscolari.me/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/unicep.muriloscolari.me/privkey.pem;
+    # Use Cloudflare Origin Certificate (SSL/TLS -> Full (Strict) no painel Cloudflare)
+    ssl_certificate     /etc/ssl/cloudflare/unicep.muriloscolari.me.pem;
+    ssl_certificate_key /etc/ssl/cloudflare/unicep.muriloscolari.me.key;
 
-    # Cabeçalhos de segurança básicos
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    # Authenticated Origin Pulls (mTLS): bloqueia qualquer conexão direta que tente pular a Cloudflare!
+    # Baixe o CA oficial da Cloudflare em:
+    # https://developers.cloudflare.com/ssl/origin-configuration/authenticated-origin-pulls/
+    ssl_client_certificate /etc/ssl/cloudflare/authenticated_origin_pull_ca.pem;
+    ssl_verify_client on;
 
-    # Necessário para arquivos .wasm e compressão gzip/brotli eficiente
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+
+    # Restaura o IP real do cliente apenas quando recebido via proxies da Cloudflare
+    # (Mantenha atualizado conforme https://www.cloudflare.com/ips/)
+    set_real_ip_from 173.245.48.0/20;
+    set_real_ip_from 103.21.244.0/22;
+    set_real_ip_from 103.22.200.0/22;
+    set_real_ip_from 103.31.4.0/22;
+    set_real_ip_from 141.101.64.0/18;
+    set_real_ip_from 108.162.192.0/18;
+    set_real_ip_from 190.93.240.0/20;
+    set_real_ip_from 188.114.96.0/20;
+    set_real_ip_from 197.234.240.0/22;
+    set_real_ip_from 198.41.128.0/17;
+    set_real_ip_from 162.158.0.0/15;
+    set_real_ip_from 104.16.0.0/13;
+    set_real_ip_from 104.24.0.0/14;
+    set_real_ip_from 172.64.0.0/13;
+    set_real_ip_from 131.0.72.0/22;
+    set_real_ip_from 2400:cb00::/32;
+    set_real_ip_from 2606:4700::/32;
+    set_real_ip_from 2803:f800::/32;
+    set_real_ip_from 2405:b500::/32;
+    set_real_ip_from 2405:8100::/32;
+    set_real_ip_from 2a06:98c0::/29;
+    set_real_ip_from 2c0f:f248::/32;
+    real_ip_header CF-Connecting-IP;
+
+    client_max_body_size 64k;
+    server_tokens off;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
     gzip on;
     gzip_types text/plain text/css application/javascript application/json application/wasm;
 
@@ -33,10 +72,11 @@ server {
 
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header CF-Connecting-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
-        proxy_read_timeout 60s;
+        proxy_read_timeout 45s;
         proxy_connect_timeout 10s;
     }
 }

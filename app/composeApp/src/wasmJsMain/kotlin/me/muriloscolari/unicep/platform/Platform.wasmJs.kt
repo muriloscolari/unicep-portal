@@ -110,7 +110,11 @@ actual object PlatformBridge {
     }
 
     actual fun openExternalUrl(url: String) {
-        window.open(url, "_blank")
+        val clean = url.trim()
+        if (!clean.startsWith("https://", ignoreCase = true) && !clean.startsWith("http://", ignoreCase = true)) {
+            return
+        }
+        window.open(clean, "_blank", "noopener,noreferrer")
     }
 
     actual fun scheduleGradeSync() {}

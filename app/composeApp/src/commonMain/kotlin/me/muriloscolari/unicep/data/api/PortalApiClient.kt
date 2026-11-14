@@ -111,8 +111,23 @@ class PortalApiClient {
         if (resp.status == HttpStatusCode.Unauthorized) throw UnauthorizedException()
     }
 
-    fun buildProxyUrl(baseUrl: String, token: String, path: String): String =
-        "${cleanBase(baseUrl)}/api/proxy?path=${path.encodeURLParameter()}&token=${token.encodeURLParameter()}"
+    suspend fun logout(baseUrl: String, token: String) {
+        client.post("${cleanBase(baseUrl)}/api/auth/logout") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+        }
+    }
+
+    suspend fun createProxyTicket(baseUrl: String, token: String, path: String): ProxyTicketResponse {
+        val resp = client.post("${cleanBase(baseUrl)}/api/proxy/ticket") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody(ProxyTicketRequest(path))
+        }
+        return parseOrThrow(resp)
+    }
+
+    fun buildProxyUrlWithTicket(baseUrl: String, ticket: String, path: String): String =
+        "${cleanBase(baseUrl)}/api/proxy?path=${path.encodeURLParameter()}&ticket=${ticket.encodeURLParameter()}"
 
     private suspend inline fun <reified T> getAuthed(baseUrl: String, path: String, token: String): T {
         val resp = client.get("${cleanBase(baseUrl)}$path") {

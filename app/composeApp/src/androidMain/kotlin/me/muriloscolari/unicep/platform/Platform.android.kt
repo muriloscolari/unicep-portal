@@ -90,8 +90,12 @@ actual object PlatformBridge {
     }
 
     actual fun openExternalUrl(url: String) {
+        val clean = url.trim()
+        if (!clean.startsWith("https://", ignoreCase = true) && !clean.startsWith("http://", ignoreCase = true)) {
+            return
+        }
         val ctx = appContext ?: return
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(clean)).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         ctx.startActivity(intent)

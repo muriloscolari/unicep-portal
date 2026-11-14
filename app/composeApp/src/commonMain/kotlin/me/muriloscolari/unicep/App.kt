@@ -313,7 +313,7 @@ fun App(initialTab: Int = 0) {
                                 schedule = state.schedule,
                                 selectedSubTab = courseSubTab,
                                 onSelectSubTab = { courseSubTab = it },
-                                onOpenProxy = { path -> repo.openPortalLink(path, true) }
+                                onOpenProxy = { path -> scope.launch { repo.openPortalLink(path, true) } }
                             )
 
                             MainTab.CENTRAL -> CentralScreen(
@@ -324,11 +324,11 @@ fun App(initialTab: Int = 0) {
                                 stylePreference = state.stylePreference,
                                 onSelectStyle = { repo.setStylePreference(it) },
                                 onOpenAva = { scope.launch { repo.openAvaSso() } },
-                                onOpenLink = { path, proxy -> repo.openPortalLink(path, proxy) },
+                                onOpenLink = { path, proxy -> scope.launch { repo.openPortalLink(path, proxy) } },
                                 onSyncNotifications = { scope.launch { repo.syncNotificationsNow() } },
                                 onMarkAllRead = { scope.launch { repo.markAllNotificationsRead() } },
                                 onTestNotification = { scope.launch { repo.sendTestNotification() } },
-                                onLogout = { repo.logout() }
+                                onLogout = { scope.launch { repo.logout() } }
                             )
                         }
                     }

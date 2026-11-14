@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"log"
 	"mime"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -25,34 +27,54 @@ import (
 
 type ctxKey string
 
-const claimsCtxKey ctxKey = "claims"
+const (
+	claimsCtxKey      ctxKey = "claims"
+	maxLimiterEntries        = 4096
+)
 
-// Server exposes the BFF JSON API and optional static Compose Web assets.
-type Server struct {
-	cfg     config.Config
-	store   *storage.Store
-	crypto  *crypto.Service
-	portal  *portal.Manager
-	worker  *poller.Worker
-	limiter *loginLimiter
+var allowedProfiles = map[string]struct{}{
+	"alunograd":     {},
+	"alunopos":      {},
+	"coordenador":   {},
+	"diretor":       {},
+	"egresso":       {},
+	"professorgrad": {},
 }
 
-// NewServer constructs the HTTP API router and handlers.
+// Server exposes the hardened BFF JSON API and optional static Compose Web assets.
+type Server struct {
+	cfg           config.Config
+	store         *storage.Store
+	crypto        *crypto.Service
+	portal        *portal.Manager
+	worker        *poller.Worker
+	loginIPLim    *rateLimiter
+	loginRALim    *rateLimiter
+	actionRALim   *rateLimiter
+	trustedProxies []*net.IPNet
+}
+
+// NewServer constructs the HTTP API router and security middleware chain.
 func NewServer(cfg config.Config, store *storage.Store, cry *crypto.Service, pm *portal.Manager, worker *poller.Worker) http.Handler {
 	s := &Server{
-		cfg:     cfg,
-		store:   store,
-		crypto:  cry,
-		portal:  pm,
-		worker:  worker,
-		limiter: newLoginLimiter(15, 5*time.Minute),
+		cfg:            cfg,
+		store:          store,
+		crypto:         cry,
+		portal:         pm,
+		worker:         worker,
+		loginIPLim:     newRateLimiter(10, 5*time.Minute),
+		loginRALim:     newRateLimiter(6, 5*time.Minute),
+		actionRALim:    newRateLimiter(20, 1*time.Minute),
+		trustedProxies: parseCIDRs(cfg.TrustedProxyCIDRs),
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
+	mux.HandleFunc("GET /api/proxy", s.handleProxy)
 
-	// Authenticated routes
+	// Authenticated routes (strictly Bearer JWT + active token_version)
+	mux.Handle("POST /api/auth/logout", s.requireAuth(http.HandlerFunc(s.handleLogout)))
 	mux.Handle("GET /api/auth/me", s.requireAuth(http.HandlerFunc(s.handleMe)))
 	mux.Handle("GET /api/dashboard", s.requireAuth(http.HandlerFunc(s.handleDashboard)))
 	mux.Handle("GET /api/periods", s.requireAuth(http.HandlerFunc(s.handlePeriods)))
@@ -63,7 +85,7 @@ func NewServer(cfg config.Config, store *storage.Store, cry *crypto.Service, pm 
 	mux.Handle("GET /api/finance", s.requireAuth(http.HandlerFunc(s.handleFinance)))
 	mux.Handle("GET /api/services", s.requireAuth(http.HandlerFunc(s.handleServices)))
 	mux.Handle("POST /api/services/ava-sso", s.requireAuth(http.HandlerFunc(s.handleAvaSSO)))
-	mux.Handle("GET /api/proxy", s.requireAuth(http.HandlerFunc(s.handleProxy)))
+	mux.Handle("POST /api/proxy/ticket", s.requireAuth(http.HandlerFunc(s.handleProxyTicket)))
 	mux.Handle("GET /api/notifications", s.requireAuth(http.HandlerFunc(s.handleListNotifications)))
 	mux.Handle("POST /api/notifications/read", s.requireAuth(http.HandlerFunc(s.handleMarkNotificationsRead)))
 	mux.Handle("POST /api/notifications/sync", s.requireAuth(http.HandlerFunc(s.handleSyncNow)))
@@ -75,13 +97,29 @@ func NewServer(cfg config.Config, store *storage.Store, cry *crypto.Service, pm 
 		}
 	}
 
-	return s.corsMiddleware(mux)
+	return s.securityHeadersMiddleware(s.corsMiddleware(mux))
+}
+
+func (s *Server) securityHeadersMiddleware(next http.Handler) http.Handler {
+	const appCSP = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' data: blob:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+		h.Set("Cross-Origin-Opener-Policy", "same-origin")
+		if r.URL.Path != "/api/proxy" {
+			h.Set("Content-Security-Policy", appCSP)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin != "" && (origin == s.cfg.CORSOrigin || strings.HasPrefix(origin, "http://localhost:") || strings.HasPrefix(origin, "http://127.0.0.1:")) {
+		if origin != "" && s.isAllowedOrigin(origin) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
@@ -95,14 +133,19 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+func (s *Server) isAllowedOrigin(origin string) bool {
+	if s.cfg.CORSOrigin != "" && origin == s.cfg.CORSOrigin {
+		return true
+	}
+	if s.cfg.AllowDevCORS && (strings.HasPrefix(origin, "http://localhost:") || strings.HasPrefix(origin, "http://127.0.0.1:")) {
+		return true
+	}
+	return false
+}
+
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := extractBearer(r)
-		if token == "" {
-			if c, err := r.Cookie("portal_token"); err == nil {
-				token = c.Value
-			}
-		}
 		if token == "" {
 			writeError(w, http.StatusUnauthorized, "token ausente")
 			return
@@ -110,6 +153,15 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		claims, err := s.crypto.VerifyToken(token)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "sessão expirada")
+			return
+		}
+		tv, err := s.store.GetTokenVersion(claims.RA)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "erro ao validar sessão")
+			return
+		}
+		if tv == 0 || claims.TokenVersion != tv {
+			writeError(w, http.StatusUnauthorized, "sessão revogada ou expirada")
 			return
 		}
 		ctx := context.WithValue(r.Context(), claimsCtxKey, claims)
@@ -122,9 +174,6 @@ func extractBearer(r *http.Request) string {
 	if len(auth) > 7 && strings.EqualFold(auth[:7], "Bearer ") {
 		return strings.TrimSpace(auth[7:])
 	}
-	if q := strings.TrimSpace(r.URL.Query().Get("token")); q != "" && r.URL.Path == "/api/proxy" {
-		return q
-	}
 	return ""
 }
 
@@ -134,6 +183,7 @@ func currentClaims(r *http.Request) *crypto.Claims {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": "ok",
 		"time":   time.Now().UTC().Format(time.RFC3339),
@@ -141,8 +191,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
-	if !s.limiter.Allow(ip) {
+	w.Header().Set("Cache-Control", "no-store")
+	ip := s.clientIP(r)
+	if !s.loginIPLim.Allow(ip) {
 		writeError(w, http.StatusTooManyRequests, "muitas tentativas de login; aguarde alguns minutos")
 		return
 	}
@@ -152,16 +203,25 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 		Perfil   string `json:"perfil"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&req); err != nil {
+	if err := decodeStrictJSON(w, r, &req, 8192); err != nil {
 		writeError(w, http.StatusBadRequest, "JSON inválido")
 		return
 	}
 	req.RA = strings.TrimSpace(req.RA)
+	req.Perfil = strings.TrimSpace(req.Perfil)
 	if req.Perfil == "" {
 		req.Perfil = "alunograd"
 	}
-	if req.RA == "" || req.Password == "" {
-		writeError(w, http.StatusBadRequest, "RA e senha são obrigatórios")
+	if !isSafeRA(req.RA) || req.Password == "" || len(req.Password) > 128 {
+		writeError(w, http.StatusBadRequest, "RA ou senha inválidos")
+		return
+	}
+	if _, ok := allowedProfiles[req.Perfil]; !ok {
+		writeError(w, http.StatusBadRequest, "perfil acadêmico inválido")
+		return
+	}
+	if !s.loginRALim.Allow(req.RA) {
+		writeError(w, http.StatusTooManyRequests, "muitas tentativas para este RA; aguarde alguns minutos")
 		return
 	}
 
@@ -192,7 +252,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, exp, err := s.crypto.IssueToken(info.RA, info.Perfil)
+	tv, err := s.store.GetTokenVersion(info.RA)
+	if err != nil || tv < 1 {
+		tv = 1
+	}
+	token, exp, err := s.crypto.IssueToken(info.RA, info.Perfil, tv)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "erro ao gerar token")
 		return
@@ -207,22 +271,23 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}(info.RA)
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "portal_token",
-		Value:    token,
-		Path:     "/",
-		Expires:  exp,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   strings.HasPrefix(s.cfg.CORSOrigin, "https://") && r.Header.Get("X-Forwarded-Proto") == "https",
-	})
-
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token":     token,
 		"expiresAt": exp.Format(time.RFC3339),
 		"student":   info,
 		"nacOpen":   nacOpen,
 	})
+}
+
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	claims := currentClaims(r)
+	if err := s.store.IncrementTokenVersion(claims.RA); err != nil {
+		writeError(w, http.StatusInternalServerError, "erro ao encerrar sessão")
+		return
+	}
+	s.portal.EvictSession(claims.RA)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
@@ -319,6 +384,9 @@ func (s *Server) handleGrades(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		period = periods[0].ID
+	} else if !isSafeParam(period, 128) {
+		writeError(w, http.StatusBadRequest, "período inválido")
+		return
 	}
 
 	target := "/ambiente_aluno/relatorios/consulta_notas.asp?matr=" + url.QueryEscape(period)
@@ -357,6 +425,11 @@ func (s *Server) handleReport(w http.ResponseWriter, r *http.Request) {
 	if !strings.HasPrefix(periodQuery, "?") {
 		periodQuery = "?" + periodQuery
 	}
+	if !isSafeQueryString(periodQuery[1:], 1024) {
+		writeError(w, http.StatusBadRequest, "parâmetro de boletim inválido")
+		return
+	}
+
 	target := "/ambiente_aluno/relatorios/boletim_detalhado.asp" + periodQuery
 	html, _, _, err := s.portal.FetchHTML(r.Context(), claims.RA, target)
 	if err != nil {
@@ -396,6 +469,10 @@ func (s *Server) handleCurriculum(w http.ResponseWriter, r *http.Request) {
 	transcript, _ := portal.ParseTranscript(transcriptHTML)
 
 	gradeID := strings.TrimSpace(r.URL.Query().Get("gradeId"))
+	if gradeID != "" && !isSafeParam(gradeID, 64) {
+		writeError(w, http.StatusBadRequest, "gradeId inválido")
+		return
+	}
 	if gradeID == "" {
 		if homeHTML, _, nacOpen, err := s.portal.FetchHTML(r.Context(), claims.RA, "/ambiente_aluno/ambiente_estudante.asp"); err == nil {
 			if summary, err := portal.ParseDashboard(homeHTML, nacOpen); err == nil {
@@ -465,40 +542,135 @@ func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAvaSSO(w http.ResponseWriter, r *http.Request) {
 	claims := currentClaims(r)
+	if !s.actionRALim.Allow("ava:" + claims.RA) {
+		writeError(w, http.StatusTooManyRequests, "muitas solicitações; aguarde alguns segundos")
+		return
+	}
 	raw, _, _, _, err := s.portal.FetchRaw(r.Context(), claims.RA, "/d2l_login.php?ra="+url.QueryEscape(claims.RA)+"&nocache="+url.QueryEscape(time.Now().Format("150405")))
 	if err != nil {
 		s.writePortalErr(w, err)
 		return
 	}
 	target := strings.TrimSpace(string(raw))
-	if !strings.HasPrefix(target, "http") {
-		writeError(w, http.StatusBadGateway, "não foi possível gerar link SSO do UnicepVirtual")
+	if !isSafeExternalHTTPSURL(target) {
+		writeError(w, http.StatusBadGateway, "não foi possível gerar link SSO seguro do UnicepVirtual")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"url": target})
 }
 
-func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleProxyTicket(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	claims := currentClaims(r)
+	if !s.actionRALim.Allow("ticket:" + claims.RA) {
+		writeError(w, http.StatusTooManyRequests, "muitas solicitações; aguarde alguns segundos")
+		return
+	}
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := decodeStrictJSON(w, r, &req, 4096); err != nil {
+		writeError(w, http.StatusBadRequest, "JSON inválido")
+		return
+	}
+	relPath := strings.TrimSpace(req.Path)
+	if !isAllowedProxyPath(relPath) {
+		writeError(w, http.StatusForbidden, "caminho não permitido no proxy")
+		return
+	}
+	ticket, err := s.crypto.IssueProxyTicket(claims.RA, relPath)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "erro ao gerar ticket de proxy")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ticket":    ticket,
+		"expiresIn": 60,
+	})
+}
+
+func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	relPath := strings.TrimSpace(r.URL.Query().Get("path"))
 	if !isAllowedProxyPath(relPath) {
 		writeError(w, http.StatusForbidden, "caminho não permitido no proxy")
 		return
 	}
-	raw, ct, _, _, err := s.portal.FetchRaw(r.Context(), claims.RA, relPath)
+
+	var ra string
+	if bearer := extractBearer(r); bearer != "" {
+		claims, err := s.crypto.VerifyToken(bearer)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "sessão expirada")
+			return
+		}
+		tv, err := s.store.GetTokenVersion(claims.RA)
+		if err != nil || tv == 0 || claims.TokenVersion != tv {
+			writeError(w, http.StatusUnauthorized, "sessão revogada ou expirada")
+			return
+		}
+		ra = claims.RA
+	} else {
+		ticket := strings.TrimSpace(r.URL.Query().Get("ticket"))
+		var err error
+		ra, err = s.crypto.ConsumeProxyTicket(ticket, relPath)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "ticket de acesso ausente ou expirado")
+			return
+		}
+	}
+
+	raw, ct, _, _, err := s.portal.FetchRaw(r.Context(), ra, relPath)
 	if err != nil {
 		s.writePortalErr(w, err)
 		return
 	}
-	if ct != "" {
-		w.Header().Set("Content-Type", ct)
+
+	safeCT, attach := sanitizeProxyContentType(ct)
+	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data: https:; form-action 'none'; frame-ancestors 'none'")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Content-Type", safeCT)
+	if attach {
+		w.Header().Set("Content-Disposition", "attachment")
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(raw)
 }
 
+func sanitizeProxyContentType(rawCT string) (contentType string, forceAttachment bool) {
+	if rawCT == "" {
+		return "application/octet-stream", true
+	}
+	mediaType, params, err := mime.ParseMediaType(rawCT)
+	if err != nil {
+		return "application/octet-stream", true
+	}
+	mediaType = strings.ToLower(mediaType)
+	switch mediaType {
+	case "application/pdf", "image/png", "image/jpeg", "image/gif", "image/webp", "text/plain", "text/html":
+		if charset, ok := params["charset"]; ok && charset != "" {
+			return mediaType + "; charset=" + charset, false
+		}
+		return mediaType, false
+	default:
+		return "application/octet-stream", true
+	}
+}
+
 func isAllowedProxyPath(p string) bool {
-	if p == "" || strings.Contains(p, "..") || strings.Contains(p, "://") {
+	if p == "" || len(p) > 512 || hasControlOrBackslash(p) {
+		return false
+	}
+	lower := strings.ToLower(p)
+	if strings.Contains(lower, "://") || strings.Contains(lower, "..") || strings.Contains(lower, "%2e") || strings.Contains(lower, "%5c") {
+		return false
+	}
+	parsed, err := url.Parse(p)
+	if err != nil || parsed.Scheme != "" || parsed.Host != "" || parsed.User != nil || parsed.Fragment != "" {
+		return false
+	}
+	cleaned := path.Clean(parsed.Path)
+	if cleaned != parsed.Path || strings.Contains(cleaned, "..") {
 		return false
 	}
 	allowed := []string{
@@ -508,7 +680,7 @@ func isAllowedProxyPath(p string) bool {
 		"/symLinkFTP/",
 	}
 	for _, prefix := range allowed {
-		if strings.HasPrefix(p, prefix) {
+		if strings.HasPrefix(cleaned, prefix) {
 			return true
 		}
 	}
@@ -531,7 +703,16 @@ func (s *Server) handleMarkNotificationsRead(w http.ResponseWriter, r *http.Requ
 	var req struct {
 		IDs []int64 `json:"ids"`
 	}
-	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&req)
+	if r.Body != nil {
+		if err := decodeStrictJSON(w, r, &req, 8192); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, "JSON inválido")
+			return
+		}
+	}
+	if len(req.IDs) > 200 {
+		writeError(w, http.StatusBadRequest, "quantidade de IDs excedida")
+		return
+	}
 	if err := s.store.MarkNotificationsRead(claims.RA, req.IDs); err != nil {
 		writeError(w, http.StatusInternalServerError, "erro ao atualizar notificações")
 		return
@@ -541,6 +722,10 @@ func (s *Server) handleMarkNotificationsRead(w http.ResponseWriter, r *http.Requ
 
 func (s *Server) handleSyncNow(w http.ResponseWriter, r *http.Request) {
 	claims := currentClaims(r)
+	if !s.actionRALim.Allow("sync:" + claims.RA) {
+		writeError(w, http.StatusTooManyRequests, "muitas sincronizações; aguarde um instante")
+		return
+	}
 	created, err := s.worker.SyncUser(r.Context(), claims.RA, false)
 	if err != nil {
 		s.writePortalErr(w, err)
@@ -551,6 +736,10 @@ func (s *Server) handleSyncNow(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleTestNotification(w http.ResponseWriter, r *http.Request) {
 	claims := currentClaims(r)
+	if !s.actionRALim.Allow("testnotif:" + claims.RA) {
+		writeError(w, http.StatusTooManyRequests, "aguarde antes de enviar outro teste")
+		return
+	}
 	id, err := s.store.InsertNotification(storage.Notification{
 		RA:             claims.RA,
 		PeriodKey:      "test",
@@ -577,14 +766,31 @@ func (s *Server) writePortalErr(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) staticSPAHandler(dir string) http.Handler {
-	fileServer := http.FileServer(http.Dir(dir))
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		absDir = dir
+	}
+	indexPath := filepath.Join(absDir, "index.html")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			writeError(w, http.StatusNotFound, "endpoint não encontrado")
 			return
 		}
+		if hasHiddenSegment(r.URL.Path) {
+			writeError(w, http.StatusNotFound, "não encontrado")
+			return
+		}
+
 		clean := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/"))
-		full := filepath.Join(dir, clean)
+		if clean == "." || clean == "" {
+			clean = "index.html"
+		}
+		full, err := filepath.Abs(filepath.Join(absDir, clean))
+		if err != nil || !isWithinDir(absDir, full) {
+			writeError(w, http.StatusForbidden, "caminho inválido")
+			return
+		}
+
 		if info, err := os.Stat(full); err == nil && !info.IsDir() {
 			if ext := filepath.Ext(clean); ext != "" {
 				if ct := mime.TypeByExtension(ext); ct != "" {
@@ -595,15 +801,105 @@ func (s *Server) staticSPAHandler(dir string) http.Handler {
 					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 				}
 			}
-			fileServer.ServeHTTP(w, r)
+			http.ServeFile(w, r, full)
 			return
 		}
-		if _, err := os.Stat(filepath.Join(dir, "index.html")); err == nil && !errors.Is(err, fs.ErrNotExist) {
-			http.ServeFile(w, r, filepath.Join(dir, "index.html"))
+		if _, err := os.Stat(indexPath); err == nil && !errors.Is(err, fs.ErrNotExist) {
+			http.ServeFile(w, r, indexPath)
 			return
 		}
 		writeError(w, http.StatusNotFound, "frontend não encontrado")
 	})
+}
+
+func decodeStrictJSON(w http.ResponseWriter, r *http.Request, dst any, maxBytes int64) error {
+	if r.Body == nil {
+		return io.EOF
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBytes))
+	if err := dec.Decode(dst); err != nil {
+		return err
+	}
+	var trailing any
+	if err := dec.Decode(&trailing); err != io.EOF {
+		return errors.New("unexpected trailing JSON data")
+	}
+	return nil
+}
+
+func isSafeRA(ra string) bool {
+	if len(ra) == 0 || len(ra) > 20 {
+		return false
+	}
+	for i := 0; i < len(ra); i++ {
+		c := ra[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+func isSafeParam(v string, maxLen int) bool {
+	if len(v) == 0 || len(v) > maxLen || hasControlOrBackslash(v) {
+		return false
+	}
+	lower := strings.ToLower(v)
+	return !strings.Contains(lower, "..") && !strings.Contains(lower, "://") && !strings.ContainsAny(v, "#?")
+}
+
+func isSafeQueryString(q string, maxLen int) bool {
+	if len(q) == 0 || len(q) > maxLen || hasControlOrBackslash(q) {
+		return false
+	}
+	lower := strings.ToLower(q)
+	if strings.Contains(lower, "..") || strings.Contains(lower, "://") || strings.Contains(q, "#") {
+		return false
+	}
+	_, err := url.ParseQuery(q)
+	return err == nil
+}
+
+func hasControlOrBackslash(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < 0x20 || c == 0x7f || c == '\\' {
+			return true
+		}
+	}
+	return false
+}
+
+func isSafeExternalHTTPSURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || !strings.EqualFold(u.Scheme, "https") {
+		return false
+	}
+	host := u.Hostname()
+	if host == "" || strings.EqualFold(host, "localhost") {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified())
+	}
+	return true
+}
+
+func hasHiddenSegment(urlPath string) bool {
+	for _, seg := range strings.Split(urlPath, "/") {
+		if strings.HasPrefix(seg, ".") && seg != "." && seg != ".." {
+			return true
+		}
+	}
+	return false
+}
+
+func isWithinDir(base, target string) bool {
+	rel, err := filepath.Rel(base, target)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
@@ -616,41 +912,107 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
+func parseCIDRs(raw []string) []*net.IPNet {
+	var nets []*net.IPNet
+	for _, item := range raw {
+		_, ipNet, err := net.ParseCIDR(item)
+		if err == nil {
+			nets = append(nets, ipNet)
+			continue
+		}
+		if ip := net.ParseIP(item); ip != nil {
+			maskLen := 32
+			if ip.To4() == nil {
+				maskLen = 128
+			}
+			nets = append(nets, &net.IPNet{IP: ip, Mask: net.CIDRMask(maskLen, maskLen)})
+		}
 	}
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return strings.TrimSpace(xri)
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil {
-		return host
-	}
-	return r.RemoteAddr
+	return nets
 }
 
-type loginLimiter struct {
+func (s *Server) isTrustedProxy(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	for _, n := range s.trustedProxies {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	remoteIP := net.ParseIP(strings.TrimSpace(host))
+	if !s.isTrustedProxy(remoteIP) {
+		if remoteIP != nil {
+			return remoteIP.String()
+		}
+		return host
+	}
+
+	if cfIP := net.ParseIP(strings.TrimSpace(r.Header.Get("CF-Connecting-IP"))); cfIP != nil {
+		return cfIP.String()
+	}
+	if xri := net.ParseIP(strings.TrimSpace(r.Header.Get("X-Real-IP"))); xri != nil {
+		return xri.String()
+	}
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.Split(xff, ",")
+		for i := len(parts) - 1; i >= 0; i-- {
+			if candidate := net.ParseIP(strings.TrimSpace(parts[i])); candidate != nil && !s.isTrustedProxy(candidate) {
+				return candidate.String()
+			}
+		}
+	}
+	if remoteIP != nil {
+		return remoteIP.String()
+	}
+	return host
+}
+
+type rateLimiter struct {
 	mu      sync.Mutex
 	limit   int
 	window  time.Duration
 	entries map[string][]time.Time
 }
 
-func newLoginLimiter(limit int, window time.Duration) *loginLimiter {
-	return &loginLimiter{
+func newRateLimiter(limit int, window time.Duration) *rateLimiter {
+	return &rateLimiter{
 		limit:   limit,
 		window:  window,
 		entries: make(map[string][]time.Time),
 	}
 }
 
-func (l *loginLimiter) Allow(key string) bool {
+func (l *rateLimiter) Allow(key string) bool {
 	now := time.Now()
 	cutoff := now.Add(-l.window)
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
+	if len(l.entries) >= maxLimiterEntries {
+		for k, tsList := range l.entries {
+			if len(tsList) == 0 || !tsList[len(tsList)-1].After(cutoff) {
+				delete(l.entries, k)
+			}
+		}
+		if len(l.entries) >= maxLimiterEntries {
+			for k := range l.entries {
+				delete(l.entries, k)
+				if len(l.entries) < maxLimiterEntries {
+					break
+				}
+			}
+		}
+	}
 
 	list := l.entries[key]
 	kept := list[:0]

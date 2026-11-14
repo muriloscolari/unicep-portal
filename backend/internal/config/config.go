@@ -1,6 +1,9 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"log"
 	"os"
 	"strconv"
@@ -12,48 +15,85 @@ type Config struct {
 	Port                string
 	AppSecret           string
 	CORSOrigin          string
+	AllowDevCORS        bool
 	DataDir             string
 	WebDir              string
 	PortalBaseURL       string
 	PollIntervalMinutes int
 	NotifyAbsences      bool
+	RequireSecret       bool
+	TrustedProxyCIDRs   []string
 }
 
-// Load reads configuration from the environment with safe defaults for local/Docker runs.
+// Load reads configuration from the environment and terminates if production security requirements are unmet.
 func Load() Config {
-	secret := strings.TrimSpace(os.Getenv("APP_SECRET"))
-	if secret == "" {
-		log.Println("WARN: APP_SECRET not set; using ephemeral dev secret (set APP_SECRET in production)")
-		secret = "dev-only-change-me-in-production-unicep-portal"
+	cfg, err := LoadFromLookup(os.LookupEnv)
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
+	return cfg
+}
+
+// LoadFromLookup parses configuration from a custom environment lookup function (testable without os.Setenv).
+func LoadFromLookup(lookup func(string) (string, bool)) (Config, error) {
+	get := func(key string) string {
+		v, _ := lookup(key)
+		return strings.TrimSpace(v)
+	}
+	getOr := func(key, fallback string) string {
+		if v := get(key); v != "" {
+			return v
+		}
+		return fallback
+	}
+
+	requireSecret := parseBool(get("REQUIRE_SECRET"), false)
+	secret := get("APP_SECRET")
+	if len(secret) < 32 {
+		if requireSecret {
+			return Config{}, errors.New("APP_SECRET must be at least 32 characters when REQUIRE_SECRET=true")
+		}
+		buf := make([]byte, 32)
+		if _, err := rand.Read(buf); err != nil {
+			return Config{}, err
+		}
+		secret = hex.EncodeToString(buf)
+		log.Println("WARN: APP_SECRET missing or <32 chars; generated ephemeral random secret for this process")
 	}
 
 	pollMin := 15
-	if v := strings.TrimSpace(os.Getenv("POLL_INTERVAL_MINUTES")); v != "" {
+	if v := get("POLL_INTERVAL_MINUTES"); v != "" {
 		if parsed, err := strconv.Atoi(v); err == nil && parsed >= 5 {
 			pollMin = parsed
 		}
 	}
 
-	notifyAbsences := true
-	if v := strings.TrimSpace(os.Getenv("NOTIFY_ABSENCES")); v != "" {
-		notifyAbsences = strings.EqualFold(v, "true") || v == "1"
+	cidrsRaw := getOr("TRUSTED_PROXY_CIDRS", "127.0.0.1/8,::1/128,172.16.0.0/12")
+	var cidrs []string
+	for _, part := range strings.Split(cidrsRaw, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			cidrs = append(cidrs, trimmed)
+		}
 	}
 
 	return Config{
-		Port:                envOr("PORT", "47832"),
+		Port:                getOr("PORT", "47832"),
 		AppSecret:           secret,
-		CORSOrigin:          envOr("CORS_ORIGIN", "https://unicep.muriloscolari.me"),
-		DataDir:             envOr("DATA_DIR", "./data"),
-		WebDir:              strings.TrimSpace(os.Getenv("WEB_DIR")),
-		PortalBaseURL:       strings.TrimRight(envOr("PORTAL_BASE_URL", "https://cdseducacional.com.br"), "/"),
+		CORSOrigin:          getOr("CORS_ORIGIN", "https://unicep.muriloscolari.me"),
+		AllowDevCORS:        parseBool(get("ALLOW_DEV_CORS"), false),
+		DataDir:             getOr("DATA_DIR", "./data"),
+		WebDir:              get("WEB_DIR"),
+		PortalBaseURL:       strings.TrimRight(getOr("PORTAL_BASE_URL", "https://cdseducacional.com.br"), "/"),
 		PollIntervalMinutes: pollMin,
-		NotifyAbsences:      notifyAbsences,
-	}
+		NotifyAbsences:      parseBool(get("NOTIFY_ABSENCES"), true),
+		RequireSecret:       requireSecret,
+		TrustedProxyCIDRs:   cidrs,
+	}, nil
 }
 
-func envOr(key, fallback string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		return v
+func parseBool(raw string, fallback bool) bool {
+	if raw == "" {
+		return fallback
 	}
-	return fallback
+	return strings.EqualFold(raw, "true") || raw == "1"
 }

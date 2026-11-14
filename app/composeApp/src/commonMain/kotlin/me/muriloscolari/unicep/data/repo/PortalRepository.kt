@@ -139,7 +139,12 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
         }
     }
 
-    fun logout() {
+    suspend fun logout() {
+        val server = _state.value.serverUrl
+        val token = PlatformBridge.getString(PrefKeys.JWT_TOKEN)
+        if (!token.isNullOrBlank()) {
+            runCatching { api.logout(server, token) }
+        }
         PlatformBridge.remove(PrefKeys.JWT_TOKEN)
         PlatformBridge.remove(PrefKeys.PASSWORD)
         PlatformBridge.cancelGradeSync()
@@ -248,11 +253,15 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
         PlatformBridge.openExternalUrl(res.url)
     }
 
-    fun openPortalLink(path: String, proxy: Boolean) {
-        val server = _state.value.serverUrl
-        val token = PlatformBridge.getString(PrefKeys.JWT_TOKEN).orEmpty()
-        val target = if (proxy) api.buildProxyUrl(server, token, path) else path
-        PlatformBridge.openExternalUrl(target)
+    suspend fun openPortalLink(path: String, proxy: Boolean) {
+        if (!proxy) {
+            PlatformBridge.openExternalUrl(path)
+            return
+        }
+        withToken { server, token ->
+            val ticket = api.createProxyTicket(server, token, path).ticket
+            PlatformBridge.openExternalUrl(api.buildProxyUrlWithTicket(server, ticket, path))
+        }
     }
 
     suspend fun syncNotificationsNow() = withToken { server, token ->

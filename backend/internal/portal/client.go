@@ -30,10 +30,12 @@ type CredentialProvider func(ra string) (password string, perfil string, err err
 
 // Manager maintains per-student authenticated HTTP cookie jars and performs portal operations.
 type Manager struct {
-	baseURL  string
-	mu       sync.RWMutex
-	sessions map[string]*studentSession
-	creds    CredentialProvider
+	baseURL    string
+	baseScheme string
+	baseHost   string
+	mu         sync.RWMutex
+	sessions   map[string]*studentSession
+	creds      CredentialProvider
 }
 
 type studentSession struct {
@@ -46,11 +48,29 @@ type studentSession struct {
 
 // NewManager creates a portal client manager targeting baseURL.
 func NewManager(baseURL string, creds CredentialProvider) *Manager {
-	return &Manager{
-		baseURL:  strings.TrimRight(baseURL, "/"),
-		sessions: make(map[string]*studentSession),
-		creds:    creds,
+	trimmed := strings.TrimRight(baseURL, "/")
+	parsed, _ := url.Parse(trimmed)
+	scheme, host := "https", ""
+	if parsed != nil {
+		if parsed.Scheme != "" {
+			scheme = strings.ToLower(parsed.Scheme)
+		}
+		host = parsed.Host
 	}
+	return &Manager{
+		baseURL:    trimmed,
+		baseScheme: scheme,
+		baseHost:   host,
+		sessions:   make(map[string]*studentSession),
+		creds:      creds,
+	}
+}
+
+// EvictSession drops any cached upstream portal session and cookies for ra.
+func (m *Manager) EvictSession(ra string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.sessions, ra)
 }
 
 func (m *Manager) getOrCreateSession(ra, perfil string) (*studentSession, error) {
@@ -76,6 +96,9 @@ func (m *Manager) getOrCreateSession(ra, perfil string) (*studentSession, error)
 		Jar:     jar,
 		Timeout: 25 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if m.baseHost != "" && (!strings.EqualFold(req.URL.Host, m.baseHost) || !strings.EqualFold(req.URL.Scheme, m.baseScheme)) {
+				return errors.New("blocked external portal redirect")
+			}
 			path := strings.ToLower(req.URL.Path)
 			if strings.Contains(path, "session_abandon.asp") || strings.Contains(path, "/index/login.php") {
 				return ErrSessionExpired
@@ -208,7 +231,7 @@ func (m *Manager) checkNacGate(ctx context.Context, client *http.Client) bool {
 	var payload struct {
 		Retorno string `json:"retorno"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&payload); err != nil {
 		return false
 	}
 	return strings.EqualFold(payload.Retorno, "obrigatorio")

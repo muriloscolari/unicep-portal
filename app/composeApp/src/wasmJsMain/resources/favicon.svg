@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0D3B7A"/>
+      <stop offset="58%" stop-color="#007AFF"/>
+      <stop offset="100%" stop-color="#32ADE6"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#bg)"/>
+  <circle cx="32" cy="32" r="24" fill="#FFFFFF" fill-opacity="0.10"/>
+  <!-- Graduation cap mortarboard -->
+  <path d="M32 14L8 25L32 36L56 25L32 14Z" fill="#FFFFFF"/>
+  <!-- Cap base crown -->
+  <path d="M17 31.5V41.5C17 45.8 23.7 49.5 32 49.5C40.3 49.5 47 45.8 47 41.5V31.5L32 38.2L17 31.5Z" fill="#EBF5FF"/>
+  <!-- Tassel cord & drop -->
+  <path d="M50.5 27.5V42" stroke="#FFD60A" stroke-width="3" stroke-linecap="round" fill="none"/>
+  <circle cx="50.5" cy="44.5" r="3" fill="#FFD60A"/>
+</svg>

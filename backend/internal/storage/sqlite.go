@@ -24,6 +24,7 @@ type UserRecord struct {
 	Campus            string
 	EncryptedPassword string
 	PollingEnabled    bool
+	TokenVersion      int
 	LastLoginAt       string
 }
 
@@ -53,9 +54,10 @@ type Notification struct {
 
 // Open initializes the SQLite database inside dataDir and applies schema migrations.
 func Open(dataDir string) (*Store, error) {
-	if err := os.MkdirAll(dataDir, 0o750); err != nil {
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
+	_ = os.Chmod(dataDir, 0o700)
 	dbPath := filepath.Join(dataDir, "portal.db")
 	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)", dbPath)
 	db, err := sql.Open("sqlite", dsn)
@@ -67,6 +69,7 @@ func Open(dataDir string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	_ = os.Chmod(dbPath, 0o600)
 	return &Store{db: db}, nil
 }
 
@@ -84,6 +87,7 @@ CREATE TABLE IF NOT EXISTS users (
 	campus TEXT NOT NULL DEFAULT '',
 	encrypted_password TEXT NOT NULL,
 	polling_enabled INTEGER NOT NULL DEFAULT 1,
+	token_version INTEGER NOT NULL DEFAULT 1,
 	last_login_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL
 );
@@ -113,7 +117,36 @@ CREATE TABLE IF NOT EXISTS notifications (
 
 CREATE INDEX IF NOT EXISTS idx_notifications_ra_created ON notifications(ra, id DESC);
 `
-	_, err := db.Exec(schema)
+	if _, err := db.Exec(schema); err != nil {
+		return err
+	}
+	return ensureColumn(db, "users", "token_version", "INTEGER NOT NULL DEFAULT 1")
+}
+
+func ensureColumn(db *sql.DB, table, column, definition string) error {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull int
+		var dflt sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition))
 	return err
 }
 
@@ -142,11 +175,11 @@ ON CONFLICT(ra) DO UPDATE SET
 // GetUser fetches a stored user by RA.
 func (s *Store) GetUser(ra string) (*UserRecord, error) {
 	row := s.db.QueryRow(`
-SELECT ra, perfil, name, campus, encrypted_password, polling_enabled, last_login_at
+SELECT ra, perfil, name, campus, encrypted_password, polling_enabled, token_version, last_login_at
 FROM users WHERE ra = ?`, ra)
 	var u UserRecord
 	var enabled int
-	if err := row.Scan(&u.RA, &u.Perfil, &u.Name, &u.Campus, &u.EncryptedPassword, &enabled, &u.LastLoginAt); err != nil {
+	if err := row.Scan(&u.RA, &u.Perfil, &u.Name, &u.Campus, &u.EncryptedPassword, &enabled, &u.TokenVersion, &u.LastLoginAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -156,10 +189,27 @@ FROM users WHERE ra = ?`, ra)
 	return &u, nil
 }
 
+// GetTokenVersion returns the active JWT token version for ra (0 if user does not exist).
+func (s *Store) GetTokenVersion(ra string) (int, error) {
+	var tv int
+	err := s.db.QueryRow(`SELECT token_version FROM users WHERE ra = ?`, ra).Scan(&tv)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return tv, err
+}
+
+// IncrementTokenVersion invalidates all previously issued JWTs for ra.
+func (s *Store) IncrementTokenVersion(ra string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.Exec(`UPDATE users SET token_version = token_version + 1, updated_at = ? WHERE ra = ?`, now, ra)
+	return err
+}
+
 // ListPollingUsers returns all users with background polling enabled.
 func (s *Store) ListPollingUsers() ([]UserRecord, error) {
 	rows, err := s.db.Query(`
-SELECT ra, perfil, name, campus, encrypted_password, polling_enabled, last_login_at
+SELECT ra, perfil, name, campus, encrypted_password, polling_enabled, token_version, last_login_at
 FROM users WHERE polling_enabled = 1`)
 	if err != nil {
 		return nil, err
@@ -170,7 +220,7 @@ FROM users WHERE polling_enabled = 1`)
 	for rows.Next() {
 		var u UserRecord
 		var enabled int
-		if err := rows.Scan(&u.RA, &u.Perfil, &u.Name, &u.Campus, &u.EncryptedPassword, &enabled, &u.LastLoginAt); err != nil {
+		if err := rows.Scan(&u.RA, &u.Perfil, &u.Name, &u.Campus, &u.EncryptedPassword, &enabled, &u.TokenVersion, &u.LastLoginAt); err != nil {
 			return nil, err
 		}
 		u.PollingEnabled = enabled == 1
