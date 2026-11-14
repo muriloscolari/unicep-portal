@@ -1,0 +1,9 @@
+.git
+data
+backend/server
+app/.gradle
+app/**/build
+app/local.properties
+*.apk
+*.jks
+*.keystore

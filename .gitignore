@@ -1,0 +1,25 @@
+# Segredos e dados locais
+.env
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Binários e builds Go
+backend/server
+backend/tmp/
+
+# Gradle / Android / KMP
+app/.gradle/
+app/local.properties
+app/**/build/
+*.apk
+*.aab
+*.jks
+*.keystore
+keystore.properties
+
+# IDE / OS
+.idea/
+*.iml
+.DS_Store

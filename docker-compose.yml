@@ -1,0 +1,22 @@
+services:
+  unicep-portal:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: unicep-portal
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PORT: ${PORT:-47832}
+      APP_SECRET: ${APP_SECRET:-dev-only-change-me-in-production-unicep-portal}
+      CORS_ORIGIN: ${CORS_ORIGIN:-https://unicep.muriloscolari.me}
+      DATA_DIR: /app/data
+      WEB_DIR: /app/web
+      POLL_INTERVAL_MINUTES: ${POLL_INTERVAL_MINUTES:-15}
+      NOTIFY_ABSENCES: ${NOTIFY_ABSENCES:-true}
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:${PORT:-47832}:47832"
+    volumes:
+      - ./data:/app/data
