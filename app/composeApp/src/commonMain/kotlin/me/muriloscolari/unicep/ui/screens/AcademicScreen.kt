@@ -2,16 +2,19 @@ package me.muriloscolari.unicep.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -21,6 +24,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -38,30 +42,77 @@ import me.muriloscolari.unicep.ui.designsystem.PortalTextField
 fun AcademicScreen(
     curriculum: CurriculumResponse?,
     schedule: ScheduleResponse?,
+    selectedSubTab: Int,
+    onSelectSubTab: (Int) -> Unit,
     onOpenProxy: (String) -> Unit
 ) {
     val colors = LocalPortalColors.current
-    var tab by remember { mutableStateOf(0) }
     var search by remember { mutableStateOf("") }
+
+    val transcript = curriculum?.transcript.orEmpty()
+    val approvedCount = remember(transcript) { transcript.count { it.status == "A" } }
+    val inProgressCount = remember(transcript) { transcript.count { it.status == "C" } }
+    val totalCount = transcript.size
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().background(colors.background),
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 104.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Text("Acadêmico", color = colors.textPrimary, style = MaterialTheme.typography.headlineLarge)
+            Text("Curso", color = colors.textPrimary, style = MaterialTheme.typography.headlineLarge)
+        }
+
+        if (totalCount > 0) {
+            item {
+                val ratio = (approvedCount.toFloat() / totalCount.toFloat()).coerceIn(0f, 1f)
+                val pct = (ratio * 100f).toInt()
+                PortalCard(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Progresso do Curso", color = colors.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                        PortalBadge("$approvedCount/$totalCount ($pct%)", colors.green)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(CircleShape)
+                            .background(colors.surfaceSecondary)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(ratio)
+                                .fillMaxHeight()
+                                .clip(CircleShape)
+                                .background(colors.green)
+                        )
+                    }
+                    if (inProgressCount > 0) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = "$inProgressCount disciplina(s) em andamento neste semestre",
+                            color = colors.textSecondary,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            }
         }
 
         item {
             PortalSegmentedControl(
                 options = listOf("Histórico", "Grade", "Horário"),
-                selectedIndex = tab,
-                onSelect = { tab = it }
+                selectedIndex = selectedSubTab,
+                onSelect = onSelectSubTab
             )
         }
 
-        if (tab < 2) {
+        if (selectedSubTab < 2) {
             item {
                 PortalTextField(
                     value = search,
@@ -71,9 +122,9 @@ fun AcademicScreen(
             }
         }
 
-        when (tab) {
+        when (selectedSubTab) {
             0 -> {
-                val list = curriculum?.transcript.orEmpty().filter {
+                val list = transcript.filter {
                     search.isBlank() || it.name.contains(search, ignoreCase = true)
                 }
                 if (list.isEmpty()) {
@@ -151,13 +202,13 @@ fun AcademicScreen(
                 }
             }
 
-            2 -> {
+            else -> {
                 val rows = schedule?.rows.orEmpty()
                 if (rows.isEmpty()) {
                     item {
                         PortalCard(modifier = Modifier.fillMaxWidth()) {
                             Text(
-                                "O quadro de horários retornou vazio no portal neste momento (comum fora do período letivo ou fins de semana).",
+                                "O quadro de horários retornou vazio no portal neste momento (comum fora do horário letivo ou fins de semana).",
                                 color = colors.textSecondary,
                                 fontSize = 14.sp
                             )
@@ -178,7 +229,5 @@ fun AcademicScreen(
                 }
             }
         }
-
-        item { Spacer(Modifier.height(16.dp)) }
     }
 }

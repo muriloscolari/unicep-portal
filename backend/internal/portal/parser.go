@@ -9,8 +9,9 @@ import (
 )
 
 var (
-	reGradeParam = regexp.MustCompile(`grade=(\d+)`)
-	statusLabels = map[string]string{
+	reGradeParam      = regexp.MustCompile(`grade=(\d+)`)
+	reCurriculumEntry = regexp.MustCompile(`^(\d{4,})\s*-\s*(.+?)(?:\s*-\s*(\d+)\s*horas?)?$`)
+	statusLabels      = map[string]string{
 		"C": "Cursando",
 		"A": "Aprovado",
 		"R": "Reprovado",
@@ -266,51 +267,63 @@ func ParseDashboard(html string, nacOpen bool) (DashboardSummary, error) {
 	return out, nil
 }
 
-// ParseTranscript parses ficha_individual_todas_semDuplicidade.asp.
+// ParseTranscript parses ficha_individual_todas_semDuplicidade.asp across all semester tables.
 func ParseTranscript(html string) ([]TranscriptItem, error) {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
 	if err != nil {
 		return nil, err
 	}
-	table := findDataTable(doc, "Disciplina")
-	if table == nil {
-		return []TranscriptItem{}, nil
-	}
 
 	var items []TranscriptItem
-	var headers []string
-	table.Find("tr").Each(func(_ int, row *goquery.Selection) {
-		cells := row.ChildrenFiltered("td, th")
-		if cells.Length() < 7 {
-			return
-		}
-		if len(headers) == 0 {
-			headers = make([]string, cells.Length())
-			cells.Each(func(i int, c *goquery.Selection) {
-				headers[i] = cleanText(c.Text())
+	seen := make(map[string]struct{})
+
+	doc.Find("table").Each(func(_ int, t *goquery.Selection) {
+		var hasHeader bool
+		t.Find("tr").Each(func(_ int, row *goquery.Selection) {
+			if row.Find("table").Length() > 0 {
+				return
+			}
+			cells := row.ChildrenFiltered("td, th")
+			if cells.Length() < 7 {
+				return
+			}
+
+			c0 := cleanText(cells.Eq(0).Text())
+			if c0 == "" || isDashedSeparator(c0) {
+				return
+			}
+			if strings.EqualFold(c0, "Disciplina") {
+				hasHeader = true
+				return
+			}
+			if !hasHeader && !looksLikeTranscriptRow(c0) {
+				return
+			}
+
+			yearSem := cleanText(cells.Eq(1).Text())
+			key := c0 + "|" + yearSem
+			if _, dup := seen[key]; dup {
+				return
+			}
+			seen[key] = struct{}{}
+
+			sit := cleanText(cells.Eq(cells.Length() - 1).Text())
+			syllabus := cells.Eq(0).Find("a").AttrOr("href", "")
+			if syllabus != "" && !strings.HasPrefix(syllabus, "/") && !strings.HasPrefix(syllabus, "http") {
+				syllabus = "/modulo_matricula/relatorios/" + syllabus
+			}
+			items = append(items, TranscriptItem{
+				Name:        c0,
+				YearSem:     yearSem,
+				Exam:        normalizeDash(cleanText(cells.Eq(2).Text())),
+				Average:     normalizeDash(cleanText(cells.Eq(3).Text())),
+				Hours:       cleanText(cells.Eq(4).Text()),
+				Absences:    cleanText(cells.Eq(5).Text()),
+				FreqPercent: cleanText(cells.Eq(6).Text()),
+				Status:      sit,
+				StatusLabel: StatusLabel(sit),
+				SyllabusURL: syllabus,
 			})
-			return
-		}
-		name := cleanText(cells.Eq(0).Text())
-		if name == "" || strings.EqualFold(name, "Disciplina") {
-			return
-		}
-		sit := cleanText(cells.Eq(cells.Length() - 1).Text())
-		syllabus := cells.Eq(0).Find("a").AttrOr("href", "")
-		if syllabus != "" && !strings.HasPrefix(syllabus, "/") && !strings.HasPrefix(syllabus, "http") {
-			syllabus = "/modulo_matricula/relatorios/" + syllabus
-		}
-		items = append(items, TranscriptItem{
-			Name:        name,
-			YearSem:     cleanText(cells.Eq(1).Text()),
-			Exam:        normalizeDash(cleanText(cells.Eq(2).Text())),
-			Average:     normalizeDash(cleanText(cells.Eq(3).Text())),
-			Hours:       cleanText(cells.Eq(4).Text()),
-			Absences:    cleanText(cells.Eq(5).Text()),
-			FreqPercent: cleanText(cells.Eq(6).Text()),
-			Status:      sit,
-			StatusLabel: StatusLabel(sit),
-			SyllabusURL: syllabus,
 		})
 	})
 	return items, nil
@@ -323,12 +336,21 @@ func ParseCurriculum(html string) ([]CurriculumItem, error) {
 		return nil, err
 	}
 	var items []CurriculumItem
+	seen := make(map[string]struct{})
 	currentPeriod := ""
+
 	doc.Find("table tr").Each(func(_ int, row *goquery.Selection) {
+		if row.Find("table").Length() > 0 {
+			return
+		}
 		cells := row.ChildrenFiltered("td, th")
-		if cells.Length() == 1 {
-			t := cleanText(cells.Eq(0).Text())
-			if strings.Contains(strings.ToLower(t), "período") || strings.Contains(strings.ToLower(t), "semestre") {
+		if cells.Length() == 0 {
+			return
+		}
+		if cells.Length() <= 2 {
+			t := cleanText(row.Text())
+			lower := strings.ToLower(t)
+			if strings.Contains(lower, "período") || strings.Contains(lower, "semestre") {
 				currentPeriod = t
 			}
 			return
@@ -336,18 +358,35 @@ func ParseCurriculum(html string) ([]CurriculumItem, error) {
 		if cells.Length() >= 4 {
 			c0 := cleanText(cells.Eq(0).Text())
 			c1 := cleanText(cells.Eq(1).Text())
-			if c0 == "" || strings.EqualFold(c0, "Código") || strings.EqualFold(c0, "Disciplina") {
+			if c0 == "" || isDashedSeparator(c0) || strings.EqualFold(c0, "Código") || strings.EqualFold(c0, "Disciplina") {
 				return
 			}
-			// Heuristic: either [Code, Name, ...] or [Name, ...]
+			prereq := cleanText(cells.Eq(cells.Length() - 1).Text())
+			if m := reCurriculumEntry.FindStringSubmatch(c0); len(m) == 4 {
+				code, name, hours := m[1], strings.TrimSpace(m[2]), m[3]
+				if _, dup := seen[code]; !dup {
+					seen[code] = struct{}{}
+					items = append(items, CurriculumItem{
+						Period:       currentPeriod,
+						Code:         code,
+						Name:         name,
+						Hours:        hours,
+						Prerequisite: prereq,
+					})
+				}
+				return
+			}
 			if len(c0) >= 4 && isDigits(c0) {
-				items = append(items, CurriculumItem{
-					Period:       currentPeriod,
-					Code:         c0,
-					Name:         c1,
-					Hours:        cleanText(cells.Eq(2).Text()),
-					Prerequisite: cleanText(cells.Eq(cells.Length() - 1).Text()),
-				})
+				if _, dup := seen[c0]; !dup {
+					seen[c0] = struct{}{}
+					items = append(items, CurriculumItem{
+						Period:       currentPeriod,
+						Code:         c0,
+						Name:         c1,
+						Hours:        cleanText(cells.Eq(2).Text()),
+						Prerequisite: prereq,
+					})
+				}
 			}
 		}
 	})
@@ -446,18 +485,41 @@ func findDataTable(doc *goquery.Document, headerMarker string) *goquery.Selectio
 	var matched *goquery.Selection
 	markerLower := strings.ToLower(headerMarker)
 	doc.Find("table.topoesq, table").EachWithBreak(func(_ int, t *goquery.Selection) bool {
-		// Prefer inner table containing the header marker directly in its first row.
-		firstRow := t.Find("tr").First()
-		if firstRow.Find("table").Length() > 0 {
+		// Prefer inner table containing the header marker within its first few non-nested rows.
+		found := false
+		t.Find("tr").Slice(0, minInt(5, t.Find("tr").Length())).EachWithBreak(func(_ int, row *goquery.Selection) bool {
+			if row.Find("table").Length() > 0 {
+				return true
+			}
+			if strings.Contains(strings.ToLower(cleanText(row.Text())), markerLower) {
+				found = true
+				return false
+			}
 			return true
-		}
-		if strings.Contains(strings.ToLower(cleanText(firstRow.Text())), markerLower) {
+		})
+		if found {
 			matched = t
 			return false
 		}
 		return true
 	})
 	return matched
+}
+
+func isDashedSeparator(s string) bool {
+	trimmed := strings.Trim(s, "-_ ")
+	return trimmed == ""
+}
+
+func looksLikeTranscriptRow(c0 string) bool {
+	return len(c0) >= 7 && isDigits(c0[:4]) && strings.Contains(c0, " - ")
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func cellText(sel *goquery.Selection) string {

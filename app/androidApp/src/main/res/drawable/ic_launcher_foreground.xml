@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Graduation cap mortarboard -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,31L26,43.5L54,56L82,43.5L54,31Z" />
+    <!-- Cap base crown -->
+    <path
+        android:fillColor="#EBF5FF"
+        android:pathData="M37,51.2V62.5C37,67.5 44.6,71.5 54,71.5C63.4,71.5 71,67.5 71,62.5V51.2L54,58.8L37,51.2Z" />
+    <!-- Tassel cord & drop -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M75.5,46.4V63"
+        android:strokeColor="#FFFFD60A"
+        android:strokeLineCap="round"
+        android:strokeWidth="3.2" />
+    <path
+        android:fillColor="#FFFFD60A"
+        android:pathData="M75.5,65.5m-3.2,0a3.2,3.2 0,1 1,6.4 0a3.2,3.2 0,1 1,-6.4 0" />
+</vector>

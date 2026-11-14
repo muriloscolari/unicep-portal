@@ -29,5 +29,10 @@ expect object PlatformBridge {
     fun scheduleGradeSync()
     fun cancelGradeSync()
     fun requestNotificationPermissionIfNeeded()
+    fun postSystemNotification(id: Int, title: String, body: String, openTab: Int = 2): Boolean
+    fun initNavigationHistory(initialRoute: String)
+    fun pushNavigationRoute(route: String)
+    fun setPopRouteListener(listener: (String) -> Unit)
+    fun setAndroidBackHandler(handler: (() -> Boolean)?)
     fun createHttpEngine(): HttpClientEngine
 }

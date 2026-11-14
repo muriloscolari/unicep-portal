@@ -9,6 +9,8 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
+import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.work.Constraints
@@ -25,17 +27,35 @@ actual object PlatformBridge {
     private var appContext: Context? = null
     private var secureStore: AndroidSecureStore? = null
     private var activityRef: WeakReference<Activity>? = null
+    private var backHandler: (() -> Boolean)? = null
+    private var registeredBackCallback: OnBackPressedCallback? = null
 
     fun initContext(context: Context) {
         if (appContext == null) {
             appContext = context.applicationContext
             secureStore = AndroidSecureStore(context.applicationContext)
+            GradeSyncWorker.ensureChannel(context.applicationContext)
         }
     }
 
     fun bindActivity(activity: Activity) {
         initContext(activity)
         activityRef = WeakReference(activity)
+        if (activity is ComponentActivity) {
+            registeredBackCallback?.remove()
+            val callback = object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    val consumed = backHandler?.invoke() ?: false
+                    if (!consumed) {
+                        isEnabled = false
+                        activity.onBackPressedDispatcher.onBackPressed()
+                        isEnabled = true
+                    }
+                }
+            }
+            activity.onBackPressedDispatcher.addCallback(activity, callback)
+            registeredBackCallback = callback
+        }
     }
 
     actual fun capabilities(): DeviceCapabilities {
@@ -103,6 +123,25 @@ actual object PlatformBridge {
         if (ContextCompat.checkSelfPermission(act, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(act, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
         }
+    }
+
+    actual fun postSystemNotification(id: Int, title: String, body: String, openTab: Int): Boolean {
+        val ctx = appContext ?: return false
+        val posted = GradeSyncWorker.showLocalNotification(ctx, id, title, body, openTab)
+        if (!posted) {
+            requestNotificationPermissionIfNeeded()
+        }
+        return posted
+    }
+
+    actual fun initNavigationHistory(initialRoute: String) {}
+
+    actual fun pushNavigationRoute(route: String) {}
+
+    actual fun setPopRouteListener(listener: (String) -> Unit) {}
+
+    actual fun setAndroidBackHandler(handler: (() -> Boolean)?) {
+        backHandler = handler
     }
 
     actual fun createHttpEngine(): HttpClientEngine = OkHttp.create()

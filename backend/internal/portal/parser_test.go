@@ -120,3 +120,80 @@ func TestParseReportCard(t *testing.T) {
 		t.Fatalf("expected complementary hours parsed")
 	}
 }
+
+func TestNormalizePortalQueryISO88591(t *testing.T) {
+	mgr := NewManager("https://cdseducacional.com.br", nil)
+	got := mgr.normalizeURL("/ambiente_aluno/relatorios/boletim_detalhado.asp?ra=1234567&nomealu=ALUNO EXEMPLO DA SILVA&nomecur=Bacharelado em Engenharia de Computação - Noturno&ano=2026&sem=2&grade=1928&anograde=2025&mesgrade=1&codigoMatricula=999999")
+	want := "https://cdseducacional.com.br/ambiente_aluno/relatorios/boletim_detalhado.asp?ra=1234567&nomealu=ALUNO%20EXEMPLO%20DA%20SILVA&nomecur=Bacharelado%20em%20Engenharia%20de%20Computa%E7%E3o%20-%20Noturno&ano=2026&sem=2&grade=1928&anograde=2025&mesgrade=1&codigoMatricula=999999"
+	if got != want {
+		t.Fatalf("unexpected encoded URL:\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestParseTranscriptWithDashedRowsAndMultipleTables(t *testing.T) {
+	html := `
+<html><body>
+<table class="texto">
+  <tr><td>-----------------------------------</td><td>---</td><td>---</td><td>---</td><td>---</td><td>---</td><td>---</td><td>---</td></tr>
+  <tr><td>Disciplina</td><td>Ano</td><td>Exame</td><td>Média</td><td>CH</td><td>FA</td><td>Freq. (%)</td><td>Sit.</td></tr>
+  <tr><td>-----------------------------------</td><td>---</td><td>---</td><td>---</td><td>---</td><td>---</td><td>---</td><td>---</td></tr>
+  <tr>
+    <td><a href="relatorio_dadosdisciplinas.asp?grade=1928&amp;discgrad=53457">19280105 - INTRODUÇÃO À ENGENHARIA DE COMPUTAÇÃO</a></td>
+    <td>1 / 2026</td><td></td><td>7,00</td><td>20</td><td>0</td><td>100,00</td><td>A</td>
+  </tr>
+  <tr><td>-----------------------------------</td><td>---</td><td>---</td><td>---</td><td>---</td><td>---</td><td>---</td><td>---</td></tr>
+  <tr>
+    <td>19280403 - ELETRÔNICA</td>
+    <td>2 / 2026</td><td></td><td>5,00</td><td>60</td><td>6</td><td>90,00</td><td>C</td>
+  </tr>
+</table>
+<table class="texto">
+  <tr><td>-----------------------------------</td><td>---</td><td>---</td><td>---</td><td>---</td><td>---</td><td>---</td><td>---</td></tr>
+  <tr><td>Disciplina</td><td>Ano</td><td>Exame</td><td>Média</td><td>CH</td><td>FA</td><td>Freq. (%)</td><td>Sit.</td></tr>
+  <tr><td>-----------------------------------</td><td>---</td><td>---</td><td>---</td><td>---</td><td>---</td><td>---</td><td>---</td></tr>
+  <tr>
+    <td>19280501 - ÉTICA E CIDADANIA</td>
+    <td>/</td><td></td><td></td><td>60</td><td>0</td><td>100,00</td><td></td>
+  </tr>
+</table>
+</body></html>`
+
+	items, err := ParseTranscript(html)
+	if err != nil {
+		t.Fatalf("parse transcript: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("expected 3 items across 2 tables, got %d: %+v", len(items), items)
+	}
+	if items[0].SyllabusURL != "/modulo_matricula/relatorios/relatorio_dadosdisciplinas.asp?grade=1928&discgrad=53457" {
+		t.Fatalf("unexpected syllabus url: %s", items[0].SyllabusURL)
+	}
+	if items[0].StatusLabel != "Aprovado" || items[1].StatusLabel != "Cursando" {
+		t.Fatalf("unexpected status labels: %+v %+v", items[0], items[1])
+	}
+}
+
+func TestParseCurriculumCombinedDisciplineColumn(t *testing.T) {
+	html := `
+<html><body>
+<table>
+  <tr><td colspan="8">1° Período</td></tr>
+  <tr><td>Disciplina</td><td>P.R.</td><td>T.E.D.</td><td>A.M.T.</td><td>A.E.</td><td>A.C.</td><td>E.S.</td><td>Pré Requisito</td></tr>
+  <tr>
+    <td>19280102 - ALGORITMOS E PROGRAMAÇÃO DE COMPUTADORES - 60 horas</td>
+    <td>50</td><td>10</td><td>0</td><td>0</td><td>0</td><td>0</td><td>-</td>
+  </tr>
+</table>
+</body></html>`
+
+	items, err := ParseCurriculum(html)
+	if err != nil {
+		t.Fatalf("parse curriculum: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 curriculum item, got %d", len(items))
+	}
+	if items[0].Period != "1° Período" || items[0].Code != "19280102" || items[0].Hours != "60" {
+		t.Fatalf("unexpected curriculum item: %+v", items[0])
+	}
+}

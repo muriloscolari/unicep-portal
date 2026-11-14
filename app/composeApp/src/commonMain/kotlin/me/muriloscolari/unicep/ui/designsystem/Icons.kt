@@ -167,4 +167,15 @@ object PortalIcons {
             }
         }
     }
+
+    val Close: ImageVector by lazy {
+        strokeIcon("Close") {
+            strokePath {
+                moveTo(6f, 6f)
+                lineTo(18f, 18f)
+                moveTo(18f, 6f)
+                lineTo(6f, 18f)
+            }
+        }
+    }
 }

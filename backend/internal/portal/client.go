@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/charmap"
 )
 
@@ -319,13 +320,75 @@ func (m *Manager) doGetRaw(ctx context.Context, client *http.Client, targetURL s
 }
 
 func (m *Manager) normalizeURL(relPath string) string {
-	if strings.HasPrefix(relPath, "http://") || strings.HasPrefix(relPath, "https://") {
-		return relPath
+	full := relPath
+	if !strings.HasPrefix(relPath, "http://") && !strings.HasPrefix(relPath, "https://") {
+		if !strings.HasPrefix(relPath, "/") {
+			full = m.baseURL + "/" + relPath
+		} else {
+			full = m.baseURL + relPath
+		}
 	}
-	if !strings.HasPrefix(relPath, "/") {
-		return m.baseURL + "/" + relPath
+	if idx := strings.IndexByte(full, '?'); idx >= 0 {
+		base := full[:idx]
+		rawQuery := full[idx+1:]
+		return base + "?" + encodeRawQueryISO88591(rawQuery)
 	}
-	return m.baseURL + relPath
+	return full
+}
+
+// encodeRawQueryISO88591 encodes parameter values in rawQuery using Windows-1252/ISO-8859-1 percent-encoding
+// (e.g. spaces as %20 and accented letters as %E7/%E3) so IIS/Classic ASP accepts raw portal option values.
+func encodeRawQueryISO88591(rawQuery string) string {
+	if rawQuery == "" {
+		return ""
+	}
+	enc := charmap.Windows1252.NewEncoder()
+	parts := strings.Split(rawQuery, "&")
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		eq := strings.IndexByte(part, '=')
+		if eq < 0 {
+			parts[i] = escapeQueryTokenISO88591(enc, part)
+			continue
+		}
+		k := part[:eq]
+		v := part[eq+1:]
+		parts[i] = escapeQueryTokenISO88591(enc, k) + "=" + escapeQueryTokenISO88591(enc, v)
+	}
+	return strings.Join(parts, "&")
+}
+
+func escapeQueryTokenISO88591(enc *encoding.Encoder, s string) string {
+	isoStr, err := enc.String(s)
+	if err != nil {
+		isoStr = s
+	}
+	b := []byte(isoStr)
+	var buf bytes.Buffer
+	for i := 0; i < len(b); i++ {
+		c := b[i]
+		// Preserve valid existing %XX escapes.
+		if c == '%' && i+2 < len(b) && isHexDigit(b[i+1]) && isHexDigit(b[i+2]) {
+			buf.WriteByte(c)
+			buf.WriteByte(b[i+1])
+			buf.WriteByte(b[i+2])
+			i += 2
+			continue
+		}
+		if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+			c == '-' || c == '_' || c == '.' || c == '~' || c == '@' {
+			buf.WriteByte(c)
+		} else {
+			fmt.Fprintf(&buf, "%%%02X", c)
+		}
+	}
+	return buf.String()
+}
+
+func isHexDigit(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 }
 
 func resolveRelative(baseStr, loc string) string {
