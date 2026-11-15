@@ -30,7 +30,7 @@ services:
     ports:
       - "${BIND_HOST:-127.0.0.1}:${PORT:-47832}:47832"
     volumes:
-      - ./data:/app/data
+      - unicep_data:/app/data
 
   # Atualiza automaticamente apenas o container unicep-portal quando houver nova imagem no Forgejo
   watchtower:
@@ -46,3 +46,6 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       # Repositório/pacote público no Forgejo (sem necessidade de login no homelab)
+
+volumes:
+  unicep_data:

@@ -23,7 +23,7 @@ Versão própria e otimizada do Portal do Aluno da UNICEP (`cdseducacional.com.b
    docker compose pull
    docker compose up -d
    ```
-   A partir daí, o serviço `watchtower` verifica o Forgejo Registry a cada 5 minutos (`300s`), baixa a imagem nova assim que você publicar uma atualização e reinicia o container `unicep-portal` preservando `./data/portal.db`.
+   A partir daí, o serviço `watchtower` verifica o Forgejo Registry a cada 5 minutos (`300s`), baixa a imagem nova assim que você publicar uma atualização e reinicia o container `unicep-portal` preservando o volume `unicep_data` (`/app/data/portal.db`).
 
 3. Exponha `http://127.0.0.1:47832` via **Cloudflare Tunnel (`cloudflared`)** *(recomendado, zero portas abertas no roteador)* ou via Nginx com [deploy/nginx-unicep.conf.example](deploy/nginx-unicep.conf.example) + Cloudflare **Full (Strict)** + **Authenticated Origin Pulls (mTLS)**.
 
