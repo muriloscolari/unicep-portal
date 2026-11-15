@@ -30,6 +30,20 @@ data class AppUpdateInfo(
     val htmlUrl: String
 )
 
+data class ExportSection(
+    val heading: String,
+    val badge: String = "",
+    val lines: List<String> = emptyList()
+)
+
+data class ExportCardData(
+    val title: String,
+    val subtitle: String = "",
+    val footer: String = "",
+    val sections: List<ExportSection> = emptyList(),
+    val plainText: String = ""
+)
+
 expect object PlatformBridge {
     fun capabilities(): DeviceCapabilities
     fun currentAppVersion(): String
@@ -39,6 +53,9 @@ expect object PlatformBridge {
     fun putString(key: String, value: String)
     fun remove(key: String)
     fun openExternalUrl(url: String)
+    fun shareText(title: String, text: String): Boolean
+    fun exportPng(fileName: String, data: ExportCardData): Boolean
+    fun printDocument(title: String, data: ExportCardData): Boolean
     fun scheduleGradeSync()
     fun cancelGradeSync()
     fun requestNotificationPermissionIfNeeded()

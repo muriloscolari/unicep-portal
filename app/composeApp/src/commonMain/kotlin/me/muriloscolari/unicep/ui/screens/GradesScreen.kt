@@ -50,8 +50,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -62,7 +64,10 @@ import me.muriloscolari.unicep.data.api.PartialGradeItem
 import me.muriloscolari.unicep.data.api.PeriodOption
 import me.muriloscolari.unicep.data.api.ReportCardItem
 import me.muriloscolari.unicep.data.api.ReportCardResponse
+import me.muriloscolari.unicep.data.api.StudentInfo
 import me.muriloscolari.unicep.platform.DesignStyle
+import me.muriloscolari.unicep.platform.buildGradesExportData
+import me.muriloscolari.unicep.ui.designsystem.ExportActionModal
 import me.muriloscolari.unicep.ui.designsystem.AppleEmptyState
 import me.muriloscolari.unicep.ui.designsystem.AppleProgressBar
 import me.muriloscolari.unicep.ui.designsystem.AppleSheet
@@ -150,6 +155,8 @@ fun SemesterScreen(
     val colors = LocalPortalColors.current
     val appleType = LocalAppleTypography.current
     val appleInsets = LocalAppleContentInsets.current
+    val haptics = LocalHapticFeedback.current
+    var showExportSheet by remember { mutableStateOf(false) }
 
     val selectedIdx = periods.indexOfFirst { it.id == selectedPeriodId }.coerceAtLeast(0)
 
@@ -181,22 +188,42 @@ fun SemesterScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 item {
-                    Column {
-                        Text(
-                            text = "Olá, $studentFirstName",
-                            color = colors.textPrimary,
-                            style = MaterialTheme.typography.headlineLarge
-                        )
-                        if (dashboard != null) {
-                            Spacer(Modifier.height(3.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = listOfNotNull(
-                                    "RA ${dashboard.student.ra}",
-                                    dashboard.student.campus.takeIf { it.isNotBlank() }
-                                ).joinToString(" • "),
-                                color = colors.textSecondary,
-                                fontSize = 13.sp
+                                text = "Olá, $studentFirstName",
+                                color = colors.textPrimary,
+                                style = MaterialTheme.typography.headlineLarge
                             )
+                            if (dashboard != null) {
+                                Spacer(Modifier.height(3.dp))
+                                Text(
+                                    text = listOfNotNull(
+                                        "RA ${dashboard.student.ra}",
+                                        dashboard.student.campus.takeIf { it.isNotBlank() }
+                                    ).joinToString(" • "),
+                                    color = colors.textSecondary,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
+                        if (mergedSubjects.isNotEmpty()) {
+                            IconButton(
+                                onClick = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    showExportSheet = true
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = PortalIcons.Share,
+                                    contentDescription = "Exportar resumo do semestre",
+                                    tint = colors.accent
+                                )
+                            }
                         }
                     }
                 }
@@ -347,6 +374,19 @@ fun SemesterScreen(
                     onSelectSubject = onOpenSubject,
                     onDismiss = onCloseRiskyAttendance
                 )
+                showExportSheet -> {
+                    val periodLabel = periods.getOrNull(selectedIdx)?.label.orEmpty()
+                    ExportActionModal(
+                        fileName = "unicep_semestre_${selectedPeriodId.ifBlank { "atual" }}",
+                        data = buildGradesExportData(
+                            student = dashboard?.student ?: StudentInfo(),
+                            periodLabel = periodLabel,
+                            grades = grades,
+                            reportItems = report.items
+                        ),
+                        onDismiss = { showExportSheet = false }
+                    )
+                }
             }
         }
         return
@@ -398,47 +438,78 @@ fun SemesterScreen(
                                 color = colors.textPrimary,
                                 style = appleType.largeTitle
                             )
-                            if (periods.isNotEmpty()) {
-                                val currentLabel = periods.getOrNull(selectedIdx)?.label?.let { shortenPeriod(it) } ?: "Período"
-                                Box {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                if (mergedSubjects.isNotEmpty()) {
                                     GlassSurface(
                                         modifier = Modifier
+                                            .size(34.dp)
                                             .clip(CircleShape)
                                             .pointerHoverIcon(PointerIcon.Hand)
-                                            .clickable { periodMenuOpen = true },
+                                            .clickable {
+                                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                showExportSheet = true
+                                            },
                                         shape = CircleShape,
                                         shadowElevation = 8.dp
                                     ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                        ) {
-                                            Text(
-                                                text = currentLabel,
-                                                color = colors.accent,
-                                                style = appleType.subheadline,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
+                                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                             Icon(
-                                                imageVector = PortalIcons.ChevronDown,
-                                                contentDescription = "Selecionar período",
+                                                imageVector = PortalIcons.Share,
+                                                contentDescription = "Exportar resumo do semestre",
                                                 tint = colors.accent,
-                                                modifier = Modifier.size(14.dp)
+                                                modifier = Modifier.size(16.dp)
                                             )
                                         }
                                     }
-                                    GlassMenu(
-                                        expanded = periodMenuOpen,
-                                        onDismiss = { periodMenuOpen = false },
-                                        items = periods.map { p ->
-                                            GlassMenuItem(
-                                                label = p.label,
-                                                selected = p.id == selectedPeriodId,
-                                                onClick = { onSelectPeriod(p.id) }
-                                            )
+                                }
+                                if (periods.isNotEmpty()) {
+                                    val currentLabel = periods.getOrNull(selectedIdx)?.label?.let { shortenPeriod(it) } ?: "Período"
+                                    Box {
+                                        GlassSurface(
+                                            modifier = Modifier
+                                                .clip(CircleShape)
+                                                .pointerHoverIcon(PointerIcon.Hand)
+                                                .clickable { periodMenuOpen = true },
+                                            shape = CircleShape,
+                                            shadowElevation = 8.dp
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                            ) {
+                                                Text(
+                                                    text = currentLabel,
+                                                    color = colors.accent,
+                                                    style = appleType.subheadline,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                                Icon(
+                                                    imageVector = PortalIcons.ChevronDown,
+                                                    contentDescription = "Selecionar período",
+                                                    tint = colors.accent,
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                            }
                                         }
-                                    )
+                                        GlassMenu(
+                                            expanded = periodMenuOpen,
+                                            onDismiss = { periodMenuOpen = false },
+                                            items = periods.map { p ->
+                                                GlassMenuItem(
+                                                    label = p.label,
+                                                    selected = p.id == selectedPeriodId,
+                                                    onClick = {
+                                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                        onSelectPeriod(p.id)
+                                                    }
+                                                )
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -693,6 +764,19 @@ fun SemesterScreen(
                     onDismiss = onCloseRiskyAttendance
                 )
             }
+        }
+        if (showExportSheet) {
+            val periodLabel = periods.getOrNull(selectedIdx)?.label.orEmpty()
+            ExportActionModal(
+                fileName = "unicep_semestre_${selectedPeriodId.ifBlank { "atual" }}",
+                data = buildGradesExportData(
+                    student = dashboard?.student ?: StudentInfo(),
+                    periodLabel = periodLabel,
+                    grades = grades,
+                    reportItems = report.items
+                ),
+                onDismiss = { showExportSheet = false }
+            )
         }
     }
 }
@@ -1220,10 +1304,15 @@ fun AppleSubjectDetailSheet(
                     style = appleType.subheadline
                 )
                 Spacer(Modifier.height(6.dp))
+                val sliderHaptics = LocalHapticFeedback.current
                 Slider(
                     value = targetAvg,
                     onValueChange = { raw ->
-                        targetAvg = ((raw * 2f).roundToInt() / 2f).coerceIn(5.0f, 10.0f)
+                        val snapped = ((raw * 2f).roundToInt() / 2f).coerceIn(5.0f, 10.0f)
+                        if (snapped != targetAvg) {
+                            sliderHaptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            targetAvg = snapped
+                        }
                     },
                     valueRange = 5.0f..10.0f,
                     steps = 9,
@@ -1447,7 +1536,7 @@ private fun MaterialAttendanceProgressBlock(report: ReportCardItem) {
 }
 
 @Composable
-private fun PortalOverlayModal(
+internal fun PortalOverlayModal(
     title: String,
     subtitle: String?,
     onDismiss: () -> Unit,

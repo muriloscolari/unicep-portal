@@ -1,7 +1,9 @@
 package me.muriloscolari.unicep.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -26,8 +28,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -57,6 +62,12 @@ import me.muriloscolari.unicep.ui.designsystem.LocalPortalColors
 import me.muriloscolari.unicep.ui.designsystem.PortalBadge
 import me.muriloscolari.unicep.ui.designsystem.PortalCard
 import me.muriloscolari.unicep.ui.designsystem.PortalDivider
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import me.muriloscolari.unicep.data.api.StudentInfo
+import me.muriloscolari.unicep.platform.buildScheduleExportData
+import me.muriloscolari.unicep.ui.designsystem.ExportActionModal
+import me.muriloscolari.unicep.ui.designsystem.GlassSurface
 import me.muriloscolari.unicep.ui.designsystem.PortalIcons
 import me.muriloscolari.unicep.ui.designsystem.PortalListRow
 import me.muriloscolari.unicep.ui.designsystem.PortalSearchField
@@ -68,6 +79,13 @@ import me.muriloscolari.unicep.ui.designsystem.ProgressRing
 import me.muriloscolari.unicep.ui.designsystem.tabularNumberStyle
 import me.muriloscolari.unicep.ui.util.toDisplayTitle
 
+private enum class CourseStatusFilter(val label: String) {
+    ALL("Todas"),
+    APPROVED("Aprovadas"),
+    IN_PROGRESS("Cursando"),
+    PENDING("Pendentes")
+}
+
 @Composable
 fun AcademicScreen(
     curriculum: CurriculumResponse?,
@@ -75,6 +93,7 @@ fun AcademicScreen(
     selectedSubTab: Int,
     onSelectSubTab: (Int) -> Unit,
     onOpenProxy: (String) -> Unit,
+    student: StudentInfo = StudentInfo(),
     loading: Boolean = false,
     listState: LazyListState = rememberLazyListState()
 ) {
@@ -82,24 +101,59 @@ fun AcademicScreen(
     val colors = LocalPortalColors.current
     val appleType = LocalAppleTypography.current
     val appleInsets = LocalAppleContentInsets.current
+    val haptics = LocalHapticFeedback.current
 
     var search by remember { mutableStateOf("") }
+    var statusFilter by remember { mutableStateOf(CourseStatusFilter.ALL) }
+    var showExportScheduleSheet by remember { mutableStateOf(false) }
 
     val transcript = curriculum?.transcript.orEmpty()
+    val transcriptStatusByName = remember(transcript) {
+        transcript.associate { it.name.trim().uppercase() to it.status }
+    }
     val approvedCount = remember(transcript) { transcript.count { it.status == "A" } }
     val inProgressCount = remember(transcript) { transcript.count { it.status == "C" } }
     val totalCount = transcript.size
+    val canExportSchedule = selectedSubTab == 2 && schedule != null && schedule.rows.isNotEmpty()
+
+    fun matchesFilter(status: String?): Boolean = when (statusFilter) {
+        CourseStatusFilter.ALL -> true
+        CourseStatusFilter.APPROVED -> status == "A"
+        CourseStatusFilter.IN_PROGRESS -> status == "C"
+        CourseStatusFilter.PENDING -> status != "A" && status != "C"
+    }
 
     if (style != DesignStyle.APPLE) {
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize().background(colors.background),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 104.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            item {
-                Text("Curso", color = colors.textPrimary, style = MaterialTheme.typography.headlineLarge)
-            }
+        Box(modifier = Modifier.fillMaxSize().background(colors.background)) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 104.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Curso", color = colors.textPrimary, style = MaterialTheme.typography.headlineLarge)
+                        if (canExportSchedule) {
+                            IconButton(
+                                onClick = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    showExportScheduleSheet = true
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = PortalIcons.Share,
+                                    contentDescription = "Exportar horário das aulas",
+                                    tint = colors.accent
+                                )
+                            }
+                        }
+                    }
+                }
 
             if (totalCount > 0) {
                 item {
@@ -146,24 +200,37 @@ fun AcademicScreen(
                 PortalSegmentedControl(
                     options = listOf("Histórico", "Grade", "Horário"),
                     selectedIndex = selectedSubTab,
-                    onSelect = onSelectSubTab
+                    onSelect = { idx ->
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onSelectSubTab(idx)
+                    }
                 )
             }
 
             if (selectedSubTab < 2) {
                 item {
-                    PortalTextField(
-                        value = search,
-                        onValueChange = { search = it },
-                        label = "Filtrar disciplina..."
-                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        PortalTextField(
+                            value = search,
+                            onValueChange = { search = it },
+                            label = "Filtrar disciplina..."
+                        )
+                        CourseFilterChipsRow(
+                            selected = statusFilter,
+                            onSelect = {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                statusFilter = it
+                            }
+                        )
+                    }
                 }
             }
 
             when (selectedSubTab) {
                 0 -> {
                     val list = transcript.filter {
-                        search.isBlank() || it.name.contains(search, ignoreCase = true)
+                        (search.isBlank() || it.name.contains(search, ignoreCase = true)) &&
+                            matchesFilter(it.status)
                     }
                     if (list.isEmpty()) {
                         item {
@@ -211,8 +278,12 @@ fun AcademicScreen(
                 }
 
                 1 -> {
-                    val matrix = curriculum?.matrix.orEmpty().filter {
-                        search.isBlank() || it.name.contains(search, ignoreCase = true) || it.code.contains(search, ignoreCase = true)
+                    val matrix = curriculum?.matrix.orEmpty().filter { row ->
+                        val matchesQuery = search.isBlank() ||
+                            row.name.contains(search, ignoreCase = true) ||
+                            row.code.contains(search, ignoreCase = true)
+                        val rowStatus = transcriptStatusByName[row.name.trim().uppercase()]
+                        matchesQuery && matchesFilter(rowStatus)
                     }
                     if (matrix.isEmpty()) {
                         item {
@@ -268,6 +339,14 @@ fun AcademicScreen(
                 }
             }
         }
+            if (showExportScheduleSheet && schedule != null) {
+                ExportActionModal(
+                    fileName = "unicep_horario",
+                    data = buildScheduleExportData(student = student, schedule = schedule),
+                    onDismiss = { showExportScheduleSheet = false }
+                )
+            }
+        }
         return
     }
 
@@ -291,11 +370,40 @@ fun AcademicScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 item(key = "course_title") {
-                    Text(
-                        text = "Curso",
-                        color = colors.textPrimary,
-                        style = appleType.largeTitle
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Curso",
+                            color = colors.textPrimary,
+                            style = appleType.largeTitle
+                        )
+                        if (canExportSchedule) {
+                            GlassSurface(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(CircleShape)
+                                    .pointerHoverIcon(PointerIcon.Hand)
+                                    .clickable {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        showExportScheduleSheet = true
+                                    },
+                                shape = CircleShape,
+                                shadowElevation = 8.dp
+                            ) {
+                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = PortalIcons.Share,
+                                        contentDescription = "Exportar horário das aulas",
+                                        tint = colors.accent,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 if (loading && curriculum == null) {
@@ -355,17 +463,29 @@ fun AcademicScreen(
                     PortalSegmentedControl(
                         options = listOf("Histórico", "Grade", "Horário"),
                         selectedIndex = selectedSubTab,
-                        onSelect = onSelectSubTab
+                        onSelect = { idx ->
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onSelectSubTab(idx)
+                        }
                     )
                 }
 
                 if (selectedSubTab < 2) {
                     item(key = "course_search") {
-                        PortalSearchField(
-                            value = search,
-                            onValueChange = { search = it },
-                            placeholder = "Buscar disciplina"
-                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            PortalSearchField(
+                                value = search,
+                                onValueChange = { search = it },
+                                placeholder = "Buscar disciplina"
+                            )
+                            CourseFilterChipsRow(
+                                selected = statusFilter,
+                                onSelect = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    statusFilter = it
+                                }
+                            )
+                        }
                     }
                 }
 
@@ -377,7 +497,8 @@ fun AcademicScreen(
                     when (selectedSubTab) {
                         0 -> {
                             val filtered = transcript.filter {
-                                search.isBlank() || it.name.contains(search, ignoreCase = true)
+                                (search.isBlank() || it.name.contains(search, ignoreCase = true)) &&
+                                    matchesFilter(it.status)
                             }
                             if (filtered.isEmpty()) {
                                 item(key = "empty_transcript") {
@@ -455,8 +576,12 @@ fun AcademicScreen(
                         }
 
                         1 -> {
-                            val matrix = curriculum?.matrix.orEmpty().filter {
-                                search.isBlank() || it.name.contains(search, ignoreCase = true) || it.code.contains(search, ignoreCase = true)
+                            val matrix = curriculum?.matrix.orEmpty().filter { row ->
+                                val matchesQuery = search.isBlank() ||
+                                    row.name.contains(search, ignoreCase = true) ||
+                                    row.code.contains(search, ignoreCase = true)
+                                val rowStatus = transcriptStatusByName[row.name.trim().uppercase()]
+                                matchesQuery && matchesFilter(rowStatus)
                             }
                             if (matrix.isEmpty()) {
                                 item(key = "empty_matrix") {
@@ -607,6 +732,49 @@ fun AcademicScreen(
                         }
                     }
                 }
+            }
+        }
+        if (showExportScheduleSheet && schedule != null) {
+            ExportActionModal(
+                fileName = "unicep_horario",
+                data = buildScheduleExportData(student = student, schedule = schedule),
+                onDismiss = { showExportScheduleSheet = false }
+            )
+        }
+    }
+}
+
+@Composable
+private fun CourseFilterChipsRow(
+    selected: CourseStatusFilter,
+    onSelect: (CourseStatusFilter) -> Unit
+) {
+    val colors = LocalPortalColors.current
+    val appleType = LocalAppleTypography.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        CourseStatusFilter.entries.forEach { option ->
+            val isSelected = option == selected
+            Surface(
+                shape = CircleShape,
+                color = if (isSelected) colors.accent else colors.tertiaryFill,
+                border = if (isSelected) null else BorderStroke(0.5.dp, colors.divider),
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .pointerHoverIcon(PointerIcon.Hand)
+                    .clickable { onSelect(option) }
+            ) {
+                Text(
+                    text = option.label,
+                    color = if (isSelected) androidx.compose.ui.graphics.Color.White else colors.textSecondary,
+                    style = appleType.footnote,
+                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                )
             }
         }
     }

@@ -674,4 +674,22 @@ object PortalIcons {
             }
         }
     }
+
+    val Share: ImageVector by lazy {
+        strokeIcon("Share") {
+            strokePath {
+                moveTo(12f, 3f)
+                verticalLineTo(15f)
+                moveTo(8f, 7f)
+                lineTo(12f, 3f)
+                lineTo(16f, 7f)
+                moveTo(5f, 12f)
+                verticalLineTo(18f)
+                curveTo(5f, 19.66f, 6.34f, 21f, 8f, 21f)
+                horizontalLineTo(16f)
+                curveTo(17.66f, 21f, 19f, 19.66f, 19f, 18f)
+                verticalLineTo(12f)
+            }
+        }
+    }
 }

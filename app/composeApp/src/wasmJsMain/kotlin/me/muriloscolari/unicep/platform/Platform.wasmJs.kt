@@ -6,6 +6,307 @@ import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.js.Js
 import kotlinx.browser.window
 
+private fun jsonString(s: String): String = buildString(s.length + 2) {
+    append('"')
+    for (ch in s) {
+        when (ch) {
+            '\\' -> append("\\\\")
+            '"' -> append("\\\"")
+            '\n' -> append("\\n")
+            '\r' -> append("\\r")
+            '\t' -> append("\\t")
+            else -> if (ch.code < 0x20) append("\\u${ch.code.toString(16).padStart(4, '0')}") else append(ch)
+        }
+    }
+    append('"')
+}
+
+private fun encodeExportJson(data: ExportCardData): String = buildString {
+    append('{')
+    append("\"title\":").append(jsonString(data.title)).append(',')
+    append("\"subtitle\":").append(jsonString(data.subtitle)).append(',')
+    append("\"footer\":").append(jsonString(data.footer)).append(',')
+    append("\"sections\":[")
+    data.sections.forEachIndexed { idx, sec ->
+        if (idx > 0) append(',')
+        append('{')
+        append("\"heading\":").append(jsonString(sec.heading)).append(',')
+        append("\"badge\":").append(jsonString(sec.badge)).append(',')
+        append("\"lines\":[")
+        sec.lines.forEachIndexed { lIdx, line ->
+            if (lIdx > 0) append(',')
+            append(jsonString(line))
+        }
+        append("]}")
+    }
+    append("]}")
+}
+
+private fun jsCopyTextToClipboard(text: String): Boolean = js(
+    """(() => {
+        try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text);
+                return true;
+            }
+        } catch (e) {}
+        try {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.left = '-9999px';
+            document.body.appendChild(ta);
+            ta.select();
+            var ok = document.execCommand('copy');
+            document.body.removeChild(ta);
+            return !!ok;
+        } catch (e2) {
+            return false;
+        }
+    })()"""
+)
+
+private fun jsExportCardPng(fileName: String, jsonPayload: String): Boolean = js(
+    """(() => {
+        try {
+            var data = JSON.parse(jsonPayload);
+            var width = 1080;
+            var pad = 48;
+            var innerPad = 28;
+            var contentW = width - pad * 2;
+            var cardTextW = contentW - innerPad * 2;
+
+            var canvas = document.createElement('canvas');
+            var ctx = canvas.getContext('2d');
+
+            function wrapLines(text, font, maxW) {
+                ctx.font = font;
+                if (!text) return [];
+                var words = String(text).split(/\s+/);
+                var lines = [];
+                var current = '';
+                for (var i = 0; i < words.length; i++) {
+                    var test = current ? current + ' ' + words[i] : words[i];
+                    if (ctx.measureText(test).width > maxW && current) {
+                        lines.push(current);
+                        current = words[i];
+                    } else {
+                        current = test;
+                    }
+                }
+                if (current) lines.push(current);
+                return lines;
+            }
+
+            var fTitle = '700 40px Inter, -apple-system, BlinkMacSystemFont, sans-serif';
+            var fSub = '400 24px Inter, -apple-system, BlinkMacSystemFont, sans-serif';
+            var fHead = '700 28px Inter, -apple-system, BlinkMacSystemFont, sans-serif';
+            var fBadge = '600 22px Inter, -apple-system, BlinkMacSystemFont, sans-serif';
+            var fLine = '400 23px Inter, -apple-system, BlinkMacSystemFont, sans-serif';
+            var fFooter = '400 20px Inter, -apple-system, BlinkMacSystemFont, sans-serif';
+
+            var titleLines = wrapLines(data.title, fTitle, contentW - 22);
+            var subLines = data.subtitle ? wrapLines(data.subtitle, fSub, contentW - 22) : [];
+            var sections = (data.sections || []).map(function(sec) {
+                var hLines = wrapLines(sec.heading, fHead, cardTextW);
+                var bLines = sec.badge ? wrapLines(sec.badge, fBadge, cardTextW) : [];
+                var lBlocks = (sec.lines || []).map(function(l) { return wrapLines(l, fLine, cardTextW); });
+                var totalLineCount = lBlocks.reduce(function(acc, arr) { return acc + arr.length; }, 0);
+                var h = innerPad * 2 + hLines.length * 36 + (bLines.length ? 8 + bLines.length * 30 : 0) + totalLineCount * 32 + (lBlocks.length ? 8 : 0);
+                return { hLines: hLines, bLines: bLines, lBlocks: lBlocks, cardHeight: h };
+            });
+
+            var totalH = pad + titleLines.length * 48 + (subLines.length ? 8 + subLines.length * 32 : 0) + 28 +
+                sections.reduce(function(acc, s) { return acc + s.cardHeight + 18; }, 0) +
+                (data.footer ? 36 : 0) + pad;
+
+            canvas.width = width;
+            canvas.height = Math.max(240, totalH);
+
+            ctx.fillStyle = '#F2F4F8';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            function roundRect(x, y, w, h, r) {
+                ctx.beginPath();
+                ctx.moveTo(x + r, y);
+                ctx.arcTo(x + w, y, x + w, y + h, r);
+                ctx.arcTo(x + w, y + h, x, y + h, r);
+                ctx.arcTo(x, y + h, x, y, r);
+                ctx.arcTo(x, y, x + w, y, r);
+                ctx.closePath();
+            }
+
+            var y = pad;
+            var headerH = titleLines.length * 48 + (subLines.length ? 8 + subLines.length * 32 : 0);
+            ctx.fillStyle = '#007AFF';
+            roundRect(pad, y + 4, 8, Math.max(36, headerH - 8), 4);
+            ctx.fill();
+
+            ctx.textBaseline = 'top';
+            ctx.fillStyle = '#0F172A';
+            ctx.font = fTitle;
+            titleLines.forEach(function(line) {
+                ctx.fillText(line, pad + 22, y);
+                y += 48;
+            });
+            if (subLines.length) {
+                y += 8;
+                ctx.fillStyle = '#475569';
+                ctx.font = fSub;
+                subLines.forEach(function(line) {
+                    ctx.fillText(line, pad + 22, y);
+                    y += 32;
+                });
+            }
+            y += 28;
+
+            sections.forEach(function(sec) {
+                roundRect(pad, y, contentW, sec.cardHeight, 24);
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fill();
+                ctx.strokeStyle = '#E2E8F0';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                var cy = y + innerPad;
+                ctx.fillStyle = '#0F172A';
+                ctx.font = fHead;
+                sec.hLines.forEach(function(l) { ctx.fillText(l, pad + innerPad, cy); cy += 36; });
+                if (sec.bLines.length) {
+                    cy += 8;
+                    ctx.fillStyle = '#007AFF';
+                    ctx.font = fBadge;
+                    sec.bLines.forEach(function(l) { ctx.fillText(l, pad + innerPad, cy); cy += 30; });
+                }
+                if (sec.lBlocks.length) {
+                    cy += 8;
+                    ctx.fillStyle = '#334155';
+                    ctx.font = fLine;
+                    sec.lBlocks.forEach(function(block) {
+                        block.forEach(function(l) { ctx.fillText(l, pad + innerPad, cy); cy += 32; });
+                    });
+                }
+                y += sec.cardHeight + 18;
+            });
+
+            if (data.footer) {
+                y += 12;
+                ctx.fillStyle = '#64748B';
+                ctx.font = fFooter;
+                ctx.fillText(data.footer, pad, y);
+            }
+
+            canvas.toBlob(function(blob) {
+                if (!blob) return;
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = fileName + '.png';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(function() { URL.revokeObjectURL(url); }, 2000);
+            }, 'image/png');
+            return true;
+        } catch (e) {
+            return false;
+        }
+    })()"""
+)
+
+private fun jsPrintExportCard(jsonPayload: String): Boolean = js(
+    """(() => {
+        try {
+            var data = JSON.parse(jsonPayload);
+            var oldRoot = document.getElementById('unicep-print-root');
+            if (oldRoot) oldRoot.remove();
+            var oldStyle = document.getElementById('unicep-print-style');
+            if (oldStyle) oldStyle.remove();
+
+            var style = document.createElement('style');
+            style.id = 'unicep-print-style';
+            style.textContent =
+                '#unicep-print-root { display: none; }' +
+                '@media print {' +
+                '  body > *:not(#unicep-print-root) { display: none !important; }' +
+                '  #unicep-print-root { display: block !important; font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; color: #0F172A; padding: 16px; }' +
+                '  #unicep-print-root .up-header { border-bottom: 2px solid #E2E8F0; padding-bottom: 12px; margin-bottom: 16px; }' +
+                '  #unicep-print-root .up-title { font-size: 22px; font-weight: 700; margin: 0 0 4px 0; }' +
+                '  #unicep-print-root .up-sub { font-size: 13px; color: #475569; margin: 0; }' +
+                '  #unicep-print-root .up-card { border: 1px solid #CBD5E1; border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; page-break-inside: avoid; }' +
+                '  #unicep-print-root .up-card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 6px; }' +
+                '  #unicep-print-root .up-card-title { font-size: 14px; font-weight: 600; margin: 0; }' +
+                '  #unicep-print-root .up-badge { font-size: 12px; font-weight: 600; color: #1D4ED8; background: #EFF6FF; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }' +
+                '  #unicep-print-root .up-line { font-size: 12.5px; color: #334155; margin: 3px 0; line-height: 1.4; }' +
+                '  #unicep-print-root .up-footer { margin-top: 18px; padding-top: 10px; border-top: 1px solid #E2E8F0; font-size: 11px; color: #64748B; text-align: center; }' +
+                '}';
+            document.head.appendChild(style);
+
+            var root = document.createElement('div');
+            root.id = 'unicep-print-root';
+
+            var header = document.createElement('div');
+            header.className = 'up-header';
+            var h1 = document.createElement('h1');
+            h1.className = 'up-title';
+            h1.textContent = data.title || '';
+            header.appendChild(h1);
+            if (data.subtitle) {
+                var sub = document.createElement('p');
+                sub.className = 'up-sub';
+                sub.textContent = data.subtitle;
+                header.appendChild(sub);
+            }
+            root.appendChild(header);
+
+            (data.sections || []).forEach(function(sec) {
+                var card = document.createElement('div');
+                card.className = 'up-card';
+                var head = document.createElement('div');
+                head.className = 'up-card-head';
+                var h2 = document.createElement('h2');
+                h2.className = 'up-card-title';
+                h2.textContent = sec.heading || '';
+                head.appendChild(h2);
+                if (sec.badge) {
+                    var badge = document.createElement('span');
+                    badge.className = 'up-badge';
+                    badge.textContent = sec.badge;
+                    head.appendChild(badge);
+                }
+                card.appendChild(head);
+                (sec.lines || []).forEach(function(line) {
+                    var p = document.createElement('div');
+                    p.className = 'up-line';
+                    p.textContent = line;
+                    card.appendChild(p);
+                });
+                root.appendChild(card);
+            });
+
+            if (data.footer) {
+                var footer = document.createElement('div');
+                footer.className = 'up-footer';
+                footer.textContent = data.footer;
+                root.appendChild(footer);
+            }
+
+            document.body.appendChild(root);
+
+            var cleanup = function() {
+                root.remove();
+                style.remove();
+                window.removeEventListener('afterprint', cleanup);
+            };
+            window.addEventListener('afterprint', cleanup);
+            setTimeout(function() { window.print(); }, 60);
+            return true;
+        } catch (e) {
+            return false;
+        }
+    })()"""
+)
+
 private fun jsCurrentTimeMillis(): Double = js("Date.now()")
 
 private fun jsPrefersReducedMotion(): Boolean = js(
@@ -124,6 +425,19 @@ actual object PlatformBridge {
             return
         }
         window.open(clean, "_blank", "noopener,noreferrer")
+    }
+
+    actual fun shareText(title: String, text: String): Boolean {
+        return jsCopyTextToClipboard(text)
+    }
+
+    actual fun exportPng(fileName: String, data: ExportCardData): Boolean {
+        val safeName = fileName.replace(Regex("[^a-zA-Z0-9._-]"), "_").ifBlank { "unicep_export" }
+        return jsExportCardPng(safeName, encodeExportJson(data))
+    }
+
+    actual fun printDocument(title: String, data: ExportCardData): Boolean {
+        return jsPrintExportCard(encodeExportJson(data))
     }
 
     actual fun scheduleGradeSync() {}

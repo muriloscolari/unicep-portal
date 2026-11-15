@@ -101,6 +101,7 @@ import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import me.muriloscolari.unicep.data.api.ReportCardResponse
+import me.muriloscolari.unicep.data.api.StudentInfo
 import me.muriloscolari.unicep.data.repo.PortalRepository
 import me.muriloscolari.unicep.platform.AppUpdateInfo
 import me.muriloscolari.unicep.platform.DesignStyle
@@ -223,7 +224,10 @@ fun App(initialTab: Int = 0) {
         }
     }
 
+    val navHaptics = LocalHapticFeedback.current
+
     fun navigateToTab(tab: MainTab) {
+        navHaptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         val sameTabRoot = tab == currentTab &&
             selectedSubjectCode == null &&
             !showRiskyAttendanceModal &&
@@ -487,6 +491,7 @@ fun App(initialTab: Int = 0) {
                                 selectedSubTab = courseSubTab,
                                 onSelectSubTab = { courseSubTab = it },
                                 onOpenProxy = { path -> scope.launch { repo.openPortalLink(path, true) } },
+                                student = state.dashboard?.student ?: StudentInfo(),
                                 loading = state.loading,
                                 listState = courseListState
                             )
@@ -782,6 +787,7 @@ fun App(initialTab: Int = 0) {
                                                     selectedSubTab = courseSubTab,
                                                     onSelectSubTab = { courseSubTab = it },
                                                     onOpenProxy = { path -> scope.launch { repo.openPortalLink(path, true) } },
+                                                    student = state.dashboard?.student ?: StudentInfo(),
                                                     loading = state.loading,
                                                     listState = courseListState
                                                 )
