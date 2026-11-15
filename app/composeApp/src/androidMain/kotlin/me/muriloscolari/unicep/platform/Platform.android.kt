@@ -164,4 +164,17 @@ actual object PlatformBridge {
     }
 
     actual fun createHttpEngine(): HttpClientEngine = OkHttp.create()
+
+    actual fun currentTimeMillis(): Long = System.currentTimeMillis()
+
+    actual fun isReduceMotionEnabled(): Boolean {
+        val ctx = appContext ?: return false
+        return runCatching {
+            android.provider.Settings.Global.getFloat(
+                ctx.contentResolver,
+                android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,
+                1f
+            ) == 0f
+        }.getOrDefault(false)
+    }
 }

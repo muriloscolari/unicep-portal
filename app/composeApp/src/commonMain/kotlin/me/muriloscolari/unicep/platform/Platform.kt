@@ -48,4 +48,6 @@ expect object PlatformBridge {
     fun setPopRouteListener(listener: (String) -> Unit)
     fun setAndroidBackHandler(handler: (() -> Boolean)?)
     fun createHttpEngine(): HttpClientEngine
+    fun currentTimeMillis(): Long
+    fun isReduceMotionEnabled(): Boolean
 }

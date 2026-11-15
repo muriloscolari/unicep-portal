@@ -6,6 +6,15 @@ import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.js.Js
 import kotlinx.browser.window
 
+private fun jsCurrentTimeMillis(): Double = js("Date.now()")
+
+private fun jsPrefersReducedMotion(): Boolean = js(
+    """(() => {
+        try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
+        catch (e) { return false; }
+    })()"""
+)
+
 private fun jsShowWebNotification(title: String, body: String): Boolean = js(
     """{
         try {
@@ -168,4 +177,8 @@ actual object PlatformBridge {
         Result.failure(UnsupportedOperationException("Atualização automática disponível apenas no Android."))
 
     actual fun createHttpEngine(): HttpClientEngine = Js.create()
+
+    actual fun currentTimeMillis(): Long = jsCurrentTimeMillis().toLong()
+
+    actual fun isReduceMotionEnabled(): Boolean = jsPrefersReducedMotion()
 }
