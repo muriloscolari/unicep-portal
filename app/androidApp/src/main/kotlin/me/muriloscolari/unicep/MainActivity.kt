@@ -1,5 +1,7 @@
 package me.muriloscolari.unicep
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.Display
@@ -7,6 +9,7 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import me.muriloscolari.unicep.platform.PlatformBridge
 
 class MainActivity : ComponentActivity() {
@@ -14,10 +17,23 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         requestHighRefreshRate()
+        val folderPickerLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
+            PlatformBridge.onFolderPicked(uri)
+        }
         PlatformBridge.bindActivity(this)
+        PlatformBridge.bindFolderPicker { folderPickerLauncher.launch(null) }
         val initialTab = intent?.getIntExtra("open_tab", 0) ?: 0
         setContent {
             App(initialTab = initialTab)
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val requestedTab = intent.getIntExtra("open_tab", -1)
+        if (requestedTab >= 0) {
+            PlatformBridge.dispatchOpenTab(requestedTab)
         }
     }
 

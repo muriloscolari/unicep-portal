@@ -4,6 +4,8 @@ import android.Manifest
 import android.app.Activity
 import android.app.ActivityManager
 import android.content.ClipData
+import android.content.ContentResolver
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -15,12 +17,15 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.print.PrintAttributes
 import android.print.PrintManager
+import android.provider.DocumentsContract
+import android.provider.MediaStore
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
@@ -42,16 +47,52 @@ import io.ktor.client.engine.okhttp.OkHttp
 import java.io.File
 import java.io.FileOutputStream
 import java.lang.ref.WeakReference
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlinx.coroutines.CancellableContinuation
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 
 actual object PlatformBridge {
+    private val localDateFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")
     private var appContext: Context? = null
     private var secureStore: AndroidSecureStore? = null
     private var activityRef: WeakReference<Activity>? = null
     private var backHandler: (() -> Boolean)? = null
     private var backEnabled: Boolean = false
     private var predictiveBackListener: ((PredictiveBackState) -> Unit)? = null
+    private var openTabListener: ((Int) -> Unit)? = null
     private var registeredBackCallback: OnBackPressedCallback? = null
+    private var folderPickerTrigger: (() -> Unit)? = null
+    private var pendingFolderContinuation: CancellableContinuation<String?>? = null
+
+    private const val PREF_TREE_URI = "virtual_download_tree_uri"
+    private const val PREF_FOLDER_LABEL = "virtual_download_folder_label"
+    private const val DEFAULT_DOWNLOAD_LABEL = "Downloads/UnicepPortal"
+
+    fun bindFolderPicker(trigger: () -> Unit) {
+        folderPickerTrigger = trigger
+    }
+
+    fun onFolderPicked(uri: Uri?) {
+        val cont = pendingFolderContinuation
+        pendingFolderContinuation = null
+        val ctx = appContext
+        if (uri == null || ctx == null) {
+            cont?.resume(null)
+            return
+        }
+        val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        runCatching { ctx.contentResolver.takePersistableUriPermission(uri, flags) }
+        val label = deriveTreeFolderLabel(ctx, uri)
+        putString(PREF_TREE_URI, uri.toString())
+        putString(PREF_FOLDER_LABEL, label)
+        cont?.resume(label)
+    }
 
     fun initContext(context: Context) {
         if (appContext == null) {
@@ -140,16 +181,19 @@ actual object PlatformBridge {
         secureStore?.remove(key)
     }
 
-    actual fun openExternalUrl(url: String) {
+    actual fun openExternalUrl(url: String): Boolean {
         val clean = url.trim()
         if (!clean.startsWith("https://", ignoreCase = true) && !clean.startsWith("http://", ignoreCase = true)) {
-            return
+            return false
         }
-        val ctx = appContext ?: return
+        val ctx = appContext ?: return false
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(clean)).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        ctx.startActivity(intent)
+        return runCatching {
+            ctx.startActivity(intent)
+            true
+        }.getOrDefault(false)
     }
 
     actual fun shareText(title: String, text: String): Boolean {
@@ -516,6 +560,23 @@ actual object PlatformBridge {
 
     actual fun currentTimeMillis(): Long = System.currentTimeMillis()
 
+    actual fun formatEpochMillisLocal(millis: Long): String {
+        if (millis <= 0L) return ""
+        return runCatching {
+            Instant.ofEpochMilli(millis)
+                .atZone(ZoneId.systemDefault())
+                .format(localDateFormatter)
+        }.getOrDefault("")
+    }
+
+    actual fun setOpenTabListener(listener: ((Int) -> Unit)?) {
+        openTabListener = listener
+    }
+
+    actual fun dispatchOpenTab(tab: Int) {
+        openTabListener?.invoke(tab)
+    }
+
     actual fun isReduceMotionEnabled(): Boolean {
         val ctx = appContext ?: return false
         return runCatching {
@@ -525,5 +586,353 @@ actual object PlatformBridge {
                 1f
             ) == 0f
         }.getOrDefault(false)
+    }
+
+    actual fun supportsInAppDocumentViewer(): Boolean = true
+
+    actual fun supportsCustomDownloadFolder(): Boolean = true
+
+    actual fun isUsingCustomDownloadFolder(): Boolean {
+        val rawUri = getString(PREF_TREE_URI)?.takeIf { it.isNotBlank() } ?: return false
+        val ctx = appContext ?: return false
+        val uri = runCatching { Uri.parse(rawUri) }.getOrNull() ?: return false
+        return ctx.contentResolver.persistedUriPermissions.any { it.uri == uri && it.isWritePermission }
+    }
+
+    actual fun getDownloadFolderLabel(): String {
+        val rawUri = getString(PREF_TREE_URI)?.takeIf { it.isNotBlank() } ?: return DEFAULT_DOWNLOAD_LABEL
+        val savedLabel = getString(PREF_FOLDER_LABEL)?.takeIf { it.isNotBlank() }
+        val ctx = appContext ?: return savedLabel ?: DEFAULT_DOWNLOAD_LABEL
+        val uri = runCatching { Uri.parse(rawUri) }.getOrNull() ?: return DEFAULT_DOWNLOAD_LABEL
+        val hasPerm = ctx.contentResolver.persistedUriPermissions.any { it.uri == uri && it.isWritePermission }
+        return if (hasPerm) (savedLabel ?: deriveTreeFolderLabel(ctx, uri)) else DEFAULT_DOWNLOAD_LABEL
+    }
+
+    actual suspend fun pickDownloadFolder(): String? {
+        val trigger = folderPickerTrigger ?: return null
+        val act = activityRef?.get() ?: return null
+        return suspendCancellableCoroutine { cont ->
+            pendingFolderContinuation?.cancel()
+            pendingFolderContinuation = cont
+            cont.invokeOnCancellation {
+                if (pendingFolderContinuation === cont) {
+                    pendingFolderContinuation = null
+                }
+            }
+            act.runOnUiThread {
+                runCatching { trigger() }.onFailure {
+                    if (pendingFolderContinuation === cont) {
+                        pendingFolderContinuation = null
+                        cont.resume(null)
+                    }
+                }
+            }
+        }
+    }
+
+    actual fun clearDownloadFolder() {
+        val ctx = appContext
+        val rawUri = getString(PREF_TREE_URI)
+        if (ctx != null && !rawUri.isNullOrBlank()) {
+            runCatching {
+                val uri = Uri.parse(rawUri)
+                val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                ctx.contentResolver.releasePersistableUriPermission(uri, flags)
+            }
+        }
+        remove(PREF_TREE_URI)
+        remove(PREF_FOLDER_LABEL)
+    }
+
+    actual fun triggerBrowserDownload(url: String, fileName: String) {
+        openExternalUrl(url)
+    }
+
+    actual suspend fun saveDownloadedFile(
+        courseName: String,
+        fileName: String,
+        mimeType: String,
+        bytes: ByteArray
+    ): Result<String> = withContext(Dispatchers.IO) {
+        val ctx = appContext ?: return@withContext Result.failure(IllegalStateException("Contexto Android indisponível."))
+        val safeCourse = sanitizeFolderSegment(courseName, fallback = "Sala Virtual")
+        val cleanMime = mimeType.substringBefore(';').trim().ifBlank { inferMimeType(fileName, bytes) }
+        val safeFile = ensureFileExtension(sanitizeFileNameSegment(fileName, fallback = "arquivo"), cleanMime, bytes)
+
+        val customUriStr = getString(PREF_TREE_URI)?.takeIf { it.isNotBlank() }
+        if (customUriStr != null) {
+            val treeUri = runCatching { Uri.parse(customUriStr) }.getOrNull()
+            val hasPerm = treeUri != null &&
+                ctx.contentResolver.persistedUriPermissions.any { it.uri == treeUri && it.isWritePermission }
+            if (treeUri != null && hasPerm) {
+                return@withContext saveIntoSafTree(
+                    resolver = ctx.contentResolver,
+                    treeUri = treeUri,
+                    folderLabel = getDownloadFolderLabel(),
+                    courseFolder = safeCourse,
+                    fileName = safeFile,
+                    mimeType = cleanMime,
+                    bytes = bytes
+                )
+            }
+            return@withContext Result.failure(IllegalStateException("Permissão da pasta selecionada expirou. Escolha a pasta novamente na Central."))
+        }
+
+        saveIntoDefaultDownloads(ctx, safeCourse, safeFile, cleanMime, bytes)
+    }
+
+    private fun deriveTreeFolderLabel(ctx: Context, treeUri: Uri): String {
+        val rootDocId = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }.getOrNull()
+        if (!rootDocId.isNullOrBlank()) {
+            val cleaned = rootDocId.substringAfter(':', rootDocId).trim('/')
+            if (cleaned.isNotBlank()) return cleaned
+            val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, rootDocId)
+            runCatching {
+                ctx.contentResolver.query(
+                    docUri,
+                    arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+                    null,
+                    null,
+                    null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val idx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                        if (idx >= 0) {
+                            val name = cursor.getString(idx)
+                            if (!name.isNullOrBlank()) return name
+                        }
+                    }
+                }
+            }
+        }
+        return "Pasta personalizada"
+    }
+
+    private fun saveIntoSafTree(
+        resolver: ContentResolver,
+        treeUri: Uri,
+        folderLabel: String,
+        courseFolder: String,
+        fileName: String,
+        mimeType: String,
+        bytes: ByteArray
+    ): Result<String> = runCatching {
+        val rootDocId = DocumentsContract.getTreeDocumentId(treeUri)
+        val courseDocId = findOrCreateSafSubfolder(resolver, treeUri, rootDocId, courseFolder)
+            ?: throw IllegalStateException("Não foi possível criar a pasta '$courseFolder'.")
+        val existingNames = listSafChildNames(resolver, treeUri, courseDocId)
+        val uniqueName = makeUniqueFileName(fileName, existingNames)
+        val courseDocUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, courseDocId)
+        val fileUri = DocumentsContract.createDocument(resolver, courseDocUri, mimeType, uniqueName)
+            ?: throw IllegalStateException("Não foi possível criar o arquivo '$uniqueName'.")
+        resolver.openOutputStream(fileUri)?.use { out ->
+            out.write(bytes)
+            out.flush()
+        } ?: throw IllegalStateException("Não foi possível gravar em '$uniqueName'.")
+        "$folderLabel/$courseFolder/$uniqueName"
+    }
+
+    private fun findOrCreateSafSubfolder(
+        resolver: ContentResolver,
+        treeUri: Uri,
+        parentDocId: String,
+        folderName: String
+    ): String? {
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocId)
+        val projection = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE
+        )
+        runCatching {
+            resolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
+                val idIdx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                val nameIdx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                val mimeIdx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
+                while (cursor.moveToNext()) {
+                    val mime = if (mimeIdx >= 0) cursor.getString(mimeIdx) else ""
+                    val name = if (nameIdx >= 0) cursor.getString(nameIdx) else ""
+                    val docId = if (idIdx >= 0) cursor.getString(idIdx) else ""
+                    if (mime == DocumentsContract.Document.MIME_TYPE_DIR &&
+                        name.equals(folderName, ignoreCase = true) &&
+                        !docId.isNullOrBlank()
+                    ) {
+                        return docId
+                    }
+                }
+            }
+        }
+        val parentDocUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, parentDocId)
+        val created = DocumentsContract.createDocument(
+            resolver,
+            parentDocUri,
+            DocumentsContract.Document.MIME_TYPE_DIR,
+            folderName
+        ) ?: return null
+        return DocumentsContract.getDocumentId(created)
+    }
+
+    private fun listSafChildNames(
+        resolver: ContentResolver,
+        treeUri: Uri,
+        parentDocId: String
+    ): Set<String> {
+        val names = mutableSetOf<String>()
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocId)
+        runCatching {
+            resolver.query(
+                childrenUri,
+                arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                val idx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                while (cursor.moveToNext()) {
+                    if (idx >= 0) {
+                        cursor.getString(idx)?.let { names.add(it.lowercase()) }
+                    }
+                }
+            }
+        }
+        return names
+    }
+
+    private fun saveIntoDefaultDownloads(
+        ctx: Context,
+        courseFolder: String,
+        fileName: String,
+        mimeType: String,
+        bytes: ByteArray
+    ): Result<String> = runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val relPath = "${Environment.DIRECTORY_DOWNLOADS}/UnicepPortal/$courseFolder"
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                put(MediaStore.Downloads.MIME_TYPE, mimeType)
+                put(MediaStore.Downloads.RELATIVE_PATH, relPath)
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }
+            val resolver = ctx.contentResolver
+            val itemUri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: throw IllegalStateException("Falha ao criar arquivo em Downloads.")
+            try {
+                resolver.openOutputStream(itemUri)?.use { out ->
+                    out.write(bytes)
+                    out.flush()
+                } ?: throw IllegalStateException("Falha ao gravar arquivo em Downloads.")
+                values.clear()
+                values.put(MediaStore.Downloads.IS_PENDING, 0)
+                resolver.update(itemUri, values, null, null)
+            } catch (e: Throwable) {
+                runCatching { resolver.delete(itemUri, null, null) }
+                throw e
+            }
+            "Downloads/UnicepPortal/$courseFolder/$fileName"
+        } else {
+            val canWritePublic = ContextCompat.checkSelfPermission(
+                ctx,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED
+            val baseDir = if (canWritePublic) {
+                @Suppress("DEPRECATION")
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            } else {
+                ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: ctx.filesDir
+            }
+            val dir = File(baseDir, "UnicepPortal/$courseFolder").apply { mkdirs() }
+            val existing = dir.list()?.map { it.lowercase() }?.toSet().orEmpty()
+            val unique = makeUniqueFileName(fileName, existing)
+            val target = File(dir, unique)
+            FileOutputStream(target).use { out ->
+                out.write(bytes)
+                out.flush()
+            }
+            if (canWritePublic) {
+                "Downloads/UnicepPortal/$courseFolder/$unique"
+            } else {
+                "Arquivos do app/Download/UnicepPortal/$courseFolder/$unique"
+            }
+        }
+    }
+
+    private fun sanitizeFolderSegment(raw: String, fallback: String): String {
+        val cleaned = raw
+            .replace(Regex("[\\\\/:*?\"<>|\\x00-\\x1F]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .trim('.')
+            .take(64)
+            .trim()
+        return cleaned.ifBlank { fallback }
+    }
+
+    private fun sanitizeFileNameSegment(raw: String, fallback: String): String {
+        val cleaned = raw
+            .substringAfterLast('/')
+            .substringAfterLast('\\')
+            .replace(Regex("[\\\\/:*?\"<>|\\x00-\\x1F]"), "_")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .trim('.')
+            .take(120)
+            .trim()
+        return cleaned.ifBlank { fallback }
+    }
+
+    private fun inferMimeType(fileName: String, bytes: ByteArray): String {
+        if (bytes.size >= 4 &&
+            bytes[0] == 0x25.toByte() &&
+            bytes[1] == 0x50.toByte() &&
+            bytes[2] == 0x44.toByte() &&
+            bytes[3] == 0x46.toByte()
+        ) {
+            return "application/pdf"
+        }
+        val lower = fileName.lowercase()
+        return when {
+            lower.endsWith(".pdf") -> "application/pdf"
+            lower.endsWith(".html") || lower.endsWith(".htm") -> "text/html"
+            lower.endsWith(".png") -> "image/png"
+            lower.endsWith(".jpg") || lower.endsWith(".jpeg") -> "image/jpeg"
+            lower.endsWith(".webp") -> "image/webp"
+            lower.endsWith(".docx") -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            lower.endsWith(".xlsx") -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            lower.endsWith(".pptx") -> "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            lower.endsWith(".zip") -> "application/zip"
+            lower.endsWith(".txt") -> "text/plain"
+            else -> "application/octet-stream"
+        }
+    }
+
+    private fun ensureFileExtension(name: String, mimeType: String, bytes: ByteArray): String {
+        if (name.substringAfterLast('/', name).contains('.')) return name
+        val effectiveMime = if (mimeType == "application/octet-stream") inferMimeType(name, bytes) else mimeType
+        val ext = when {
+            effectiveMime.contains("pdf") -> ".pdf"
+            effectiveMime.contains("html") -> ".html"
+            effectiveMime.contains("png") -> ".png"
+            effectiveMime.contains("jpeg") -> ".jpg"
+            effectiveMime.contains("webp") -> ".webp"
+            effectiveMime.contains("wordprocessingml") -> ".docx"
+            effectiveMime.contains("spreadsheetml") -> ".xlsx"
+            effectiveMime.contains("presentationml") -> ".pptx"
+            effectiveMime.contains("zip") -> ".zip"
+            effectiveMime.startsWith("text/") -> ".txt"
+            else -> ""
+        }
+        return name + ext
+    }
+
+    private fun makeUniqueFileName(desired: String, existingLower: Set<String>): String {
+        if (!existingLower.contains(desired.lowercase())) return desired
+        val dot = desired.lastIndexOf('.')
+        val stem = if (dot > 0) desired.substring(0, dot) else desired
+        val ext = if (dot > 0) desired.substring(dot) else ""
+        for (i in 1..99) {
+            val candidate = "$stem ($i)$ext"
+            if (!existingLower.contains(candidate.lowercase())) return candidate
+        }
+        return "${stem}_${System.currentTimeMillis()}$ext"
     }
 }

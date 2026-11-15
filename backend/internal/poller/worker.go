@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"unicep-portal/internal/crypto"
+	"unicep-portal/internal/d2l"
 	"unicep-portal/internal/portal"
 	"unicep-portal/internal/storage"
 )
@@ -18,16 +21,18 @@ type Worker struct {
 	store          *storage.Store
 	crypto         *crypto.Service
 	portal         *portal.Manager
+	d2l            *d2l.Manager
 	interval       time.Duration
 	notifyAbsences bool
 }
 
-// NewWorker creates a background grade poller.
-func NewWorker(store *storage.Store, cry *crypto.Service, pm *portal.Manager, interval time.Duration, notifyAbsences bool) *Worker {
+// NewWorker creates a background grade and virtual-assignment poller.
+func NewWorker(store *storage.Store, cry *crypto.Service, pm *portal.Manager, dm *d2l.Manager, interval time.Duration, notifyAbsences bool) *Worker {
 	return &Worker{
 		store:          store,
 		crypto:         cry,
 		portal:         pm,
+		d2l:            dm,
 		interval:       interval,
 		notifyAbsences: notifyAbsences,
 	}
@@ -54,19 +59,56 @@ func (w *Worker) runCycle(ctx context.Context) {
 		log.Printf("poller: list users error: %v", err)
 		return
 	}
+	sem := make(chan struct{}, 3)
+	var wg sync.WaitGroup
 	for _, u := range users {
 		if ctx.Err() != nil {
-			return
+			break
 		}
-		if _, err := w.SyncUser(ctx, u.RA, false); err != nil {
-			log.Printf("poller: sync user %s error: %v", u.RA, err)
-		}
+		u := u
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				return
+			}
+			userCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+			defer cancel()
+			if _, err := w.syncUserWithRecord(userCtx, u.RA, u.D2LPollingEnabled, false); err != nil {
+				log.Printf("poller: sync user %s error: %v", u.RA, err)
+			}
+		}()
 	}
+	wg.Wait()
 }
 
 // SyncUser fetches the latest semester grades and report card for ra, saves the snapshot, and returns new notifications.
 // When seedOnly is true and no prior snapshot exists, no notifications are emitted.
 func (w *Worker) SyncUser(ctx context.Context, ra string, seedOnly bool) (int, error) {
+	d2lEnabled := true
+	if u, err := w.store.GetUser(ra); err == nil && u != nil {
+		d2lEnabled = u.D2LPollingEnabled
+	}
+	return w.syncUserWithRecord(ctx, ra, d2lEnabled, seedOnly)
+}
+
+func (w *Worker) syncUserWithRecord(ctx context.Context, ra string, d2lEnabled, seedOnly bool) (int, error) {
+	created, legacyErr := w.syncLegacy(ctx, ra, seedOnly)
+	if !seedOnly && d2lEnabled {
+		d2lCreated, d2lErr := w.syncD2LAssignments(ctx, ra, false)
+		if d2lErr != nil {
+			log.Printf("poller: sync D2L %s error: %v", ra, d2lErr)
+		} else {
+			created += d2lCreated
+		}
+	}
+	return created, legacyErr
+}
+
+func (w *Worker) syncLegacy(ctx context.Context, ra string, seedOnly bool) (int, error) {
 	gradesSelectorHTML, _, _, err := w.portal.FetchHTML(ctx, ra, "/ambiente_aluno/consulta_notas_primeira.asp")
 	if err != nil {
 		return 0, fmt.Errorf("fetch grade periods: %w", err)
@@ -135,7 +177,7 @@ func (w *Worker) SyncUser(ctx context.Context, ra string, seedOnly bool) (int, e
 	events := DiffSnapshots(ra, latestPeriod.ID, prevGrades, currGrades, prevReport, currReport.Items, w.notifyAbsences)
 	created := 0
 	for _, ev := range events {
-		if _, err := w.store.InsertNotification(ev); err == nil {
+		if id, err := w.store.InsertNotification(ev); err == nil && id > 0 {
 			created++
 		}
 	}
@@ -149,6 +191,83 @@ func (w *Worker) SyncUser(ctx context.Context, ra string, seedOnly bool) (int, e
 		return created, err
 	}
 	return created, nil
+}
+
+func (w *Worker) syncD2LAssignments(ctx context.Context, ra string, seedOnly bool) (int, error) {
+	if w.d2l == nil {
+		return 0, nil
+	}
+	ov, err := w.d2l.GetOverview(ctx, ra)
+	if err != nil {
+		return 0, err
+	}
+	if !ov.Complete {
+		return 0, fmt.Errorf("d2l overview incomplete for %s", ra)
+	}
+	currBytes, _ := json.Marshal(ov.UpcomingAssignments)
+	prevJSON, err := w.store.GetD2LSnapshot(ra)
+	if err != nil {
+		return 0, err
+	}
+	if prevJSON == "" {
+		if err := w.store.SaveD2LSnapshot(ra, string(currBytes)); err != nil {
+			return 0, err
+		}
+		return 0, nil
+	}
+	if seedOnly {
+		return 0, nil
+	}
+
+	var prev []d2l.AssignmentItem
+	_ = json.Unmarshal([]byte(prevJSON), &prev)
+	events := DiffD2LAssignments(ra, prev, ov.UpcomingAssignments)
+	created := 0
+	for _, ev := range events {
+		if id, err := w.store.InsertNotification(ev); err == nil && id > 0 {
+			created++
+		}
+	}
+	if err := w.store.SaveD2LSnapshot(ra, string(currBytes)); err != nil {
+		return created, err
+	}
+	return created, nil
+}
+
+// DiffD2LAssignments compares previous and current D2L assignments and emits notifications for newly posted pending items.
+func DiffD2LAssignments(ra string, prev, curr []d2l.AssignmentItem) []storage.Notification {
+	seen := make(map[string]struct{}, len(prev))
+	for _, item := range prev {
+		seen[fmt.Sprintf("%d:%d", item.OrgUnitID, item.ID)] = struct{}{}
+	}
+	brt := time.FixedZone("BRT", -3*3600)
+	var out []storage.Notification
+	for _, item := range curr {
+		if item.Status == "expired" || item.Status == "submitted" || item.Status == "graded" {
+			continue
+		}
+		key := fmt.Sprintf("%d:%d", item.OrgUnitID, item.ID)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		dueLabel := "Nova atividade postada"
+		if item.DueAtMillis > 0 {
+			dueLabel = "Prazo: " + time.UnixMilli(item.DueAtMillis).In(brt).Format("02/01 às 15:04")
+		} else if trimmed := strings.TrimSpace(item.DueDate); trimmed != "" {
+			dueLabel = "Prazo: " + trimmed
+		}
+		out = append(out, storage.Notification{
+			RA:             ra,
+			PeriodKey:      fmt.Sprintf("%d", item.OrgUnitID),
+			DisciplineCode: key,
+			DisciplineName: item.OrgUnitName,
+			Field:          item.Name,
+			OldValue:       "",
+			NewValue:       dueLabel,
+			Kind:           "d2l_assignment",
+		})
+	}
+	return out
 }
 
 // DiffSnapshots compares previous and current grades/report cards and returns notification records.

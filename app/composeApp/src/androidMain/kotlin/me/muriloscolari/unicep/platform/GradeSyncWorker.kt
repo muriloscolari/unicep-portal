@@ -19,7 +19,10 @@ import me.muriloscolari.unicep.data.api.PortalApiClient
 import me.muriloscolari.unicep.data.api.UnauthorizedException
 import me.muriloscolari.unicep.data.repo.PrefKeys
 import me.muriloscolari.unicep.data.repo.evaluateFrequencyAlerts
+import me.muriloscolari.unicep.data.repo.evaluateVirtualDeadlineAlerts
 import me.muriloscolari.unicep.data.repo.readFrequencyAlertThreshold
+import me.muriloscolari.unicep.data.repo.readVirtualDeadlineLeadHours
+import me.muriloscolari.unicep.data.repo.readVirtualNotifyNewAssignment
 
 class GradeSyncWorker(
     private val appContext: Context,
@@ -51,17 +54,30 @@ class GradeSyncWorker(
 
         val lastSeenId = PlatformBridge.getString(PrefKeys.LAST_NOTIFIED_ID)?.toLongOrNull() ?: 0L
         val freshOnes = unread.filter { it.id > lastSeenId }.sortedBy { it.id }
+        val notifyVirtualNew = readVirtualNotifyNewAssignment()
         if (freshOnes.isNotEmpty()) {
-            var anyPosted = false
+            var anyHandled = false
             freshOnes.forEach { n ->
+                if (n.kind == "d2l_assignment") {
+                    if (!notifyVirtualNew) {
+                        anyHandled = true
+                        return@forEach
+                    }
+                    val title = "Nova atividade: ${n.disciplineName.ifBlank { "Sala Virtual" }}"
+                    val body = if (n.newValue.isNotBlank()) "${n.field} • ${n.newValue}" else n.field
+                    if (showLocalNotification(appContext, n.id.toInt(), title, body, openTab = 2)) {
+                        anyHandled = true
+                    }
+                    return@forEach
+                }
                 val title = if (n.kind == "grade") "Nova nota: ${n.disciplineName}" else "Atualização: ${n.disciplineName}"
                 val oldTxt = if (n.oldValue.isBlank()) "—" else n.oldValue
                 val body = "${n.field}: $oldTxt → ${n.newValue}"
-                if (showLocalNotification(appContext, n.id.toInt(), title, body, openTab = 2)) {
-                    anyPosted = true
+                if (showLocalNotification(appContext, n.id.toInt(), title, body, openTab = 3)) {
+                    anyHandled = true
                 }
             }
-            if (anyPosted) {
+            if (anyHandled) {
                 PlatformBridge.putString(PrefKeys.LAST_NOTIFIED_ID, freshOnes.last().id.toString())
             }
         }
@@ -70,6 +86,13 @@ class GradeSyncWorker(
         if (freqThreshold > 0) {
             runCatching { api.dashboard(server, token) }.getOrNull()?.let { dash ->
                 evaluateFrequencyAlerts(dash.currentReport.items, freqThreshold)
+            }
+        }
+
+        val leadHours = readVirtualDeadlineLeadHours()
+        if (leadHours.isNotEmpty()) {
+            runCatching { api.virtualOverview(server, token) }.getOrNull()?.let { ov ->
+                evaluateVirtualDeadlineAlerts(ov.upcomingAssignments, leadHours)
             }
         }
         return Result.success()
@@ -100,7 +123,7 @@ class GradeSyncWorker(
             id: Int,
             title: String,
             body: String,
-            openTab: Int = 2
+            openTab: Int = 3
         ): Boolean {
             ensureChannel(context)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
