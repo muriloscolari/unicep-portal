@@ -897,7 +897,9 @@ private fun AppleSubjectCard(
 private fun AppleAttendanceBlock(report: ReportCardItem) {
     val colors = LocalPortalColors.current
     val appleType = LocalAppleTypography.current
-    val ratio = (report.absences.toFloat() / report.maxAbsences.toFloat()).coerceIn(0f, 1f)
+    val ratio = if (report.maxAbsences > 0) {
+        (report.absences.toFloat() / report.maxAbsences.toFloat()).coerceIn(0f, 1f)
+    } else 0f
     val barColor = when {
         report.remainingAbsences <= 0 -> colors.red
         ratio >= 0.75f || report.remainingAbsences <= 3 -> colors.orange

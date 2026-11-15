@@ -171,11 +171,15 @@ fun AppleSheet(
                 targetValue = if (isLarge) 0.dp else 34.dp,
                 animationSpec = AppleMotion.dpSheet
             )
+            val safeSideInset = sideInset.coerceAtLeast(0.dp)
+            val safeBottomInset = bottomInset.coerceAtLeast(0.dp)
+            val safeMaxHeight = targetMaxHeight.coerceAtLeast(200.dp)
+            val safeCornerBottom = cornerBottom.coerceAtLeast(0.dp)
             val shape = RoundedCornerShape(
                 topStart = 34.dp,
                 topEnd = 34.dp,
-                bottomStart = cornerBottom,
-                bottomEnd = cornerBottom
+                bottomStart = safeCornerBottom,
+                bottomEnd = safeCornerBottom
             )
 
             val dismissThresholdPx = with(density) { 120.dp.toPx() }
@@ -194,18 +198,18 @@ fun AppleSheet(
                 modifier = Modifier.align(Alignment.BottomCenter),
                 enter = slideInVertically(
                     initialOffsetY = { it },
-                    animationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.90f, stiffness = 300f)
+                    animationSpec = androidx.compose.animation.core.spring(dampingRatio = 1.0f, stiffness = 300f)
                 ) + fadeIn(AppleMotion.standard),
                 exit = slideOutVertically(
                     targetOffsetY = { it },
-                    animationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.92f, stiffness = 340f)
+                    animationSpec = androidx.compose.animation.core.spring(dampingRatio = 1.0f, stiffness = 340f)
                 ) + fadeOut(AppleMotion.standard)
             ) {
                 GlassSurface(
                     modifier = Modifier
-                        .padding(start = sideInset, end = sideInset, bottom = bottomInset)
+                        .padding(start = safeSideInset, end = safeSideInset, bottom = safeBottomInset)
                         .fillMaxWidth()
-                        .heightIn(max = targetMaxHeight)
+                        .heightIn(max = safeMaxHeight)
                         .offset { IntOffset(0, dragOffsetY.value.roundToInt().coerceAtLeast(0)) }
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },

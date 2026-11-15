@@ -76,13 +76,14 @@ fun GlassSurface(
     tint: Color = LocalPortalColors.current.glassTint,
     shadowElevation: Dp = 14.dp,
     clear: Boolean = false,
+    useHaze: Boolean = true,
     interactionSource: MutableInteractionSource? = null,
     groupKey: Any? = null,
     content: @Composable BoxScope.() -> Unit
 ) {
     val c = LocalPortalColors.current
     val haze = LocalHazeState.current
-    val enabled = LocalGlassEnabled.current && haze != null
+    val enabled = useHaze && LocalGlassEnabled.current && haze != null
 
     val glassStyle = remember(shape, tint, c.background, c.isDark, clear) {
         val base = if (clear) GlassStyle.clear else GlassStyle.regular
@@ -376,6 +377,8 @@ fun GlassMenu(
                 .padding(top = 6.dp)
                 .width(248.dp),
             shape = RoundedCornerShape(20.dp),
+            tint = c.surface.copy(alpha = if (c.isDark) 0.94f else 0.96f),
+            useHaze = false,
             shadowElevation = 20.dp
         ) {
             Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {

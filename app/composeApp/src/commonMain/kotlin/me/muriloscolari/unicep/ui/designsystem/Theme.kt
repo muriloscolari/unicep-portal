@@ -86,14 +86,14 @@ data class AppleType(
 )
 
 object AppleMotion {
-    val standard: SpringSpec<Float> = spring(dampingRatio = 0.86f, stiffness = 380f)
-    val snappy: SpringSpec<Float> = spring(dampingRatio = 0.72f, stiffness = 520f)
-    val sheet: SpringSpec<Float> = spring(dampingRatio = 0.90f, stiffness = 300f)
-    val press: SpringSpec<Float> = spring(dampingRatio = 0.60f, stiffness = 900f)
+    val standard: SpringSpec<Float> = spring(dampingRatio = 1.0f, stiffness = 380f)
+    val snappy: SpringSpec<Float> = spring(dampingRatio = 1.0f, stiffness = 520f)
+    val sheet: SpringSpec<Float> = spring(dampingRatio = 1.0f, stiffness = 300f)
+    val press: SpringSpec<Float> = spring(dampingRatio = 1.0f, stiffness = 900f)
 
-    val dpStandard: SpringSpec<Dp> = spring(dampingRatio = 0.86f, stiffness = 380f)
-    val dpSnappy: SpringSpec<Dp> = spring(dampingRatio = 0.72f, stiffness = 520f)
-    val dpSheet: SpringSpec<Dp> = spring(dampingRatio = 0.90f, stiffness = 300f)
+    val dpStandard: SpringSpec<Dp> = spring(dampingRatio = 1.0f, stiffness = 380f)
+    val dpSnappy: SpringSpec<Dp> = spring(dampingRatio = 1.0f, stiffness = 520f)
+    val dpSheet: SpringSpec<Dp> = spring(dampingRatio = 1.0f, stiffness = 300f)
 
     const val PRESS_SCALE = 0.97f
 }

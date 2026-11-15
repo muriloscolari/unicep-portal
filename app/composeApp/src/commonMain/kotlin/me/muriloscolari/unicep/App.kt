@@ -706,10 +706,11 @@ fun App(initialTab: Int = 0) {
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .graphicsLayer {
-                                        scaleX = bgScale
-                                        scaleY = bgScale
+                                        val s = bgScale.coerceIn(0.85f, 1f)
+                                        scaleX = s
+                                        scaleY = s
                                     }
-                                    .clip(RoundedCornerShape(bgCorner))
+                                    .clip(RoundedCornerShape(bgCorner.coerceAtLeast(0.dp)))
                             ) {
                                 // CAMADA 1: Conteúdo edge-to-edge (fonte do Liquid Glass)
                                 Box(
@@ -1170,16 +1171,19 @@ private fun AppleLiquidGlassTabBar(
         animationSpec = AppleMotion.dpStandard
     )
 
+    val safePad = horizontalPad.coerceAtLeast(0.dp)
+    val safeHeight = barHeight.coerceAtLeast(1.dp)
+
     Box(
         modifier = modifier
-            .padding(bottom = navBottom + 12.dp, start = horizontalPad, end = horizontalPad)
+            .padding(bottom = (navBottom + 12.dp).coerceAtLeast(0.dp), start = safePad, end = safePad)
             .widthIn(max = 360.dp)
             .fillMaxWidth()
     ) {
         GlassSurface(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(barHeight),
+                .height(safeHeight),
             shape = CircleShape,
             shadowElevation = 20.dp
         ) {
@@ -1188,7 +1192,7 @@ private fun AppleLiquidGlassTabBar(
                     .fillMaxSize()
                     .padding(4.dp)
             ) {
-                val itemWidth = maxWidth / tabs.size
+                val itemWidth = (maxWidth / tabs.size).coerceAtLeast(0.dp)
                 val lensOffset by animateDpAsState(
                     targetValue = itemWidth * selectedIndex,
                     animationSpec = AppleMotion.dpSnappy
@@ -1213,11 +1217,12 @@ private fun AppleLiquidGlassTabBar(
                             targetValue = if (pressed) 0.93f else 1f,
                             animationSpec = AppleMotion.press
                         )
+                        val safeItemScale = itemScale.coerceIn(0.8f, 1.2f)
                         Column(
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxHeight()
-                                .graphicsLayer { scaleX = itemScale; scaleY = itemScale }
+                                .graphicsLayer { scaleX = safeItemScale; scaleY = safeItemScale }
                                 .clip(CircleShape)
                                 .pointerHoverIcon(PointerIcon.Hand)
                                 .semantics {

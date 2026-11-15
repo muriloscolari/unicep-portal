@@ -114,7 +114,8 @@ private fun AppleMeshBackdrop(modifier: Modifier = Modifier) {
     Canvas(modifier = modifier.fillMaxSize().background(colors.background)) {
         val w = size.width
         val h = size.height
-        val radiusBase = maxOf(w, h) * 0.58f
+        if (w <= 0f || h <= 0f) return@Canvas
+        val radiusBase = (maxOf(w, h) * 0.58f).coerceAtLeast(1f)
         val alphaBoost = if (colors.isDark) 0.28f else 0.19f
 
         // Blob 1: Blue

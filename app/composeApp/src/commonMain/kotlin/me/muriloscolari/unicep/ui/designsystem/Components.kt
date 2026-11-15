@@ -169,7 +169,7 @@ fun PortalCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(colors.systemFill.copy(alpha = overlayAlpha))
+                    .background(colors.systemFill.copy(alpha = overlayAlpha.coerceIn(0f, 1f)))
                     .padding(contentPadding),
                 content = content
             )
@@ -305,7 +305,7 @@ fun PortalSegmentedControl(
                 .padding(2.dp)
         ) {
             val count = options.size
-            val segmentWidth = maxWidth / count
+            val segmentWidth = (maxWidth / count).coerceAtLeast(0.dp)
             val thumbOffset by animateDpAsState(
                 targetValue = segmentWidth * clampedIndex,
                 animationSpec = AppleMotion.dpSnappy
@@ -1027,7 +1027,7 @@ fun ProgressRing(
     trackColor: Color = color.copy(alpha = 0.18f),
     centerContent: (@Composable () -> Unit)? = null
 ) {
-    val target = progress.coerceIn(0f, 1f)
+    val target = if (progress.isFinite()) progress.coerceIn(0f, 1f) else 0f
     val animatedProgress by animateFloatAsState(
         targetValue = target,
         animationSpec = tween(durationMillis = 650, easing = EaseOutCubic)
@@ -1038,8 +1038,9 @@ fun ProgressRing(
         Canvas(modifier = Modifier.matchParentSize()) {
             val strokePx = strokeWidth.toPx()
             val inset = strokePx / 2f
-            val arcSize = Size(this.size.width - strokePx, this.size.height - strokePx)
+            val arcSize = Size((this.size.width - strokePx).coerceAtLeast(1f), (this.size.height - strokePx).coerceAtLeast(1f))
             val topLeft = Offset(inset, inset)
+            val safeProgress = animatedProgress.coerceIn(0f, 1f)
 
             drawArc(
                 color = trackColor,
@@ -1050,11 +1051,11 @@ fun ProgressRing(
                 size = arcSize,
                 style = Stroke(width = strokePx, cap = StrokeCap.Round)
             )
-            if (animatedProgress > 0.002f) {
+            if (safeProgress > 0.002f) {
                 drawArc(
                     color = animColor,
                     startAngle = -90f,
-                    sweepAngle = 360f * animatedProgress,
+                    sweepAngle = 360f * safeProgress,
                     useCenter = false,
                     topLeft = topLeft,
                     size = arcSize,
@@ -1074,8 +1075,9 @@ fun AppleProgressBar(
     height: Dp = 4.dp
 ) {
     val colors = LocalPortalColors.current
+    val safeTarget = if (progress.isFinite()) progress.coerceIn(0f, 1f) else 0f
     val animatedRatio by animateFloatAsState(
-        targetValue = progress.coerceIn(0f, 1f),
+        targetValue = safeTarget,
         animationSpec = tween(durationMillis = 600, easing = EaseOutCubic)
     )
     Box(
@@ -1087,7 +1089,7 @@ fun AppleProgressBar(
     ) {
         Box(
             modifier = Modifier
-                .fillMaxWidth(animatedRatio)
+                .fillMaxWidth(animatedRatio.coerceIn(0f, 1f))
                 .fillMaxHeight()
                 .clip(CircleShape)
                 .background(color)
