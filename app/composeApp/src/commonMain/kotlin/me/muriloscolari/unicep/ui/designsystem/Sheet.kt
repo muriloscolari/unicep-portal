@@ -137,7 +137,13 @@ fun AppleSheet(
                         .widthIn(max = 560.dp)
                         .fillMaxWidth()
                         .heightIn(max = (maxH - 48.dp).coerceAtLeast(320.dp))
-                        .predictiveBackSurfaceTransform(readBack)
+                        .predictiveBackSurfaceTransform(
+                            readBack = readBack,
+                            slideDp = 0f,
+                            verticalSlideDp = 28f,
+                            scaleDrop = 0.08f,
+                            pivotY = 0.5f
+                        )
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
@@ -215,7 +221,13 @@ fun AppleSheet(
                         .fillMaxWidth()
                         .heightIn(max = safeMaxHeight)
                         .offset { IntOffset(0, dragOffsetY.value.roundToInt().coerceAtLeast(0)) }
-                        .predictiveBackSurfaceTransform(readBack)
+                        .predictiveBackSurfaceTransform(
+                            readBack = readBack,
+                            slideDp = 0f,
+                            verticalSlideDp = 130f,
+                            scaleDrop = 0.04f,
+                            pivotY = 1f
+                        )
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
@@ -405,7 +417,13 @@ fun AppleAlert(
             modifier = Modifier
                 .widthIn(max = 316.dp)
                 .fillMaxWidth()
-                .predictiveBackSurfaceTransform(readBack, slideDp = 40f, verticalSlideDp = 12f, scaleDrop = 0.08f)
+                .predictiveBackSurfaceTransform(
+                    readBack = readBack,
+                    slideDp = 0f,
+                    verticalSlideDp = 28f,
+                    scaleDrop = 0.08f,
+                    pivotY = 0.5f
+                )
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,

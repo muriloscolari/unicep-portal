@@ -603,8 +603,9 @@ fun App(initialTab: Int = 0) {
                                     .predictiveBackSurfaceTransform(
                                         readBack = { if (!hasAnyOverlay) predictiveBackState else PredictiveBackState() },
                                         slideDp = 42f,
-                                        verticalSlideDp = 12f,
-                                        scaleDrop = 0.055f
+                                        verticalSlideDp = 0f,
+                                        scaleDrop = 0.055f,
+                                        pivotY = 0.5f
                                     )
                             ) {
                                 bodyContent()
@@ -767,8 +768,9 @@ fun App(initialTab: Int = 0) {
                                     .predictiveBackSurfaceTransform(
                                         readBack = { if (!hasAnyOverlay) predictiveBackState else PredictiveBackState() },
                                         slideDp = 42f,
-                                        verticalSlideDp = 12f,
-                                        scaleDrop = 0.055f
+                                        verticalSlideDp = 0f,
+                                        scaleDrop = 0.055f,
+                                        pivotY = 0.5f
                                     )
                                     .clip(RoundedCornerShape(bgCorner.coerceAtLeast(0.dp)))
                             ) {

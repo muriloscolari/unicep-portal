@@ -11,6 +11,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -147,19 +148,21 @@ fun Modifier.appleScrollBoundaryHaptics(scrollState: ScrollState): Modifier = co
 
 fun Modifier.predictiveBackSurfaceTransform(
     readBack: () -> PredictiveBackState,
-    slideDp: Float = 56f,
-    verticalSlideDp: Float = 24f,
-    scaleDrop: Float = 0.08f
+    slideDp: Float = 0f,
+    verticalSlideDp: Float = 110f,
+    scaleDrop: Float = 0.05f,
+    pivotY: Float = 1f
 ): Modifier = graphicsLayer {
     val back = readBack()
     if (!back.active || back.progress <= 0.001f) return@graphicsLayer
     val p = back.progress.coerceIn(0f, 1f)
     val dir = if (back.swipeEdge == 1) -1f else 1f
     val s = (1f - scaleDrop * p).coerceIn(0.85f, 1f)
+    transformOrigin = TransformOrigin(0.5f, pivotY)
     scaleX = s
     scaleY = s
-    translationX = dir * slideDp.dp.toPx() * p
-    translationY = verticalSlideDp.dp.toPx() * p
+    translationX = if (slideDp != 0f) dir * slideDp.dp.toPx() * p else 0f
+    translationY = if (verticalSlideDp != 0f) verticalSlideDp.dp.toPx() * p else 0f
 }
 
 fun Modifier.predictiveBackScrimAlpha(

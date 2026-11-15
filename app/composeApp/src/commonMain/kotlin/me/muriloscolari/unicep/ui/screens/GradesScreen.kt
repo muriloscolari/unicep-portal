@@ -1569,7 +1569,13 @@ internal fun PortalOverlayModal(
                 .widthIn(max = 520.dp)
                 .fillMaxWidth()
                 .heightIn(max = 640.dp)
-                .predictiveBackSurfaceTransform(readBack)
+                .predictiveBackSurfaceTransform(
+                    readBack = readBack,
+                    slideDp = 0f,
+                    verticalSlideDp = 36f,
+                    scaleDrop = 0.08f,
+                    pivotY = 0.5f
+                )
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
