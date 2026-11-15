@@ -489,6 +489,26 @@ fun App(initialTab: Int = 0) {
                                     Spacer(Modifier.width(8.dp))
                                     Text("OK", color = colors.accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 }
+                            } else if (state.isOffline) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(colors.orange.copy(alpha = 0.14f))
+                                        .clickable { scope.launch { repo.refreshDashboard() } }
+                                        .padding(horizontal = 16.dp, vertical = 7.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Modo offline · ${formatOfflineAge(state.lastSyncAtMillis)}",
+                                        color = colors.orange,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Atualizar", color = colors.orange, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
@@ -520,6 +540,7 @@ fun App(initialTab: Int = 0) {
                                 },
                                 onCloseRiskyAttendance = { showRiskyAttendanceModal = false },
                                 onOpenNotifications = { navigateToTab(MainTab.CENTRAL) },
+                                freqAlertThreshold = state.freqAlertThreshold,
                                 loading = state.loading,
                                 listState = semesterListState
                             )
@@ -547,6 +568,8 @@ fun App(initialTab: Int = 0) {
                                 onSyncNotifications = { scope.launch { repo.syncNotificationsNow() } },
                                 onMarkAllRead = { scope.launch { repo.markAllNotificationsRead() } },
                                 onTestNotification = { scope.launch { repo.sendTestNotification() } },
+                                freqAlertThreshold = state.freqAlertThreshold,
+                                onSelectFreqAlertThreshold = { repo.setFrequencyAlertThreshold(it) },
                                 availableUpdate = availableUpdate,
                                 updateChecking = updateChecking,
                                 updateDownloading = updateDownloading,
@@ -833,6 +856,7 @@ fun App(initialTab: Int = 0) {
                                                     },
                                                     onCloseRiskyAttendance = { showRiskyAttendanceModal = false },
                                                     onOpenNotifications = { navigateToTab(MainTab.CENTRAL) },
+                                                    freqAlertThreshold = state.freqAlertThreshold,
                                                     loading = state.loading,
                                                     listState = semesterListState,
                                                     renderSheetsInPlace = false
@@ -861,6 +885,8 @@ fun App(initialTab: Int = 0) {
                                                     onSyncNotifications = { scope.launch { repo.syncNotificationsNow() } },
                                                     onMarkAllRead = { scope.launch { repo.markAllNotificationsRead() } },
                                                     onTestNotification = { scope.launch { repo.sendTestNotification() } },
+                                                    freqAlertThreshold = state.freqAlertThreshold,
+                                                    onSelectFreqAlertThreshold = { repo.setFrequencyAlertThreshold(it) },
                                                     availableUpdate = availableUpdate,
                                                     updateChecking = updateChecking,
                                                     updateDownloading = updateDownloading,
@@ -960,6 +986,45 @@ fun App(initialTab: Int = 0) {
                                     onDismiss = { repo.clearBanner() },
                                     modifier = Modifier.align(Alignment.TopCenter)
                                 )
+                                if (banner.isNullOrBlank() && state.isOffline) {
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopCenter)
+                                            .padding(
+                                                top = statusTop + 62.dp,
+                                                start = (if (isDesktop) 248.dp else 0.dp) + 16.dp,
+                                                end = 16.dp
+                                            )
+                                    ) {
+                                        GlassSurface(
+                                            modifier = Modifier
+                                                .clip(CircleShape)
+                                                .pointerHoverIcon(PointerIcon.Hand)
+                                                .clickable { scope.launch { repo.refreshDashboard() } },
+                                            shape = CircleShape,
+                                            shadowElevation = 6.dp
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(7.dp)
+                                                        .clip(CircleShape)
+                                                        .background(colors.orange)
+                                                )
+                                                Text(
+                                                    text = "Modo offline · ${formatOfflineAge(state.lastSyncAtMillis)}",
+                                                    color = colors.textPrimary,
+                                                    style = LocalAppleTypography.current.caption1,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
 
                                 // Sidebar flutuante desktop (macOS Tahoe)
                                 if (isDesktop) {
@@ -987,6 +1052,7 @@ fun App(initialTab: Int = 0) {
                             when {
                                 activeSubject != null -> AppleSubjectDetailSheet(
                                     subject = activeSubject,
+                                    freqAlertThreshold = state.freqAlertThreshold,
                                     onDismiss = { selectedSubjectCode = null }
                                 )
                                 showRiskyAttendanceModal && riskySubjects.isNotEmpty() -> AppleAttendanceLimitSheet(
@@ -1496,5 +1562,17 @@ private fun AppleDesktopSidebar(
                 }
             }
         }
+    }
+}
+
+private fun formatOfflineAge(lastSyncAtMillis: Long?): String {
+    if (lastSyncAtMillis == null || lastSyncAtMillis <= 0L) return "Dados em cache"
+    val diffMs = (me.muriloscolari.unicep.platform.PlatformBridge.currentTimeMillis() - lastSyncAtMillis).coerceAtLeast(0L)
+    val mins = diffMs / 60_000L
+    return when {
+        mins < 1L -> "Atualizado agora há pouco"
+        mins < 60L -> "Atualizado há ${mins} min"
+        mins < 24L * 60L -> "Atualizado há ${mins / 60L}h"
+        else -> "Atualizado há ${mins / (24L * 60L)}d"
     }
 }

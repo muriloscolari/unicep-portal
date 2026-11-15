@@ -1,6 +1,8 @@
 package me.muriloscolari.unicep.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -19,7 +21,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -46,6 +50,7 @@ import me.muriloscolari.unicep.platform.AppUpdateInfo
 import me.muriloscolari.unicep.platform.DesignStyle
 import me.muriloscolari.unicep.platform.DesignStylePreference
 import me.muriloscolari.unicep.platform.PlatformBridge
+import me.muriloscolari.unicep.platform.PortalHapticType
 import me.muriloscolari.unicep.ui.designsystem.AppleActivityIndicator
 import me.muriloscolari.unicep.ui.designsystem.AppleAlert
 import me.muriloscolari.unicep.ui.designsystem.AppleProgressBar
@@ -86,6 +91,8 @@ fun CentralScreen(
     onSyncNotifications: () -> Unit,
     onMarkAllRead: () -> Unit,
     onTestNotification: () -> Unit,
+    freqAlertThreshold: Int = 80,
+    onSelectFreqAlertThreshold: (Int) -> Unit = {},
     availableUpdate: AppUpdateInfo? = null,
     updateChecking: Boolean = false,
     updateDownloading: Boolean = false,
@@ -191,6 +198,11 @@ fun CentralScreen(
                             onClick = onMarkAllRead
                         )
                     }
+                    PortalDivider(Modifier.padding(start = 16.dp))
+                    FrequencyThresholdRow(
+                        selectedThreshold = freqAlertThreshold,
+                        onSelect = onSelectFreqAlertThreshold
+                    )
                 }
             }
 
@@ -490,6 +502,11 @@ fun CentralScreen(
                                     onClick = onMarkAllRead
                                 )
                             }
+                            PortalDivider(Modifier.padding(start = 58.dp))
+                            FrequencyThresholdRow(
+                                selectedThreshold = freqAlertThreshold,
+                                onSelect = onSelectFreqAlertThreshold
+                            )
                         }
                         PortalSectionFooter(
                             text = if (capabilities.isWeb) {
@@ -803,5 +820,75 @@ private fun NotificationAlertRow(n: NotificationItem) {
             color = colors.textSecondary,
             style = appleType.footnote
         )
+    }
+}
+
+@Composable
+private fun FrequencyThresholdRow(
+    selectedThreshold: Int,
+    onSelect: (Int) -> Unit
+) {
+    val colors = LocalPortalColors.current
+    val appleType = LocalAppleTypography.current
+    val options = remember {
+        listOf(
+            0 to "Desl.",
+            75 to "75%",
+            80 to "80%",
+            85 to "85%",
+            90 to "90%",
+            95 to "95%"
+        )
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+    ) {
+        Text(
+            text = "Alerta de frequência mínima",
+            color = colors.textPrimary,
+            style = appleType.body,
+            fontWeight = FontWeight.Medium
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = if (selectedThreshold <= 0) {
+                "Notificações de queda de frequência desativadas"
+            } else {
+                "Notificar quando alguma disciplina cair para ≤ $selectedThreshold%"
+            },
+            color = colors.textSecondary,
+            style = appleType.footnote
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            options.forEach { (value, label) ->
+                val selected = selectedThreshold == value
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (selected) colors.accent else colors.surfaceSecondary)
+                        .clickable {
+                            PlatformBridge.performHaptic(PortalHapticType.SELECTION)
+                            onSelect(value)
+                        }
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = label,
+                        color = if (selected) Color.White else colors.textPrimary,
+                        style = appleType.footnote,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
+                    )
+                }
+            }
+        }
     }
 }

@@ -42,6 +42,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -66,6 +67,8 @@ import me.muriloscolari.unicep.data.api.ReportCardItem
 import me.muriloscolari.unicep.data.api.ReportCardResponse
 import me.muriloscolari.unicep.data.api.StudentInfo
 import me.muriloscolari.unicep.platform.DesignStyle
+import me.muriloscolari.unicep.platform.PlatformBridge
+import me.muriloscolari.unicep.platform.PortalHapticType
 import me.muriloscolari.unicep.platform.buildGradesExportData
 import me.muriloscolari.unicep.ui.designsystem.ExportActionModal
 import me.muriloscolari.unicep.ui.designsystem.AppleEmptyState
@@ -151,6 +154,7 @@ fun SemesterScreen(
     onOpenRiskyAttendance: () -> Unit,
     onCloseRiskyAttendance: () -> Unit,
     onOpenNotifications: () -> Unit,
+    freqAlertThreshold: Int = 80,
     loading: Boolean = false,
     listState: LazyListState = rememberLazyListState(),
     renderSheetsInPlace: Boolean = true
@@ -373,6 +377,7 @@ fun SemesterScreen(
             when {
                 activeSubject != null -> MaterialSubjectDetailModal(
                     subject = activeSubject,
+                    freqAlertThreshold = freqAlertThreshold,
                     onDismiss = onCloseSubject
                 )
                 showRiskyAttendance && riskySubjects.isNotEmpty() -> MaterialAttendanceLimitModal(
@@ -763,6 +768,7 @@ fun SemesterScreen(
             when {
                 activeSubject != null -> AppleSubjectDetailSheet(
                     subject = activeSubject,
+                    freqAlertThreshold = freqAlertThreshold,
                     onDismiss = onCloseSubject
                 )
                 showRiskyAttendance && riskySubjects.isNotEmpty() -> AppleAttendanceLimitSheet(
@@ -1147,7 +1153,8 @@ fun AppleAttendanceLimitSheet(
 @Composable
 fun AppleSubjectDetailSheet(
     subject: UnifiedSubject,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    freqAlertThreshold: Int = 80
 ) {
     val colors = LocalPortalColors.current
     val appleType = LocalAppleTypography.current
@@ -1380,6 +1387,14 @@ fun AppleSubjectDetailSheet(
                         style = appleType.caption1
                     )
                 }
+            }
+            if (report.hours > 0) {
+                Spacer(Modifier.height(14.dp))
+                AttendanceSimulatorSection(
+                    report = report,
+                    thresholdPercent = freqAlertThreshold,
+                    isApple = true
+                )
             }
         }
     }
@@ -1689,7 +1704,8 @@ private fun MaterialAttendanceLimitModal(
 @Composable
 private fun MaterialSubjectDetailModal(
     subject: UnifiedSubject,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    freqAlertThreshold: Int = 80
 ) {
     val colors = LocalPortalColors.current
     val grade = subject.grade
@@ -1773,7 +1789,203 @@ private fun MaterialSubjectDetailModal(
                 Spacer(Modifier.height(8.dp))
                 Text("Faltas atualizadas em: ${report.updatedAt}", color = colors.textSecondary, fontSize = 12.sp)
             }
+            if (report.hours > 0) {
+                Spacer(Modifier.height(14.dp))
+                AttendanceSimulatorSection(
+                    report = report,
+                    thresholdPercent = freqAlertThreshold,
+                    isApple = false
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun AttendanceSimulatorSection(
+    report: ReportCardItem,
+    thresholdPercent: Int,
+    isApple: Boolean
+) {
+    val colors = LocalPortalColors.current
+    val appleType = LocalAppleTypography.current
+    var extraAbsences by remember(report.code, report.absences) { mutableIntStateOf(0) }
+
+    val maxAbsences = if (report.maxAbsences > 0) report.maxAbsences else (report.hours * 0.25).toInt()
+    val simAbsences = report.absences + extraAbsences
+    val simRemaining = maxAbsences - simAbsences
+    val simFreq = if (extraAbsences == 0 && report.freqPercent != null) {
+        report.freqPercent.coerceIn(0.0, 100.0)
+    } else {
+        ((1.0 - (simAbsences.toDouble() / report.hours.toDouble())) * 100.0).coerceIn(0.0, 100.0)
+    }
+    val simFreqInt = simFreq.roundToInt()
+
+    val statusColor = when {
+        simRemaining < 0 || simFreq < 75.0 -> colors.red
+        (thresholdPercent > 0 && simFreq <= thresholdPercent.toDouble()) || simRemaining <= 3 -> colors.orange
+        else -> colors.green
+    }
+
+    fun applyDelta(delta: Int) {
+        val nextExtra = (extraAbsences + delta).coerceAtLeast(0)
+        if (nextExtra == extraAbsences) return
+        val prevRemaining = maxAbsences - (report.absences + extraAbsences)
+        val nextRemaining = maxAbsences - (report.absences + nextExtra)
+        extraAbsences = nextExtra
+        if (maxAbsences > 0 && prevRemaining >= 0 && nextRemaining < 0) {
+            PlatformBridge.performHaptic(PortalHapticType.BOUNDARY_THUD, 1f)
+        } else {
+            PlatformBridge.performHaptic(PortalHapticType.SELECTION)
+        }
+    }
+
+    PortalCard(
+        modifier = Modifier.fillMaxWidth(),
+        cardStyle = if (isApple) CardStyle.Tinted(statusColor) else CardStyle.Plain,
+        contentPadding = PaddingValues(14.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "E se eu faltar?",
+                    color = colors.textPrimary,
+                    style = if (isApple) appleType.headline else MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = if (extraAbsences == 0) {
+                        "Simule faltas futuras antes de acontecer"
+                    } else {
+                        "+$extraAbsences ${if (extraAbsences == 1) "falta simulada" else "faltas simuladas"}"
+                    },
+                    color = colors.textSecondary,
+                    style = appleType.caption1
+                )
+            }
+            if (extraAbsences > 0) {
+                Text(
+                    text = "Zerar",
+                    color = colors.accent,
+                    style = appleType.footnote,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable {
+                            PlatformBridge.performHaptic(PortalHapticType.SELECTION)
+                            extraAbsences = 0
+                        }
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Faltas sim.", color = colors.textSecondary, style = appleType.caption2)
+                Text(
+                    text = "$simAbsences/$maxAbsences",
+                    color = colors.textPrimary,
+                    style = tabularNumberStyle(appleType.headline),
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Restam", color = colors.textSecondary, style = appleType.caption2)
+                Text(
+                    text = if (simRemaining >= 0) "$simRemaining" else "Excedeu ${-simRemaining}",
+                    color = statusColor,
+                    style = tabularNumberStyle(appleType.headline),
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Frequência", color = colors.textSecondary, style = appleType.caption2)
+                Text(
+                    text = "$simFreqInt%",
+                    color = statusColor,
+                    style = tabularNumberStyle(appleType.headline),
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        val statusSummary = when {
+            simRemaining < 0 -> "Acima do limite de 25% — reprovação por falta."
+            simRemaining == 0 -> "No limite máximo (0 faltas restantes)."
+            thresholdPercent > 0 && simFreq <= thresholdPercent.toDouble() ->
+                "Abaixo/no alerta configurado ($thresholdPercent%)."
+            else -> "Dentro do limite seguro ($simRemaining faltas de folga)."
+        }
+        Text(
+            text = statusSummary,
+            color = statusColor,
+            style = appleType.caption1,
+            fontWeight = FontWeight.Medium
+        )
+
+        Spacer(Modifier.height(10.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            SimulatorStepButton(
+                label = "−1",
+                enabled = extraAbsences > 0,
+                modifier = Modifier.weight(1f),
+                onClick = { applyDelta(-1) }
+            )
+            SimulatorStepButton(
+                label = "+1 falta",
+                enabled = true,
+                modifier = Modifier.weight(1.3f),
+                onClick = { applyDelta(1) }
+            )
+            SimulatorStepButton(
+                label = "+2 faltas",
+                enabled = true,
+                modifier = Modifier.weight(1.3f),
+                onClick = { applyDelta(2) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun SimulatorStepButton(
+    label: String,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val colors = LocalPortalColors.current
+    val appleType = LocalAppleTypography.current
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (enabled) colors.surfaceSecondary else colors.surfaceSecondary.copy(alpha = 0.45f))
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(vertical = 8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            color = if (enabled) colors.textPrimary else colors.tertiaryLabel,
+            style = appleType.footnote,
+            fontWeight = FontWeight.SemiBold
+        )
     }
 }
 

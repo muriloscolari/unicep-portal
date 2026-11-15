@@ -18,6 +18,8 @@ import me.muriloscolari.unicep.data.api.LoginRequest
 import me.muriloscolari.unicep.data.api.PortalApiClient
 import me.muriloscolari.unicep.data.api.UnauthorizedException
 import me.muriloscolari.unicep.data.repo.PrefKeys
+import me.muriloscolari.unicep.data.repo.evaluateFrequencyAlerts
+import me.muriloscolari.unicep.data.repo.readFrequencyAlertThreshold
 
 class GradeSyncWorker(
     private val appContext: Context,
@@ -47,24 +49,28 @@ class GradeSyncWorker(
             return Result.retry()
         }
 
-        if (unread.isEmpty()) return Result.success()
-
         val lastSeenId = PlatformBridge.getString(PrefKeys.LAST_NOTIFIED_ID)?.toLongOrNull() ?: 0L
         val freshOnes = unread.filter { it.id > lastSeenId }.sortedBy { it.id }
-        if (freshOnes.isEmpty()) return Result.success()
-
-        var anyPosted = false
-        freshOnes.forEach { n ->
-            val title = if (n.kind == "grade") "Nova nota: ${n.disciplineName}" else "Atualização: ${n.disciplineName}"
-            val oldTxt = if (n.oldValue.isBlank()) "—" else n.oldValue
-            val body = "${n.field}: $oldTxt → ${n.newValue}"
-            if (showLocalNotification(appContext, n.id.toInt(), title, body, openTab = 2)) {
-                anyPosted = true
+        if (freshOnes.isNotEmpty()) {
+            var anyPosted = false
+            freshOnes.forEach { n ->
+                val title = if (n.kind == "grade") "Nova nota: ${n.disciplineName}" else "Atualização: ${n.disciplineName}"
+                val oldTxt = if (n.oldValue.isBlank()) "—" else n.oldValue
+                val body = "${n.field}: $oldTxt → ${n.newValue}"
+                if (showLocalNotification(appContext, n.id.toInt(), title, body, openTab = 2)) {
+                    anyPosted = true
+                }
+            }
+            if (anyPosted) {
+                PlatformBridge.putString(PrefKeys.LAST_NOTIFIED_ID, freshOnes.last().id.toString())
             }
         }
 
-        if (anyPosted) {
-            PlatformBridge.putString(PrefKeys.LAST_NOTIFIED_ID, freshOnes.last().id.toString())
+        val freqThreshold = readFrequencyAlertThreshold()
+        if (freqThreshold > 0) {
+            runCatching { api.dashboard(server, token) }.getOrNull()?.let { dash ->
+                evaluateFrequencyAlerts(dash.currentReport.items, freqThreshold)
+            }
         }
         return Result.success()
     }
