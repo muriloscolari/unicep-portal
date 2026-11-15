@@ -173,37 +173,67 @@ private val AppleDarkColors = PortalColors(
 )
 
 private val MaterialLightScheme = lightColorScheme(
-    primary = Color(0xFF6750A4),
+    primary = Color(0xFF2563EB),
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFEADDFF),
-    onPrimaryContainer = Color(0xFF21005D),
-    secondaryContainer = Color(0xFFE8DEF8),
-    onSecondaryContainer = Color(0xFF1D192B),
-    background = Color(0xFFF7F2FA),
-    surface = Color(0xFFFEF7FF),
-    surfaceVariant = Color(0xFFE7E0EC),
-    onBackground = Color(0xFF1D1B20),
-    onSurface = Color(0xFF1D1B20),
-    onSurfaceVariant = Color(0xFF49454F),
-    outline = Color(0xFF79747E),
-    error = Color(0xFFB3261E)
+    primaryContainer = Color(0xFFDBEAFE),
+    onPrimaryContainer = Color(0xFF0F295E),
+    secondary = Color(0xFF475569),
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFE2E8F0),
+    onSecondaryContainer = Color(0xFF1E293B),
+    tertiary = Color(0xFF4F46E5),
+    onTertiary = Color.White,
+    tertiaryContainer = Color(0xFFE0E7FF),
+    onTertiaryContainer = Color(0xFF1E1B4B),
+    background = Color(0xFFF8FAFC),
+    onBackground = Color(0xFF0F172A),
+    surface = Color(0xFFFFFFFF),
+    onSurface = Color(0xFF0F172A),
+    surfaceVariant = Color(0xFFF1F5F9),
+    onSurfaceVariant = Color(0xFF475569),
+    surfaceContainerLowest = Color(0xFFFFFFFF),
+    surfaceContainerLow = Color(0xFFF8FAFC),
+    surfaceContainer = Color(0xFFF1F5F9),
+    surfaceContainerHigh = Color(0xFFE2E8F0),
+    surfaceContainerHighest = Color(0xFFCBD5E1),
+    outline = Color(0xFFCBD5E1),
+    outlineVariant = Color(0xFFE2E8F0),
+    error = Color(0xFFDC2626),
+    onError = Color.White,
+    errorContainer = Color(0xFFFEE2E2),
+    onErrorContainer = Color(0xFF7F1D1D)
 )
 
 private val MaterialDarkScheme = darkColorScheme(
-    primary = Color(0xFFD0BCFF),
-    onPrimary = Color(0xFF381E72),
-    primaryContainer = Color(0xFF4F378B),
-    onPrimaryContainer = Color(0xFFEADDFF),
-    secondaryContainer = Color(0xFF4A4458),
-    onSecondaryContainer = Color(0xFFE8DEF8),
-    background = Color(0xFF141218),
-    surface = Color(0xFF211F26),
-    surfaceVariant = Color(0xFF322F3A),
-    onBackground = Color(0xFFE6E0E9),
-    onSurface = Color(0xFFE6E0E9),
-    onSurfaceVariant = Color(0xFFCAC4D0),
-    outline = Color(0xFF938F99),
-    error = Color(0xFFF2B8B5)
+    primary = Color(0xFF60A5FA),
+    onPrimary = Color(0xFF082047),
+    primaryContainer = Color(0xFF1E3A5F),
+    onPrimaryContainer = Color(0xFFDBEAFE),
+    secondary = Color(0xFF94A3B8),
+    onSecondary = Color(0xFF0F172A),
+    secondaryContainer = Color(0xFF243042),
+    onSecondaryContainer = Color(0xFFE2E8F0),
+    tertiary = Color(0xFF818CF8),
+    onTertiary = Color(0xFF1E1B4B),
+    tertiaryContainer = Color(0xFF312E81),
+    onTertiaryContainer = Color(0xFFE0E7FF),
+    background = Color(0xFF0F141C),
+    onBackground = Color(0xFFF1F5F9),
+    surface = Color(0xFF18202C),
+    onSurface = Color(0xFFF1F5F9),
+    surfaceVariant = Color(0xFF222C3C),
+    onSurfaceVariant = Color(0xFF94A3B8),
+    surfaceContainerLowest = Color(0xFF0B0F15),
+    surfaceContainerLow = Color(0xFF131A24),
+    surfaceContainer = Color(0xFF18202C),
+    surfaceContainerHigh = Color(0xFF222C3C),
+    surfaceContainerHighest = Color(0xFF2D3A4E),
+    outline = Color(0xFF334155),
+    outlineVariant = Color(0xFF243042),
+    error = Color(0xFFF87171),
+    onError = Color(0xFF450A0A),
+    errorContainer = Color(0xFF7F1D1D),
+    onErrorContainer = Color(0xFFFEE2E2)
 )
 
 private fun buildAppleType(
@@ -302,35 +332,100 @@ val LocalPortalColors = staticCompositionLocalOf { AppleLightColors }
 val LocalDesignStyle = staticCompositionLocalOf { DesignStyle.APPLE }
 val LocalAppleTypography = staticCompositionLocalOf { DefaultAppleType }
 
-private val MaterialTypography = Typography(
+private fun buildMaterialTypography(
+    textFamily: FontFamily,
+    displayFamily: FontFamily
+): Typography = Typography(
+    displaySmall = TextStyle(
+        fontFamily = displayFamily,
+        fontSize = 32.sp,
+        lineHeight = 38.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = (-0.5).sp
+    ),
     headlineLarge = TextStyle(
+        fontFamily = displayFamily,
         fontSize = 28.sp,
         lineHeight = 34.sp,
-        fontWeight = FontWeight.Medium,
-        letterSpacing = 0.sp
+        fontWeight = FontWeight.Bold,
+        letterSpacing = (-0.4).sp
+    ),
+    headlineMedium = TextStyle(
+        fontFamily = displayFamily,
+        fontSize = 24.sp,
+        lineHeight = 30.sp,
+        fontWeight = FontWeight.SemiBold,
+        letterSpacing = (-0.3).sp
     ),
     headlineSmall = TextStyle(
+        fontFamily = displayFamily,
         fontSize = 20.sp,
         lineHeight = 26.sp,
-        fontWeight = FontWeight.Medium,
-        letterSpacing = 0.sp
+        fontWeight = FontWeight.SemiBold,
+        letterSpacing = (-0.2).sp
+    ),
+    titleLarge = TextStyle(
+        fontFamily = displayFamily,
+        fontSize = 18.sp,
+        lineHeight = 24.sp,
+        fontWeight = FontWeight.SemiBold,
+        letterSpacing = (-0.15).sp
     ),
     titleMedium = TextStyle(
+        fontFamily = textFamily,
         fontSize = 16.sp,
         lineHeight = 22.sp,
-        fontWeight = FontWeight.Medium,
-        letterSpacing = 0.1.sp
+        fontWeight = FontWeight.SemiBold,
+        letterSpacing = 0.sp
     ),
-    bodyMedium = TextStyle(
+    titleSmall = TextStyle(
+        fontFamily = textFamily,
         fontSize = 14.sp,
         lineHeight = 20.sp,
-        fontWeight = FontWeight.Normal
+        fontWeight = FontWeight.SemiBold,
+        letterSpacing = 0.05.sp
+    ),
+    bodyLarge = TextStyle(
+        fontFamily = textFamily,
+        fontSize = 15.5.sp,
+        lineHeight = 22.sp,
+        fontWeight = FontWeight.Normal,
+        letterSpacing = 0.sp
+    ),
+    bodyMedium = TextStyle(
+        fontFamily = textFamily,
+        fontSize = 14.sp,
+        lineHeight = 20.sp,
+        fontWeight = FontWeight.Normal,
+        letterSpacing = 0.05.sp
+    ),
+    bodySmall = TextStyle(
+        fontFamily = textFamily,
+        fontSize = 12.5.sp,
+        lineHeight = 18.sp,
+        fontWeight = FontWeight.Normal,
+        letterSpacing = 0.1.sp
+    ),
+    labelLarge = TextStyle(
+        fontFamily = textFamily,
+        fontSize = 14.sp,
+        lineHeight = 20.sp,
+        fontWeight = FontWeight.Medium,
+        letterSpacing = 0.05.sp
     ),
     labelMedium = TextStyle(
+        fontFamily = textFamily,
         fontSize = 12.sp,
         lineHeight = 16.sp,
         fontWeight = FontWeight.Medium,
-        letterSpacing = 0.4.sp
+        letterSpacing = 0.2.sp
+    ),
+    labelSmall = TextStyle(
+        fontFamily = textFamily,
+        fontSize = 11.sp,
+        lineHeight = 14.sp,
+        fontWeight = FontWeight.Medium,
+        letterSpacing = 0.25.sp
     )
 )
 
@@ -387,6 +482,10 @@ fun PortalTheme(
         )
     }
 
+    val materialTypography = remember(interTextFamily, interDisplayFamily) {
+        buildMaterialTypography(interTextFamily, interDisplayFamily)
+    }
+
     val portalColors = if (effectiveStyle == DesignStyle.APPLE) {
         appleColors
     } else {
@@ -394,24 +493,30 @@ fun PortalTheme(
             background = m3Scheme.background,
             surface = m3Scheme.surface,
             surfaceSecondary = m3Scheme.surfaceVariant,
-            surfaceChrome = m3Scheme.surface,
+            surfaceChrome = m3Scheme.surfaceContainerLow,
             accent = m3Scheme.primary,
             accentSoft = m3Scheme.primaryContainer,
             onAccent = m3Scheme.onPrimary,
-            green = if (darkTheme) Color(0xFF7AD695) else Color(0xFF1F7A3E),
-            orange = if (darkTheme) Color(0xFFFFC16B) else Color(0xFFB85C00),
+            green = if (darkTheme) Color(0xFF4ADE80) else Color(0xFF16A34A),
+            orange = if (darkTheme) Color(0xFFFBBF24) else Color(0xFFD97706),
             red = m3Scheme.error,
+            indigo = m3Scheme.tertiary,
             textPrimary = m3Scheme.onSurface,
             textSecondary = m3Scheme.onSurfaceVariant,
-            divider = m3Scheme.outline.copy(alpha = 0.28f),
+            divider = m3Scheme.outlineVariant,
             isDark = darkTheme,
-            tertiaryGroupedBackground = m3Scheme.surfaceVariant,
-            tertiaryLabel = m3Scheme.onSurfaceVariant.copy(alpha = 0.7f),
-            quaternaryLabel = m3Scheme.onSurfaceVariant.copy(alpha = 0.4f),
-            opaqueSeparator = m3Scheme.outline.copy(alpha = 0.28f),
-            systemFill = m3Scheme.surfaceVariant,
-            secondaryFill = m3Scheme.surfaceVariant,
-            tertiaryFill = m3Scheme.surfaceVariant
+            tertiaryGroupedBackground = m3Scheme.surfaceContainer,
+            tertiaryLabel = m3Scheme.onSurfaceVariant.copy(alpha = 0.72f),
+            quaternaryLabel = m3Scheme.onSurfaceVariant.copy(alpha = 0.42f),
+            opaqueSeparator = m3Scheme.outlineVariant,
+            systemFill = m3Scheme.surfaceContainer,
+            secondaryFill = m3Scheme.surfaceContainerHigh,
+            tertiaryFill = m3Scheme.surfaceContainerLow,
+            yellow = if (darkTheme) Color(0xFFFBBF24) else Color(0xFFD97706),
+            teal = m3Scheme.primary,
+            purple = m3Scheme.tertiary,
+            pink = m3Scheme.error,
+            gray = m3Scheme.onSurfaceVariant
         )
     }
 
@@ -422,7 +527,7 @@ fun PortalTheme(
     ) {
         MaterialTheme(
             colorScheme = m3Scheme,
-            typography = if (effectiveStyle == DesignStyle.APPLE) appleM3Typography else MaterialTypography,
+            typography = if (effectiveStyle == DesignStyle.APPLE) appleM3Typography else materialTypography,
             content = content
         )
     }
