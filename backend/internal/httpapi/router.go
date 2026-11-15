@@ -796,15 +796,19 @@ func (s *Server) staticSPAHandler(dir string) http.Handler {
 				if ct := mime.TypeByExtension(ext); ct != "" {
 					w.Header().Set("Content-Type", ct)
 				}
-				if ext == ".wasm" {
+				switch ext {
+				case ".wasm":
 					w.Header().Set("Content-Type", "application/wasm")
 					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				case ".html", ".js":
+					w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 				}
 			}
 			http.ServeFile(w, r, full)
 			return
 		}
 		if _, err := os.Stat(indexPath); err == nil && !errors.Is(err, fs.ErrNotExist) {
+			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 			http.ServeFile(w, r, indexPath)
 			return
 		}
