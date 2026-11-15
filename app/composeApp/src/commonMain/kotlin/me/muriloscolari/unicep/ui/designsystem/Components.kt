@@ -175,32 +175,49 @@ fun PortalCard(
             )
         }
     } else {
+        val reduceMotion = remember { PlatformBridge.isReduceMotionEnabled() }
         val scale by animateFloatAsState(
-            targetValue = 1f,
-            animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
+            targetValue = if (pressed && onClick != null && !reduceMotion) 0.985f else 1f,
+            animationSpec = spring(stiffness = Spring.StiffnessMedium)
         )
-        val shape = RoundedCornerShape(16.dp)
-        val border = BorderStroke(0.8.dp, colors.divider.copy(alpha = 0.45f))
+        val shape = RoundedCornerShape(20.dp)
+        val baseColor = when (cardStyle) {
+            CardStyle.Grouped -> colors.surface
+            CardStyle.Plain -> colors.surfaceSecondary
+            is CardStyle.Tinted -> cardStyle.color.copy(alpha = if (colors.isDark) 0.18f else 0.10f)
+        }
+        val shadowMod = if (!colors.isDark && cardStyle == CardStyle.Grouped) {
+            Modifier.shadow(
+                elevation = 2.dp,
+                shape = shape,
+                clip = false,
+                ambientColor = Color.Black.copy(alpha = 0.045f),
+                spotColor = Color.Black.copy(alpha = 0.045f)
+            )
+        } else Modifier
+
         Surface(
             modifier = modifier
                 .graphicsLayer {
                     scaleX = scale
                     scaleY = scale
                 }
+                .then(shadowMod)
                 .clip(shape)
                 .then(
                     if (onClick != null) {
-                        Modifier.clickable(
-                            interactionSource = interactionSource,
-                            indication = androidx.compose.material3.ripple(),
-                            onClick = onClick
-                        )
+                        Modifier
+                            .pointerHoverIcon(PointerIcon.Hand)
+                            .clickable(
+                                interactionSource = interactionSource,
+                                indication = androidx.compose.material3.ripple(),
+                                onClick = onClick
+                            )
                     } else Modifier
                 ),
             shape = shape,
-            color = colors.surface,
-            tonalElevation = 3.dp,
-            border = border
+            color = baseColor,
+            tonalElevation = 0.dp
         ) {
             Column(modifier = Modifier.padding(contentPadding), content = content)
         }
@@ -389,36 +406,82 @@ fun PortalSegmentedControl(
             }
         }
     } else {
-        // Material Design 3 Outlined Segmented Chip Strip
-        Row(
-            modifier = modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        // Material Design 3 Tonal Pill Segmented Control (sem bordas duras)
+        val containerShape = CircleShape
+        val thumbShape = CircleShape
+        BoxWithConstraints(
+            modifier = modifier
+                .fillMaxWidth()
+                .height(40.dp)
+                .clip(containerShape)
+                .background(colors.surfaceSecondary)
+                .padding(3.dp)
         ) {
-            options.forEachIndexed { index, label ->
-                val selected = index == clampedIndex
-                val shape = RoundedCornerShape(10.dp)
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(shape)
-                        .background(if (selected) colors.accentSoft else Color.Transparent)
-                        .border(
-                            width = 1.dp,
-                            color = if (selected) colors.accent else colors.divider,
-                            shape = shape
-                        )
-                        .clickable { onSelect(index) }
-                        .padding(vertical = 8.dp, horizontal = 8.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = label,
-                        color = if (selected) colors.accent else colors.textSecondary,
-                        fontSize = 13.sp,
-                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+            val count = options.size
+            val segmentWidth = (maxWidth / count).coerceAtLeast(0.dp)
+            val thumbOffset by animateDpAsState(
+                targetValue = segmentWidth * clampedIndex,
+                animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = 0.9f)
+            )
+
+            Box(
+                modifier = Modifier
+                    .offset(x = thumbOffset)
+                    .width(segmentWidth)
+                    .fillMaxHeight()
+                    .then(
+                        if (!colors.isDark) {
+                            Modifier.shadow(
+                                elevation = 2.dp,
+                                shape = thumbShape,
+                                clip = false,
+                                ambientColor = Color.Black.copy(alpha = 0.08f),
+                                spotColor = Color.Black.copy(alpha = 0.08f)
+                            )
+                        } else Modifier
                     )
+                    .clip(thumbShape)
+                    .background(if (colors.isDark) colors.accentSoft else colors.surface)
+            )
+
+            Row(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
+                options.forEachIndexed { index, label ->
+                    val selected = index == clampedIndex
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clip(thumbShape)
+                            .pointerHoverIcon(PointerIcon.Hand)
+                            .semantics {
+                                role = Role.Tab
+                                this.selected = selected
+                            }
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) {
+                                if (!selected) {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onSelect(index)
+                                }
+                            }
+                            .padding(horizontal = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = label,
+                            color = when {
+                                selected && colors.isDark -> colors.accent
+                                selected -> colors.textPrimary
+                                else -> colors.textSecondary
+                            },
+                            fontSize = 13.sp,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
         }
@@ -433,11 +496,11 @@ fun PortalBadge(
 ) {
     val style = LocalDesignStyle.current
     val appleType = LocalAppleTypography.current
-    val shape = if (style == DesignStyle.APPLE) CircleShape else RoundedCornerShape(8.dp)
+    val shape = CircleShape
     Box(
         modifier = modifier
             .clip(shape)
-            .background(color.copy(alpha = 0.15f))
+            .background(color.copy(alpha = 0.14f))
             .padding(horizontal = 9.dp, vertical = 3.dp)
     ) {
         Text(
@@ -612,14 +675,17 @@ fun PortalSecondaryButton(
             )
         }
     } else {
-        OutlinedButton(
+        Button(
             onClick = onClick,
-            modifier = modifier.height(44.dp),
+            modifier = modifier.height(46.dp),
             shape = CircleShape,
-            border = BorderStroke(1.dp, fg.copy(alpha = 0.5f)),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = fg)
+            colors = ButtonDefaults.buttonColors(
+                containerColor = fg.copy(alpha = if (colors.isDark) 0.18f else 0.11f),
+                contentColor = fg
+            ),
+            elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp)
         ) {
-            Text(text = text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            Text(text = text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -736,13 +802,26 @@ fun PortalTextField(
             label = { Text(label) },
             modifier = modifier.fillMaxWidth(),
             singleLine = singleLine,
+            leadingIcon = leadingIcon?.let { icon ->
+                {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = colors.textSecondary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            },
+            trailingIcon = trailing,
             visualTransformation = visualTransformation,
             keyboardOptions = keyboardOptions,
             keyboardActions = keyboardActions,
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(14.dp),
             colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = colors.surfaceSecondary.copy(alpha = 0.55f),
+                unfocusedContainerColor = colors.surfaceSecondary.copy(alpha = 0.75f),
                 focusedBorderColor = colors.accent,
-                unfocusedBorderColor = colors.divider,
+                unfocusedBorderColor = Color.Transparent,
                 focusedLabelColor = colors.accent,
                 unfocusedLabelColor = colors.textSecondary,
                 focusedTextColor = colors.textPrimary,
@@ -764,12 +843,58 @@ fun PortalSearchField(
     val appleType = LocalAppleTypography.current
 
     if (style != DesignStyle.APPLE) {
-        PortalTextField(
-            value = value,
-            onValueChange = onValueChange,
-            label = placeholder,
+        val shape = CircleShape
+        Row(
             modifier = modifier
-        )
+                .fillMaxWidth()
+                .height(46.dp)
+                .clip(shape)
+                .background(colors.surfaceSecondary)
+                .padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = PortalIcons.Search,
+                contentDescription = null,
+                tint = colors.textSecondary,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(Modifier.width(10.dp))
+            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                if (value.isEmpty()) {
+                    Text(
+                        text = placeholder,
+                        color = colors.textSecondary,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                BasicTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    textStyle = TextStyle(
+                        color = colors.textPrimary,
+                        fontSize = 14.sp
+                    ),
+                    cursorBrush = SolidColor(colors.accent)
+                )
+            }
+            if (value.isNotEmpty()) {
+                Icon(
+                    imageVector = PortalIcons.Close,
+                    contentDescription = "Limpar",
+                    tint = colors.textSecondary,
+                    modifier = Modifier
+                        .size(18.dp)
+                        .clip(CircleShape)
+                        .pointerHoverIcon(PointerIcon.Hand)
+                        .clickable { onValueChange("") }
+                )
+            }
+        }
         return
     }
 
@@ -979,39 +1104,109 @@ fun PortalListRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-                .padding(horizontal = 16.dp, vertical = 13.dp),
+                .defaultMinSize(minHeight = 52.dp)
+                .then(
+                    if (onClick != null) {
+                        Modifier
+                            .pointerHoverIcon(PointerIcon.Hand)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = androidx.compose.material3.ripple(),
+                                onClick = onClick
+                            )
+                    } else Modifier
+                )
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            horizontalArrangement = if (destructive) Arrangement.Center else Arrangement.SpaceBetween
         ) {
-            Column(modifier = Modifier.weight(1f)) {
+            if (destructive) {
                 Text(
                     text = title,
-                    color = if (destructive) colors.red else colors.textPrimary,
+                    color = colors.red,
                     fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center
                 )
-                if (!subtitle.isNullOrBlank()) {
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        text = subtitle,
-                        color = colors.textSecondary,
-                        fontSize = 12.sp
-                    )
+            } else {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (leadingDotColor != null) {
+                        Box(
+                            modifier = Modifier
+                                .size(9.dp)
+                                .clip(CircleShape)
+                                .background(leadingDotColor)
+                        )
+                        Spacer(Modifier.width(12.dp))
+                    } else if (leadingIcon != null) {
+                        val iconTint = leadingTint ?: colors.accent
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(iconTint.copy(alpha = if (colors.isDark) 0.18f else 0.12f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = leadingIcon,
+                                contentDescription = null,
+                                tint = iconTint,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(14.dp))
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = title,
+                            color = colors.textPrimary,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (!subtitle.isNullOrBlank()) {
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = subtitle,
+                                color = colors.textSecondary,
+                                fontSize = 12.5.sp,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                 }
-            }
-            Spacer(Modifier.width(12.dp))
-            if (trailing != null) {
-                trailing()
-            } else if (trailingValue != null) {
-                Text(trailingValue, color = colors.textSecondary, fontSize = 13.sp)
-            } else if (onClick != null && !destructive) {
-                Icon(
-                    imageVector = PortalIcons.ChevronRight,
-                    contentDescription = null,
-                    tint = colors.textSecondary,
-                    modifier = Modifier.size(16.dp)
-                )
+
+                if (trailing != null || trailingValue != null || showChevron) {
+                    Spacer(Modifier.width(12.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        if (trailingValue != null) {
+                            Text(
+                                text = trailingValue,
+                                color = colors.textSecondary,
+                                style = tabularNumberStyle(TextStyle(fontSize = 13.5.sp, fontWeight = FontWeight.Medium)),
+                                maxLines = 1
+                            )
+                        }
+                        trailing?.invoke()
+                        if (showChevron) {
+                            Icon(
+                                imageVector = PortalIcons.ChevronRight,
+                                contentDescription = null,
+                                tint = colors.textSecondary.copy(alpha = 0.7f),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
             }
         }
     }
