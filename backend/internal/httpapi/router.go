@@ -807,6 +807,10 @@ func (s *Server) staticSPAHandler(dir string) http.Handler {
 			http.ServeFile(w, r, full)
 			return
 		}
+		if filepath.Ext(clean) != "" {
+			writeError(w, http.StatusNotFound, "arquivo não encontrado")
+			return
+		}
 		if _, err := os.Stat(indexPath); err == nil && !errors.Is(err, fs.ErrNotExist) {
 			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 			http.ServeFile(w, r, indexPath)
