@@ -1,5 +1,6 @@
 # Stage 1: Compila o frontend Compose Multiplatform Web (Wasm)
 FROM eclipse-temurin:21-jdk AS web-builder
+RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 && rm -rf /var/lib/apt/lists/*
 WORKDIR /src/app
 COPY app/ .
 RUN chmod +x ./gradlew && ./gradlew :composeApp:wasmJsBrowserDistribution -PwebOnly=true --no-daemon

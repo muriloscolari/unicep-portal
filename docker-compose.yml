@@ -1,8 +1,7 @@
 services:
   unicep-portal:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: git.muriloscolari.me/murilo/unicep-portal:latest
+    pull_policy: always
     container_name: unicep-portal
     restart: unless-stopped
     read_only: true
@@ -12,6 +11,8 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
     env_file:
       - path: .env
         required: true
@@ -30,3 +31,19 @@ services:
       - "${BIND_HOST:-127.0.0.1}:${PORT:-47832}:47832"
     volumes:
       - ./data:/app/data
+
+  # Atualiza automaticamente apenas o container unicep-portal quando houver nova imagem no Forgejo
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: unicep-watchtower
+    restart: unless-stopped
+    environment:
+      DOCKER_API_VERSION: "1.44"
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_POLL_INTERVAL: "300"
+      TZ: America/Sao_Paulo
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Se o pacote no Forgejo for privado, faça `docker login git.muriloscolari.me` no host e descomente a linha abaixo:
+      # - ${HOME}/.docker/config.json:/config.json:ro

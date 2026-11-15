@@ -1,50 +1,71 @@
 # UNICEP Portal — Painel Mobile, Web e Notificador de Notas
 
-Versão própria e otimizada do Portal do Aluno da UNICEP (`cdseducacional.com.br`), construída com:
-- **Backend em Go + SQLite** empacotado em **Docker** na porta rara `47832` (atrás de Nginx HTTPS em `unicep.muriloscolari.me`).
+Versão própria e otimizada do Portal do Aluno da UNICEP (`cdseducacional.com.br`), licenciada sob **GNU GPLv3** (`LICENSE`), construída com:
+- **Backend em Go + SQLite** empacotado em **Docker** (`git.muriloscolari.me/murilo/unicep-portal:latest`) na porta interna `47832`, com segurança endurecida para exposição atrás de Cloudflare + Nginx/Tunnel.
 - **Front-end único em Kotlin + Compose Multiplatform** gerando:
   - **App Android (`.apk`)** compilado com **R8** (`1,8 MB`), login automático persistente via Android Keystore e checagem periódica de novas notas via `WorkManager`.
   - **Site Web (`wasmJs`)** servido diretamente pelo próprio container Go na raiz `/`.
-- **Design System dual:** interface estilo **Apple (Cupertino)** otimizada com números tabulares (`tnum`) e **fallback automático para Material Design 3** em aparelhos com Android < 12, pouca RAM ou modo economia de energia (ou via alternador manual em *Mais → Ajustes*).
+- **Design System dual:** interface estilo **Apple (Cupertino)** otimizada com números tabulares (`tnum`) e **fallback automático para Material Design 3** em aparelhos com Android < 12, pouca RAM ou modo economia de energia (ou via alternador manual em *Central → Aparência*).
 
 ---
 
-## Subindo o Backend + Site no Homelab (Docker + Nginx)
+## Rodando no Homelab com Atualização Automática (Forgejo Registry + Watchtower)
 
-1. Copie e configure o `.env`:
+1. Copie [`docker-compose.yml`](docker-compose.yml) e [`.env.example`](.env.example) para uma pasta no seu servidor (ex: `~/unicep-portal`) e crie o `.env`:
    ```bash
    cp .env.example .env
    openssl rand -hex 32   # coloque o valor gerado em APP_SECRET
    ```
-2. Suba o container (porta interna `47832` vinculada a `127.0.0.1:47832`):
+   Certifique-se de que o `.env` tenha `APP_SECRET` com 32+ caracteres (obrigatório em produção).
+
+2. *(Se o pacote no Forgejo for privado)* Faça login no registry do Forgejo no homelab e descomente a linha do `/config.json:ro` no `watchtower` em [`docker-compose.yml`](docker-compose.yml):
    ```bash
-   docker compose up -d --build
+   docker login git.muriloscolari.me -u murilo
    ```
-3. Configure o Nginx usando [deploy/nginx-unicep.conf.example](deploy/nginx-unicep.conf.example) para apontar `https://unicep.muriloscolari.me` (`80`/`443`) para `http://127.0.0.1:47832`.
+   *(Se o pacote estiver marcado como **público** no Forgejo, não precisa de `docker login`.)*
+
+3. Baixe e suba o app + Watchtower:
+   ```bash
+   docker compose pull
+   docker compose up -d
+   ```
+   A partir daí, o serviço `watchtower` verifica o Forgejo Registry a cada 5 minutos (`300s`), baixa a imagem nova assim que você atualizar o código e reinicia o container `unicep-portal` preservando `./data/portal.db`.
+
+4. Exponha `http://127.0.0.1:47832` via **Cloudflare Tunnel (`cloudflared`)** *(recomendado, zero portas abertas no roteador)* ou via Nginx com [deploy/nginx-unicep.conf.example](deploy/nginx-unicep.conf.example) + Cloudflare **Full (Strict)** + **Authenticated Origin Pulls (mTLS)**.
 
 ---
 
-## Compilando o App Android (R8)
-
-O Gradle da máquina já está configurado em `~/.gradle/gradle.properties` e `app/gradle.properties`. Para gerar o APK minificado com R8:
+## Publicando a Imagem Manualmente para o Forgejo
 
 ```bash
-cd app
-./gradlew :androidApp:assembleRelease
+docker login git.muriloscolari.me -u murilo
+docker build -t git.muriloscolari.me/murilo/unicep-portal:1.2.0 -t git.muriloscolari.me/murilo/unicep-portal:latest .
+docker push git.muriloscolari.me/murilo/unicep-portal:1.2.0
+docker push git.muriloscolari.me/murilo/unicep-portal:latest
 ```
 
-O APK final estará em `app/androidApp/build/outputs/apk/release/androidApp-release.apk`.
+O workflow em [`.forgejo/workflows/docker.yml`](.forgejo/workflows/docker.yml) também automatiza esse build/push no Forgejo Actions sempre que houver push em `main` ou nova tag `v*` (requer um Forgejo Runner ativo na sua instância).
 
 ---
 
-## Desenvolvimento e Testes Locais
+## Compilando Localmente (Android R8 / Go / Web)
 
-- **Testes do backend Go:**
+- **App Android R8:**
   ```bash
-  cd backend && go test ./...
+  cd app && ./gradlew :androidApp:assembleRelease
   ```
-- **Compilar apenas o site Web/Wasm (sem precisar do Android SDK):**
+- **Site Web/Wasm (sem Android SDK):**
   ```bash
   cd app && ./gradlew :composeApp:wasmJsBrowserDistribution -PwebOnly=true
   ```
+- **Testes Go com race detector:**
+  ```bash
+  cd backend && go test -race ./...
+  ```
 - **Documentação técnica do portal original:** veja [DOCUMENTACAO_PORTAL.md](DOCUMENTACAO_PORTAL.md).
+
+---
+
+## Licença
+
+Este projeto é distribuído sob os termos da licença **GNU General Public License v3.0 (GPL-3.0-or-later)**. Veja o arquivo [LICENSE](LICENSE).
