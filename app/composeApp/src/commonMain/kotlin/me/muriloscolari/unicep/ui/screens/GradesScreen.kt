@@ -89,6 +89,10 @@ import me.muriloscolari.unicep.ui.designsystem.PortalSectionHeader
 import me.muriloscolari.unicep.ui.designsystem.PortalSegmentedControl
 import me.muriloscolari.unicep.ui.designsystem.PortalStatusDot
 import me.muriloscolari.unicep.ui.designsystem.ProgressRing
+import me.muriloscolari.unicep.ui.designsystem.appleScrollBoundaryHaptics
+import me.muriloscolari.unicep.ui.designsystem.predictiveBackScrimAlpha
+import me.muriloscolari.unicep.ui.designsystem.predictiveBackSurfaceTransform
+import me.muriloscolari.unicep.ui.designsystem.LocalPredictiveBackProgress
 import me.muriloscolari.unicep.ui.designsystem.tabularNumberStyle
 import me.muriloscolari.unicep.ui.util.toDisplayTitle
 import kotlin.math.roundToInt
@@ -183,7 +187,9 @@ fun SemesterScreen(
         Box(modifier = Modifier.fillMaxSize().background(colors.background)) {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .appleScrollBoundaryHaptics(listState),
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 104.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
@@ -416,7 +422,8 @@ fun SemesterScreen(
                 state = listState,
                 modifier = Modifier
                     .widthIn(max = 720.dp)
-                    .fillMaxSize(),
+                    .fillMaxSize()
+                    .appleScrollBoundaryHaptics(listState),
                 contentPadding = PaddingValues(
                     start = horizontalPad,
                     end = horizontalPad,
@@ -1543,9 +1550,11 @@ internal fun PortalOverlayModal(
     content: @Composable ColumnScope.() -> Unit
 ) {
     val colors = LocalPortalColors.current
+    val readBack = LocalPredictiveBackProgress.current
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .predictiveBackScrimAlpha(readBack)
             .background(Color.Black.copy(alpha = 0.55f))
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
@@ -1560,6 +1569,7 @@ internal fun PortalOverlayModal(
                 .widthIn(max = 520.dp)
                 .fillMaxWidth()
                 .heightIn(max = 640.dp)
+                .predictiveBackSurfaceTransform(readBack)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,

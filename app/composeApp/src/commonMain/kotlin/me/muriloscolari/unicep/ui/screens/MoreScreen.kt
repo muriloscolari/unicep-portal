@@ -67,6 +67,7 @@ import me.muriloscolari.unicep.ui.designsystem.PortalSectionHeader
 import me.muriloscolari.unicep.ui.designsystem.PortalSegmentedControl
 import me.muriloscolari.unicep.ui.designsystem.PortalStatusDot
 import me.muriloscolari.unicep.ui.designsystem.PortalTextButton
+import me.muriloscolari.unicep.ui.designsystem.appleScrollBoundaryHaptics
 import me.muriloscolari.unicep.ui.designsystem.tabularNumberStyle
 import me.muriloscolari.unicep.ui.util.formatRelativeTime
 import me.muriloscolari.unicep.ui.util.initialsFromName
@@ -117,7 +118,10 @@ fun CentralScreen(
     if (activeStyle != DesignStyle.APPLE) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize().background(colors.background),
+            modifier = Modifier
+                .fillMaxSize()
+                .background(colors.background)
+                .appleScrollBoundaryHaptics(listState),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 104.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
@@ -353,7 +357,10 @@ fun CentralScreen(
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.widthIn(max = 720.dp).fillMaxSize(),
+                modifier = Modifier
+                    .widthIn(max = 720.dp)
+                    .fillMaxSize()
+                    .appleScrollBoundaryHaptics(listState),
                 contentPadding = PaddingValues(
                     start = horizontalPad,
                     end = horizontalPad,

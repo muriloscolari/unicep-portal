@@ -44,6 +44,20 @@ data class ExportCardData(
     val plainText: String = ""
 )
 
+enum class PortalHapticType {
+    IMPACT_LIGHT,
+    IMPACT_MEDIUM,
+    IMPACT_HEAVY,
+    BOUNDARY_THUD,
+    SELECTION
+}
+
+data class PredictiveBackState(
+    val active: Boolean = false,
+    val progress: Float = 0f,
+    val swipeEdge: Int = 0
+)
+
 expect object PlatformBridge {
     fun capabilities(): DeviceCapabilities
     fun currentAppVersion(): String
@@ -56,6 +70,7 @@ expect object PlatformBridge {
     fun shareText(title: String, text: String): Boolean
     fun exportPng(fileName: String, data: ExportCardData): Boolean
     fun printDocument(title: String, data: ExportCardData): Boolean
+    fun performHaptic(type: PortalHapticType, intensity: Float = 1f)
     fun scheduleGradeSync()
     fun cancelGradeSync()
     fun requestNotificationPermissionIfNeeded()
@@ -64,6 +79,8 @@ expect object PlatformBridge {
     fun pushNavigationRoute(route: String)
     fun setPopRouteListener(listener: (String) -> Unit)
     fun setAndroidBackHandler(handler: (() -> Boolean)?)
+    fun setAndroidBackEnabled(enabled: Boolean)
+    fun setAndroidPredictiveBackListener(listener: ((PredictiveBackState) -> Unit)?)
     fun createHttpEngine(): HttpClientEngine
     fun currentTimeMillis(): Long
     fun isReduceMotionEnabled(): Boolean

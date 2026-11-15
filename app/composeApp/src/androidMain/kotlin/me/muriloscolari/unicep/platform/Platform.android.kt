@@ -16,6 +16,9 @@ import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.print.PrintAttributes
 import android.print.PrintManager
 import android.text.Layout
@@ -23,6 +26,7 @@ import android.text.StaticLayout
 import android.text.TextPaint
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.BackEventCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.core.app.ActivityCompat
@@ -45,6 +49,8 @@ actual object PlatformBridge {
     private var secureStore: AndroidSecureStore? = null
     private var activityRef: WeakReference<Activity>? = null
     private var backHandler: (() -> Boolean)? = null
+    private var backEnabled: Boolean = false
+    private var predictiveBackListener: ((PredictiveBackState) -> Unit)? = null
     private var registeredBackCallback: OnBackPressedCallback? = null
 
     fun initContext(context: Context) {
@@ -60,13 +66,41 @@ actual object PlatformBridge {
         activityRef = WeakReference(activity)
         if (activity is ComponentActivity) {
             registeredBackCallback?.remove()
-            val callback = object : OnBackPressedCallback(true) {
+            val callback = object : OnBackPressedCallback(backEnabled) {
+                override fun handleOnBackStarted(backEvent: BackEventCompat) {
+                    predictiveBackListener?.invoke(
+                        PredictiveBackState(
+                            active = true,
+                            progress = backEvent.progress,
+                            swipeEdge = backEvent.swipeEdge
+                        )
+                    )
+                    performHaptic(PortalHapticType.IMPACT_LIGHT, 0.5f)
+                }
+
+                override fun handleOnBackProgressed(backEvent: BackEventCompat) {
+                    predictiveBackListener?.invoke(
+                        PredictiveBackState(
+                            active = true,
+                            progress = backEvent.progress,
+                            swipeEdge = backEvent.swipeEdge
+                        )
+                    )
+                }
+
+                override fun handleOnBackCancelled() {
+                    predictiveBackListener?.invoke(PredictiveBackState())
+                }
+
                 override fun handleOnBackPressed() {
+                    predictiveBackListener?.invoke(PredictiveBackState())
                     val consumed = backHandler?.invoke() ?: false
-                    if (!consumed) {
+                    if (consumed) {
+                        performHaptic(PortalHapticType.SELECTION, 0.65f)
+                    } else {
                         isEnabled = false
                         activity.onBackPressedDispatcher.onBackPressed()
-                        isEnabled = true
+                        isEnabled = backEnabled
                     }
                 }
             }
@@ -382,6 +416,85 @@ actual object PlatformBridge {
 
     actual fun setAndroidBackHandler(handler: (() -> Boolean)?) {
         backHandler = handler
+        if (handler == null) {
+            backEnabled = false
+            registeredBackCallback?.isEnabled = false
+        }
+    }
+
+    actual fun setAndroidBackEnabled(enabled: Boolean) {
+        backEnabled = enabled
+        registeredBackCallback?.isEnabled = enabled && backHandler != null
+    }
+
+    actual fun setAndroidPredictiveBackListener(listener: ((PredictiveBackState) -> Unit)?) {
+        predictiveBackListener = listener
+    }
+
+    actual fun performHaptic(type: PortalHapticType, intensity: Float) {
+        val ctx = appContext ?: return
+        val scale = intensity.coerceIn(0.2f, 1f)
+        runCatching {
+            val vibrator: Vibrator? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                (ctx.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                ctx.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            }
+            if (vibrator == null || !vibrator.hasVibrator()) return
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val primitive = when (type) {
+                    PortalHapticType.BOUNDARY_THUD,
+                    PortalHapticType.IMPACT_HEAVY -> VibrationEffect.Composition.PRIMITIVE_THUD
+                    PortalHapticType.IMPACT_MEDIUM -> VibrationEffect.Composition.PRIMITIVE_CLICK
+                    PortalHapticType.IMPACT_LIGHT -> VibrationEffect.Composition.PRIMITIVE_LOW_TICK
+                    PortalHapticType.SELECTION -> VibrationEffect.Composition.PRIMITIVE_TICK
+                }
+                if (vibrator.areAllPrimitivesSupported(primitive)) {
+                    val scaledStrength = when (type) {
+                        PortalHapticType.BOUNDARY_THUD -> (0.45f + 0.55f * scale).coerceIn(0.35f, 1f)
+                        PortalHapticType.IMPACT_HEAVY -> (0.55f + 0.45f * scale).coerceIn(0.4f, 1f)
+                        PortalHapticType.IMPACT_MEDIUM -> (0.4f + 0.45f * scale).coerceIn(0.35f, 0.9f)
+                        PortalHapticType.IMPACT_LIGHT -> (0.3f + 0.35f * scale).coerceIn(0.25f, 0.7f)
+                        PortalHapticType.SELECTION -> (0.28f + 0.32f * scale).coerceIn(0.25f, 0.65f)
+                    }
+                    val effect = VibrationEffect.startComposition()
+                        .addPrimitive(primitive, scaledStrength)
+                        .compose()
+                    vibrator.vibrate(effect)
+                    return
+                }
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val predefined = when (type) {
+                    PortalHapticType.BOUNDARY_THUD,
+                    PortalHapticType.IMPACT_HEAVY -> VibrationEffect.EFFECT_HEAVY_CLICK
+                    PortalHapticType.IMPACT_MEDIUM -> VibrationEffect.EFFECT_CLICK
+                    PortalHapticType.IMPACT_LIGHT,
+                    PortalHapticType.SELECTION -> VibrationEffect.EFFECT_TICK
+                }
+                vibrator.vibrate(VibrationEffect.createPredefined(predefined))
+                return
+            }
+
+            val durationMs = when (type) {
+                PortalHapticType.BOUNDARY_THUD -> (14L + (14f * scale).toLong())
+                PortalHapticType.IMPACT_HEAVY -> 22L
+                PortalHapticType.IMPACT_MEDIUM -> 14L
+                PortalHapticType.IMPACT_LIGHT -> 9L
+                PortalHapticType.SELECTION -> 8L
+            }
+            val amplitude = when (type) {
+                PortalHapticType.BOUNDARY_THUD -> (90 + (150 * scale).toInt()).coerceIn(60, 255)
+                PortalHapticType.IMPACT_HEAVY -> 220
+                PortalHapticType.IMPACT_MEDIUM -> 150
+                PortalHapticType.IMPACT_LIGHT -> 95
+                PortalHapticType.SELECTION -> 85
+            }
+            vibrator.vibrate(VibrationEffect.createOneShot(durationMs, amplitude))
+        }
     }
 
     actual fun currentAppVersion(): String {

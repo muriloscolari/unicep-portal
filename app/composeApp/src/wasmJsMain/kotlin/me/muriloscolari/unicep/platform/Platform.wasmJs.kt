@@ -483,6 +483,12 @@ actual object PlatformBridge {
 
     actual fun setAndroidBackHandler(handler: (() -> Boolean)?) {}
 
+    actual fun setAndroidBackEnabled(enabled: Boolean) {}
+
+    actual fun setAndroidPredictiveBackListener(listener: ((PredictiveBackState) -> Unit)?) {}
+
+    actual fun performHaptic(type: PortalHapticType, intensity: Float) {}
+
     actual fun currentAppVersion(): String = "web"
 
     actual suspend fun checkForAppUpdate(): AppUpdateInfo? = null

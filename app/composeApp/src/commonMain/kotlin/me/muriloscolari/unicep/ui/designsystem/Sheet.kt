@@ -92,6 +92,8 @@ fun AppleSheet(
 
     val dragOffsetY = remember { Animatable(0f) }
 
+    val readBack = LocalPredictiveBackProgress.current
+
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val isDesktop = maxWidth >= 640.dp
         val maxH = maxHeight
@@ -107,6 +109,7 @@ fun AppleSheet(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
+                    .predictiveBackScrimAlpha(readBack)
                     .background(colors.scrim)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
@@ -134,6 +137,7 @@ fun AppleSheet(
                         .widthIn(max = 560.dp)
                         .fillMaxWidth()
                         .heightIn(max = (maxH - 48.dp).coerceAtLeast(320.dp))
+                        .predictiveBackSurfaceTransform(readBack)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
@@ -211,6 +215,7 @@ fun AppleSheet(
                         .fillMaxWidth()
                         .heightIn(max = safeMaxHeight)
                         .offset { IntOffset(0, dragOffsetY.value.roundToInt().coerceAtLeast(0)) }
+                        .predictiveBackSurfaceTransform(readBack)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
@@ -381,10 +386,12 @@ fun AppleAlert(
     val colors = LocalPortalColors.current
     val appleType = LocalAppleTypography.current
     val confirmColor = if (confirmDestructive) colors.red else colors.accent
+    val readBack = LocalPredictiveBackProgress.current
 
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .predictiveBackScrimAlpha(readBack)
             .background(colors.scrim)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
@@ -398,6 +405,7 @@ fun AppleAlert(
             modifier = Modifier
                 .widthIn(max = 316.dp)
                 .fillMaxWidth()
+                .predictiveBackSurfaceTransform(readBack, slideDp = 40f, verticalSlideDp = 12f, scaleDrop = 0.08f)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,

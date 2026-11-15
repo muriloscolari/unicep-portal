@@ -45,6 +45,8 @@ fun ExportActionModal(
     val isWeb = remember { PlatformBridge.capabilities().isWeb }
     var feedback by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
 
+    RegisterBackOverlay(onBack = onDismiss)
+
     PortalOverlayModal(
         title = "Exportar / Compartilhar",
         subtitle = data.title,

@@ -160,17 +160,14 @@ fun GlassSurface(
  */
 @Composable
 fun GlassEdgeBarBackdrop(
-    collapseProgress: Float,
+    collapseProgress: () -> Float,
     modifier: Modifier = Modifier
 ) {
     val c = LocalPortalColors.current
     val haze = LocalHazeState.current
     val enabled = LocalGlassEnabled.current && haze != null
-    val p = collapseProgress.coerceIn(0f, 1f)
 
-    if (p <= 0.01f) return
-
-    val blurStyle = remember(c.background, c.isDark, p) {
+    val blurStyle = remember(c.background, c.isDark) {
         HazeBlurStyle {
             blurEnabled(true)
             blurRadius(20.dp)
@@ -178,7 +175,7 @@ fun GlassEdgeBarBackdrop(
             colorEffects(
                 listOf(
                     HazeColorEffect.tint(
-                        c.background.copy(alpha = (if (c.isDark) 0.74f else 0.80f) * p)
+                        c.background.copy(alpha = if (c.isDark) 0.74f else 0.80f)
                     )
                 )
             )
@@ -189,24 +186,28 @@ fun GlassEdgeBarBackdrop(
                     endIntensity = 0.08f
                 )
             )
-            alpha(p)
+            alpha(1f)
         }
     }
 
     Box(
-        modifier = modifier.then(
-            if (enabled) {
-                Modifier.hazeBlur(input = HazeInput.Sources(haze!!), style = blurStyle)
-            } else {
-                Modifier.background(
-                    Brush.verticalGradient(
-                        0f to c.glassTintFallback.copy(alpha = 0.96f * p),
-                        0.82f to c.glassTintFallback.copy(alpha = 0.78f * p),
-                        1f to Color.Transparent
-                    )
-                )
+        modifier = modifier
+            .graphicsLayer {
+                alpha = collapseProgress().coerceIn(0f, 1f)
             }
-        )
+            .then(
+                if (enabled) {
+                    Modifier.hazeBlur(input = HazeInput.Sources(haze!!), style = blurStyle)
+                } else {
+                    Modifier.background(
+                        Brush.verticalGradient(
+                            0f to c.glassTintFallback.copy(alpha = 0.96f),
+                            0.82f to c.glassTintFallback.copy(alpha = 0.78f),
+                            1f to Color.Transparent
+                        )
+                    )
+                }
+            )
     )
 }
 

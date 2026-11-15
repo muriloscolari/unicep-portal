@@ -106,9 +106,14 @@ import me.muriloscolari.unicep.data.repo.PortalRepository
 import me.muriloscolari.unicep.platform.AppUpdateInfo
 import me.muriloscolari.unicep.platform.DesignStyle
 import me.muriloscolari.unicep.platform.PlatformBridge
+import me.muriloscolari.unicep.platform.PredictiveBackState
 import me.muriloscolari.unicep.ui.designsystem.AppleActivityIndicator
 import me.muriloscolari.unicep.ui.designsystem.AppleAlert
 import me.muriloscolari.unicep.ui.designsystem.AppleMotion
+import me.muriloscolari.unicep.ui.designsystem.BackOverlayController
+import me.muriloscolari.unicep.ui.designsystem.LocalBackOverlayController
+import me.muriloscolari.unicep.ui.designsystem.LocalPredictiveBackProgress
+import me.muriloscolari.unicep.ui.designsystem.predictiveBackSurfaceTransform
 import me.muriloscolari.unicep.ui.designsystem.AppleProgressBar
 import me.muriloscolari.unicep.ui.designsystem.GlassButton
 import me.muriloscolari.unicep.ui.designsystem.GlassEdgeBarBackdrop
@@ -160,6 +165,8 @@ fun App(initialTab: Int = 0) {
     var showAllNotificationsModal by remember { mutableStateOf(false) }
     var confirmLogoutDialog by remember { mutableStateOf(false) }
     var suppressHistoryPush by remember { mutableStateOf(false) }
+    val backOverlayController = remember { BackOverlayController() }
+    var predictiveBackState by remember { mutableStateOf(PredictiveBackState()) }
 
     var availableUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
     var showUpdateDialog by remember { mutableStateOf(false) }
@@ -301,11 +308,33 @@ fun App(initialTab: Int = 0) {
         repo.tryAutoLogin()
     }
 
+    val hasAnyOverlay = backOverlayController.hasOverlay ||
+        confirmLogoutDialog ||
+        showUpdateDialog ||
+        showAllNotificationsModal ||
+        selectedSubjectCode != null ||
+        showRiskyAttendanceModal
+    val canPopInternally = state.loggedIn && (
+        hasAnyOverlay ||
+            (currentTab == MainTab.COURSE && courseSubTab > 0) ||
+            currentTab != MainTab.SEMESTER
+        )
+
+    LaunchedEffect(canPopInternally) {
+        PlatformBridge.setAndroidBackEnabled(canPopInternally)
+    }
+
     DisposableEffect(Unit) {
         PlatformBridge.initNavigationHistory(MainTab.entries.getOrElse(initialTab) { MainTab.SEMESTER }.route)
         PlatformBridge.setPopRouteListener { route -> applyPopRoute(route) }
+        PlatformBridge.setAndroidPredictiveBackListener { predictiveBackState = it }
         PlatformBridge.setAndroidBackHandler {
             when {
+                backOverlayController.popTop() -> true
+                showUpdateDialog && !updateDownloading -> {
+                    showUpdateDialog = false
+                    true
+                }
                 confirmLogoutDialog -> {
                     confirmLogoutDialog = false
                     true
@@ -322,6 +351,10 @@ fun App(initialTab: Int = 0) {
                     showRiskyAttendanceModal = false
                     true
                 }
+                currentTab == MainTab.COURSE && courseSubTab > 0 -> {
+                    courseSubTab = 0
+                    true
+                }
                 currentTab != MainTab.SEMESTER -> {
                     currentTab = MainTab.SEMESTER
                     true
@@ -330,6 +363,8 @@ fun App(initialTab: Int = 0) {
             }
         }
         onDispose {
+            PlatformBridge.setAndroidPredictiveBackListener(null)
+            PlatformBridge.setAndroidBackEnabled(false)
             PlatformBridge.setAndroidBackHandler(null)
         }
     }
@@ -353,6 +388,10 @@ fun App(initialTab: Int = 0) {
         }
     }
 
+    CompositionLocalProvider(
+        LocalPredictiveBackProgress provides { predictiveBackState },
+        LocalBackOverlayController provides backOverlayController
+    ) {
     PortalTheme(stylePreference = state.stylePreference) {
         val colors = LocalPortalColors.current
         val style = LocalDesignStyle.current
@@ -557,7 +596,17 @@ fun App(initialTab: Int = 0) {
                                 }
                             }
                         ) { innerPadding ->
-                            Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(innerPadding)
+                                    .predictiveBackSurfaceTransform(
+                                        readBack = { if (!hasAnyOverlay) predictiveBackState else PredictiveBackState() },
+                                        slideDp = 42f,
+                                        verticalSlideDp = 12f,
+                                        scaleDrop = 0.055f
+                                    )
+                            ) {
                                 bodyContent()
                             }
                         }
@@ -633,7 +682,7 @@ fun App(initialTab: Int = 0) {
                         else (activeListState.firstVisibleItemScrollOffset / 110f).coerceIn(0f, 1f)
                     }
                 }
-                val smoothCollapse by animateFloatAsState(collapseProgress, tween(120))
+                val smoothCollapseState = animateFloatAsState(collapseProgress, tween(120))
 
                 // Auto-expande a tab bar quando estiver no topo da lista ou ao trocar de aba
                 val atTop by remember(activeListState) {
@@ -715,6 +764,12 @@ fun App(initialTab: Int = 0) {
                                         scaleX = s
                                         scaleY = s
                                     }
+                                    .predictiveBackSurfaceTransform(
+                                        readBack = { if (!hasAnyOverlay) predictiveBackState else PredictiveBackState() },
+                                        slideDp = 42f,
+                                        verticalSlideDp = 12f,
+                                        scaleDrop = 0.055f
+                                    )
                                     .clip(RoundedCornerShape(bgCorner.coerceAtLeast(0.dp)))
                             ) {
                                 // CAMADA 1: Conteúdo edge-to-edge (fonte do Liquid Glass)
@@ -876,14 +931,14 @@ fun App(initialTab: Int = 0) {
                                         .fillMaxWidth()
                                 ) {
                                     GlassEdgeBarBackdrop(
-                                        collapseProgress = smoothCollapse,
+                                        collapseProgress = { smoothCollapseState.value },
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .height(statusTop + 62.dp)
                                     )
                                     AppleNavBar(
                                         title = currentTab.label,
-                                        collapseProgress = smoothCollapse,
+                                        collapseProgress = { smoothCollapseState.value },
                                         statusTop = statusTop,
                                         unreadCount = unreadCount,
                                         isDesktop = isDesktop,
@@ -1002,12 +1057,13 @@ fun App(initialTab: Int = 0) {
             }
         }
     }
+    }
 }
 
 @Composable
 private fun AppleNavBar(
     title: String,
-    collapseProgress: Float,
+    collapseProgress: () -> Float,
     statusTop: Dp,
     unreadCount: Int,
     isDesktop: Boolean,
@@ -1030,7 +1086,7 @@ private fun AppleNavBar(
             style = appleType.headline,
             modifier = Modifier
                 .align(Alignment.Center)
-                .alpha(collapseProgress.coerceIn(0f, 1f))
+                .graphicsLayer { alpha = collapseProgress().coerceIn(0f, 1f) }
         )
 
         Row(
