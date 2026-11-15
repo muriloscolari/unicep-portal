@@ -18,33 +18,26 @@ Versão própria e otimizada do Portal do Aluno da UNICEP (`cdseducacional.com.b
    ```
    Certifique-se de que o `.env` tenha `APP_SECRET` com 32+ caracteres (obrigatório em produção).
 
-2. *(Se o pacote no Forgejo for privado)* Faça login no registry do Forgejo no homelab e descomente a linha do `/config.json:ro` no `watchtower` em [`docker-compose.yml`](docker-compose.yml):
-   ```bash
-   docker login git.muriloscolari.me -u murilo
-   ```
-   *(Se o pacote estiver marcado como **público** no Forgejo, não precisa de `docker login`.)*
-
-3. Baixe e suba o app + Watchtower:
+2. Baixe e suba o app + Watchtower *(como o repositório/pacote é público no Forgejo, não precisa de `docker login` no homelab)*:
    ```bash
    docker compose pull
    docker compose up -d
    ```
-   A partir daí, o serviço `watchtower` verifica o Forgejo Registry a cada 5 minutos (`300s`), baixa a imagem nova assim que você atualizar o código e reinicia o container `unicep-portal` preservando `./data/portal.db`.
+   A partir daí, o serviço `watchtower` verifica o Forgejo Registry a cada 5 minutos (`300s`), baixa a imagem nova assim que você publicar uma atualização e reinicia o container `unicep-portal` preservando `./data/portal.db`.
 
-4. Exponha `http://127.0.0.1:47832` via **Cloudflare Tunnel (`cloudflared`)** *(recomendado, zero portas abertas no roteador)* ou via Nginx com [deploy/nginx-unicep.conf.example](deploy/nginx-unicep.conf.example) + Cloudflare **Full (Strict)** + **Authenticated Origin Pulls (mTLS)**.
+3. Exponha `http://127.0.0.1:47832` via **Cloudflare Tunnel (`cloudflared`)** *(recomendado, zero portas abertas no roteador)* ou via Nginx com [deploy/nginx-unicep.conf.example](deploy/nginx-unicep.conf.example) + Cloudflare **Full (Strict)** + **Authenticated Origin Pulls (mTLS)**.
 
 ---
 
-## Publicando a Imagem Manualmente para o Forgejo
+## Publicando uma Nova Imagem a partir deste Computador
+
+Sempre que houver alterações e você quiser atualizar a imagem no Forgejo (para o homelab puxar sozinho):
 
 ```bash
-docker login git.muriloscolari.me -u murilo
-docker build -t git.muriloscolari.me/murilo/unicep-portal:1.2.0 -t git.muriloscolari.me/murilo/unicep-portal:latest .
-docker push git.muriloscolari.me/murilo/unicep-portal:1.2.0
-docker push git.muriloscolari.me/murilo/unicep-portal:latest
+./scripts/publish-image.sh
 ```
 
-O workflow em [`.forgejo/workflows/docker.yml`](.forgejo/workflows/docker.yml) também automatiza esse build/push no Forgejo Actions sempre que houver push em `main` ou nova tag `v*` (requer um Forgejo Runner ativo na sua instância).
+*(Ou manualmente: `docker build -t git.muriloscolari.me/murilo/unicep-portal:latest . && docker push git.muriloscolari.me/murilo/unicep-portal:latest`.)*
 
 ---
 

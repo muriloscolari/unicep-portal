@@ -45,5 +45,4 @@ services:
       TZ: America/Sao_Paulo
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      # Se o pacote no Forgejo for privado, faça `docker login git.muriloscolari.me` no host e descomente a linha abaixo:
-      # - ${HOME}/.docker/config.json:/config.json:ro
+      # Repositório/pacote público no Forgejo (sem necessidade de login no homelab)
