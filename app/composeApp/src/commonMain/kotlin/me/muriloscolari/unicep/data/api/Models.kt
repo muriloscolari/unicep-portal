@@ -217,7 +217,15 @@ data class AvaSsoResponse(val url: String)
 data class SyncResponse(val created: Int = 0)
 
 @Serializable
-data class ErrorResponse(val error: String = "Erro desconhecido")
+data class ErrorResponse(
+    val error: String = "Erro desconhecido",
+    val code: String = ""
+)
+
+@Serializable
+data class VirtualSettingsPayload(
+    val pollingEnabled: Boolean = true
+)
 
 @Serializable
 data class MarkReadRequest(val ids: List<Long> = emptyList())
@@ -384,6 +392,7 @@ data class VirtualOverviewResponse(
     val baseUrl: String = "https://salavirtual.unicep.edu.br",
     val userId: String = "",
     val userName: String = "",
+    val complete: Boolean = true,
     val semesters: List<VirtualSemesterOption> = emptyList(),
     val courses: List<VirtualCourseSummary> = emptyList(),
     val upcomingAssignments: List<VirtualAssignmentItem> = emptyList(),

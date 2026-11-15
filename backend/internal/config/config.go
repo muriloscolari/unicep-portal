@@ -4,7 +4,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -77,6 +79,15 @@ func LoadFromLookup(lookup func(string) (string, bool)) (Config, error) {
 		}
 	}
 
+	portalURL, err := validateServiceURL("PORTAL_BASE_URL", getOr("PORTAL_BASE_URL", "https://cdseducacional.com.br"))
+	if err != nil {
+		return Config{}, err
+	}
+	d2lURL, err := validateServiceURL("D2L_BASE_URL", getOr("D2L_BASE_URL", "https://salavirtual.unicep.edu.br"))
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		Port:                getOr("PORT", "47832"),
 		AppSecret:           secret,
@@ -84,13 +95,32 @@ func LoadFromLookup(lookup func(string) (string, bool)) (Config, error) {
 		AllowDevCORS:        parseBool(get("ALLOW_DEV_CORS"), false),
 		DataDir:             getOr("DATA_DIR", "./data"),
 		WebDir:              get("WEB_DIR"),
-		PortalBaseURL:       strings.TrimRight(getOr("PORTAL_BASE_URL", "https://cdseducacional.com.br"), "/"),
-		D2LBaseURL:          strings.TrimRight(getOr("D2L_BASE_URL", "https://salavirtual.unicep.edu.br"), "/"),
+		PortalBaseURL:       portalURL,
+		D2LBaseURL:          d2lURL,
 		PollIntervalMinutes: pollMin,
 		NotifyAbsences:      parseBool(get("NOTIFY_ABSENCES"), true),
 		RequireSecret:       requireSecret,
 		TrustedProxyCIDRs:   cidrs,
 	}, nil
+}
+
+func validateServiceURL(envKey, raw string) (string, error) {
+	trimmed := strings.TrimRight(strings.TrimSpace(raw), "/")
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Host == "" {
+		return "", fmt.Errorf("%s inválido", envKey)
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme == "https" {
+		return trimmed, nil
+	}
+	if scheme == "http" {
+		host := strings.ToLower(parsed.Hostname())
+		if host == "localhost" || host == "127.0.0.1" || host == "10.0.2.2" || host == "::1" {
+			return trimmed, nil
+		}
+	}
+	return "", fmt.Errorf("%s deve usar HTTPS (HTTP permitido apenas em localhost)", envKey)
 }
 
 func parseBool(raw string, fallback bool) bool {

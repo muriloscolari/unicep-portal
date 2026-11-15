@@ -9,13 +9,13 @@ Este documento orienta agentes e desenvolvedores sobre a arquitetura, convençõ
 O projeto é um monorepo com dois blocos principais:
 
 1. **Backend (`backend/`) — Go 1.24 + SQLite (`modernc.org/sqlite`)**
-   - Atua como BFF (Backend-for-Frontend), proxy autenticado para o portal legado da UNICEP (`cdseducacional.com.br`, ASP/IIS em Windows-1252/ISO-8859-1) e servidor de arquivos estáticos para o frontend Web (`wasmJs`).
-   - Armazena credenciais criptografadas em AES-256-GCM, snapshots acadêmicos e notificações em SQLite (`$DATA_DIR/portal.db`).
-   - Realiza polling periódico de notas/faltas em segundo plano (`poller/worker.go`).
+   - Atua como BFF (Backend-for-Frontend), proxy autenticado para o portal legado da UNICEP (`cdseducacional.com.br`, ASP/IIS em Windows-1252/ISO-8859-1), conector passivo (somente leitura) da Sala Virtual (`salavirtual.unicep.edu.br`, D2L Brightspace) e servidor de arquivos estáticos para o frontend Web (`wasmJs`).
+   - Armazena credenciais criptografadas em AES-256-GCM, snapshots acadêmicos/D2L (`grade_snapshots`, `d2l_snapshots`) e notificações deduplicadas em SQLite (`$DATA_DIR/portal.db`).
+   - Realiza polling periódico de notas, faltas e novas atividades da Sala Virtual em segundo plano (`poller/worker.go`).
 
 2. **Frontend (`app/`) — Kotlin + Compose Multiplatform**
-   - **`composeApp` (`commonMain`)**: UI compartilhada em 3 abas (`Semestre`, `Curso`, `Central`) com Design System dual (**Apple/Cupertino** + **Material Design 3**).
-   - **`androidApp` (`androidMain`)**: App Android nativo (`minSdk 26`, `targetSdk 35`) com R8/ProGuard, armazenamento seguro via Android Keystore (`AndroidSecureStore.kt`), notificações periódicas via `WorkManager` (`GradeSyncWorker.kt`) e auto-update via Forgejo Releases (`AppUpdater.android.kt`).
+   - **`composeApp` (`commonMain`)**: UI compartilhada em 4 abas (`Semestre`, `Curso`, `Virtual`, `Central`) com Design System dual (**Apple/Cupertino** + **Material Design 3**).
+   - **`androidApp` (`androidMain`)**: App Android nativo (`minSdk 26`, `targetSdk 35`) com R8/ProGuard, armazenamento seguro via Android Keystore (`AndroidSecureStore.kt`), visualizador nativo de PDF/imagem/HTML (`AndroidDocumentViewer.kt`), downloads SAF por disciplina, notificações periódicas via `WorkManager` (`GradeSyncWorker.kt`) e auto-update via Forgejo Releases (`AppUpdater.android.kt`).
    - **`wasmJsMain`**: Site Web compilado para WebAssembly (`unicep-portal.js` + `.wasm`) servido diretamente pelo backend Go na raiz `/`.
 
 ---
@@ -24,21 +24,22 @@ O projeto é um monorepo com dois blocos principais:
 
 ### Backend (`backend/`)
 - `cmd/server/main.go`: bootstrap do servidor HTTP, timeouts, graceful shutdown e inicialização do poller.
-- `internal/config/config.go`: leitura de variáveis de ambiente (`PORT`, `APP_SECRET`, `REQUIRE_SECRET`, `CORS_ORIGIN`, `ALLOW_DEV_CORS`, `TRUSTED_PROXY_CIDRS`, `DATA_DIR`, `WEB_DIR`, `POLL_INTERVAL_MINUTES`, `NOTIFY_ABSENCES`).
+- `internal/config/config.go`: leitura e validação de variáveis de ambiente (`PORT`, `APP_SECRET`, `REQUIRE_SECRET`, `CORS_ORIGIN`, `ALLOW_DEV_CORS`, `TRUSTED_PROXY_CIDRS`, `PORTAL_BASE_URL`, `D2L_BASE_URL`, `DATA_DIR`, `WEB_DIR`, `POLL_INTERVAL_MINUTES`, `NOTIFY_ABSENCES`).
 - `internal/crypto/crypto.go`: derivação de chaves HMAC (`aes-gcm:v1`, `jwt-hs256:v1`), AES-256-GCM e assinatura/validação JWT (`HS256`, `iss`, `aud`).
-- `internal/storage/sqlite.go`: schema SQLite, permissões `0700`/`0600`, controle de `token_version` (revogação real no logout) e notificações.
+- `internal/storage/sqlite.go`: schema SQLite, permissões `0700`/`0600`, controle de `token_version` (revogação real no logout), snapshots D2L (`d2l_snapshots`), preferência `d2l_polling_enabled` e índice único de deduplicação em notificações.
 - `internal/portal/client.go`, `models.go`, `parser.go`: scraping e parsing HTML do portal da UNICEP (Windows-1252 → UTF-8, `encodeRawQueryISO88591`, bloqueio de redirects externos).
-- `internal/httpapi/router.go`: rotas REST `/api/*`, rate limiting (IP + RA com mapa limitado), tickets opacos de uso único (`/api/proxy/ticket`), headers globais (`CSP`, `X-Frame-Options`, `COOP`, `nosniff`) e servidor estático Web.
-- `internal/poller/worker.go`: comparação de snapshots e geração de notificações de notas/médias/faltas.
+- `internal/d2l/client.go`, `models.go`: cliente passivo (somente leitura) para Brightspace/UnicepVirtual com cache curto de overview, singleflight por RA, backoff exponencial em falhas de login e allowlist estrita de paths de leitura.
+- `internal/httpapi/router.go`: rotas REST `/api/*` e `/api/d2l/*`, rate limiting dedicado (IP + RA com mapa limitado), tickets opacos de uso único (`/api/proxy/ticket`, `/api/d2l/ticket`), headers globais (`CSP`, `X-Frame-Options`, `COOP`, `nosniff`, `Cache-Control: no-store`) e servidor estático Web.
+- `internal/poller/worker.go`: comparação de snapshots (portal legado e Sala Virtual) e geração de notificações deduplicadas com worker pool limitado e timeouts por usuário.
 
 ### Frontend (`app/`)
 - `composeApp/src/commonMain/kotlin/me/muriloscolari/unicep/`:
-  - `App.kt`: navegação principal (3 abas), integração com histórico (`#semestre`, `#semestre/frequencia-limite`, `#curso`, `#central`), diálogo de auto-update Android.
-  - `data/api/Models.kt`, `PortalApiClient.kt` e `data/repo/PortalRepository.kt`: cliente HTTP Ktor e estado reativo.
-  - `platform/Platform.kt`: contrato `expect object PlatformBridge`.
+  - `App.kt`: navegação principal (4 abas), integração com histórico (`#semestre`, `#semestre/frequencia-limite`, `#curso`, `#virtual`, `#central`) e diálogo de auto-update Android.
+  - `data/api/Models.kt`, `PortalApiClient.kt` e `data/repo/PortalRepository.kt`, `VirtualAlertEvaluator.kt`: cliente HTTP Ktor com timeouts configurados, estado reativo, filtros persistidos e alertas de prazos da Sala Virtual.
+  - `platform/Platform.kt`: contrato `expect object PlatformBridge` e `@Composable expect fun PlatformDocumentViewer`.
   - `ui/designsystem/Theme.kt`, `Components.kt`, `Icons.kt`: tokens de cor, tipografia tabular (`tnum`) e componentes Apple vs Material 3.
-  - `ui/screens/LoginScreen.kt`, `GradesScreen.kt`, `AcademicScreen.kt`, `MoreScreen.kt`: telas de Login, Semestre (incluindo `AttendanceLimitModal` e `SubjectDetailModal`), Curso e Central.
-- `composeApp/src/androidMain/kotlin/.../platform/`: `Platform.android.kt`, `AndroidSecureStore.kt`, `GradeSyncWorker.kt`, `AppUpdater.android.kt`.
+  - `ui/screens/LoginScreen.kt`, `GradesScreen.kt`, `AcademicScreen.kt`, `VirtualScreen.kt`, `MoreScreen.kt`: telas de Login, Semestre (`AttendanceLimitModal` e `SubjectDetailModal`), Curso, Sala Virtual (disciplinas, tarefas, avisos, conteúdos e download em lote) e Central.
+- `composeApp/src/androidMain/kotlin/.../platform/`: `Platform.android.kt`, `AndroidDocumentViewer.kt`, `AndroidSecureStore.kt`, `GradeSyncWorker.kt`, `AppUpdater.android.kt`.
 - `composeApp/src/wasmJsMain/`: `Main.kt`, `Platform.wasmJs.kt`, `resources/index.html`, `loader.js`, `favicon.svg`, `favicon-32.png`, `favicon.ico`, `apple-touch-icon.png`.
 - `androidApp/`: `build.gradle.kts` (`versionCode`, `versionName`, `signingConfigs`), `src/main/AndroidManifest.xml`, `res/xml/network_security_config.xml`, `res/xml/file_paths.xml`, ícones adaptativos.
 

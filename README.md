@@ -24,8 +24,9 @@ Cliente moderno, rápido e auto-hospedado para o Portal do Aluno da UNICEP (`cds
 
 - **Acompanhamento do Semestre:** notas parciais, médias, faltas restantes e simulador de média por disciplina.
 - **Alerta de Frequência no Limite:** destaque interativo para matérias com até 3 faltas restantes, com ordenação pela menor margem.
+- **Sala Virtual (UnicepVirtual · D2L Brightspace):** integração passiva (somente leitura) com disciplinas, conteúdos, prazos de atividades, avisos, calendário, visualizador nativo de PDFs/imagens no Android e download organizado em subpastas por disciplina (inclusive via SAF).
 - **Visão do Curso:** histórico escolar, grade curricular, horários, financeiro e atalhos institucionais (incluindo UnicepVirtual / D2L SSO).
-- **Notificações de Notas e Faltas:** poller em segundo plano no servidor Go com armazenamento em SQLite e sincronização periódica no Android via `WorkManager`.
+- **Notificações de Notas, Faltas e Prazos:** poller em segundo plano no servidor Go com deduplicação em SQLite, avisos de novas atividades postadas e lembretes customizáveis antes do prazo no Android via `WorkManager`.
 - **Design System Dual (Apple / Material Design 3):** interface adaptativa com números tabulares (`tnum`), fallback automático em aparelhos Android mais antigos/econômicos e alternador manual na aba *Central*.
 - **Auto-update no Android:** verificação automática de novas releases no Forgejo com download e instalação guiada do APK dentro do aplicativo.
 
@@ -36,7 +37,7 @@ Cliente moderno, rápido e auto-hospedado para o Portal do Aluno da UNICEP (`cds
 - **Backend (`backend/`) — Go 1.24 + SQLite:**
   - Credenciais criptografadas em repouso com **AES-256-GCM** e chaves derivadas via HMAC-SHA256.
   - Autenticação via JWT (`Authorization: Bearer`) com revogação real por `token_version` no logout.
-  - Proxy para páginas legadas via **tickets opacos de uso único** (`POST /api/proxy/ticket`) e `Content-Security-Policy: sandbox`.
+  - Proxy para páginas legadas e arquivos da Sala Virtual via **tickets opacos de uso único** (`POST /api/proxy/ticket`, `POST /api/d2l/ticket`) e `Content-Security-Policy: sandbox`.
   - Rate limiting por IP e RA, validação estrita de `CF-Connecting-IP` apenas para proxies confiáveis e headers CSP/COOP/X-Frame-Options rígidos.
 - **Frontend (`app/`) — Kotlin + Compose Multiplatform:**
   - **Android:** compilado com R8 (`1,9 MB`), armazenamento seguro via **Android Keystore** e tráfego HTTP bloqueado fora de loopback local.

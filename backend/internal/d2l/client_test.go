@@ -236,3 +236,106 @@ func TestIsAllowedFilePath(t *testing.T) {
 		}
 	}
 }
+
+func TestD2LReloginPartialUnknownAndTooLarge(t *testing.T) {
+	var loginCalls atomic.Int32
+	var forceUnauth atomic.Bool
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/d2l/login", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("login"))
+	})
+	mux.HandleFunc("/d2l/lp/auth/login/login.d2l", func(w http.ResponseWriter, r *http.Request) {
+		loginCalls.Add(1)
+		http.SetCookie(w, &http.Cookie{Name: "d2lSessionVal", Value: "s" + string(rune('0'+loginCalls.Load())), Path: "/"})
+		http.Redirect(w, r, "/d2l/home", http.StatusFound)
+	})
+	mux.HandleFunc("/d2l/home", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	})
+	mux.HandleFunc("/d2l/api/lp/1.0/users/whoami", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Identifier":"10001","FirstName":"ALUNO","LastName":"EXEMPLO"}`))
+	})
+	mux.HandleFunc("/d2l/le/manageCourses/api/mysemesters", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"OrgUnitId":"48648","Name":"2/2026","Code":"2/2026"}]`))
+	})
+	mux.HandleFunc("/d2l/le/manageCourses/api/mycourses", func(w http.ResponseWriter, r *http.Request) {
+		if forceUnauth.Swap(false) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{"Courses":[
+			{"OrgUnitId":"100","Name":"Course OK","Code":"C1","IsActive":true,"SemesterName":"2/2026","CanAccessCourse":true},
+			{"OrgUnitId":"200","Name":"Course Fail","Code":"C2","IsActive":true,"SemesterName":"2/2026","CanAccessCourse":true}
+		]}`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/6606/news/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/calendar/events/myEvents/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Objects":[]}`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/100/dropbox/folders/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/100/news/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/200/dropbox/folders/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/200/news/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	})
+	mux.HandleFunc("/content/enforced/100/huge.pdf", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "20971520")
+		w.WriteHeader(http.StatusOK)
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	mgr := NewManager(srv.URL, func(string) (string, error) { return "secret", nil })
+	ctx := context.Background()
+
+	// Partial course assignment failure sets Complete=false but keeps healthy course data.
+	ov, err := mgr.GetOverviewWithOptions(ctx, "1234567", true)
+	if err != nil {
+		t.Fatalf("expected partial overview to succeed, got %v", err)
+	}
+	if ov.Complete {
+		t.Fatalf("expected Complete=false on partial dropbox failure")
+	}
+
+	// Next call hitting 401 on mycourses triggers re-login cleanly.
+	forceUnauth.Store(true)
+	_, err = mgr.GetOverviewWithOptions(ctx, "1234567", true)
+	if err != nil {
+		t.Fatalf("expected re-login after 401 to succeed, got %v", err)
+	}
+	if loginCalls.Load() != 2 {
+		t.Fatalf("expected 2 logins (initial + 401 relogin), got %d", loginCalls.Load())
+	}
+
+	// Unknown orgUnitId returns ErrCourseNotAvailable.
+	if _, err := mgr.GetCourseDetail(ctx, "1234567", 999999); !errors.Is(err, ErrCourseNotAvailable) {
+		t.Fatalf("expected ErrCourseNotAvailable for unknown OU, got %v", err)
+	}
+
+	// Oversized file returns ErrFileTooLarge.
+	if _, _, _, err := mgr.FetchRaw(ctx, "1234567", "/content/enforced/100/huge.pdf"); !errors.Is(err, ErrFileTooLarge) {
+		t.Fatalf("expected ErrFileTooLarge, got %v", err)
+	}
+}
+
+func TestParseD2LTimeWithoutOffset(t *testing.T) {
+	tm, ok := parseD2LTime("2026-11-20T23:59:00")
+	if !ok {
+		t.Fatal("expected naive timestamp to parse")
+	}
+	// America/Sao_Paulo (-03:00): 23:59 local == 02:59Z on 2026-11-21.
+	want := "2026-11-21T02:59:00Z"
+	if got := tm.UTC().Format("2006-01-02T15:04:05Z"); got != want {
+		t.Fatalf("expected %s, got %s", want, got)
+	}
+}

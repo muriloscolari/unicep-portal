@@ -19,7 +19,8 @@ app/**/build/
 *.keystore
 keystore.properties
 
-# IDE / OS
+# IDE / OS / Design drafts
 .idea/
 *.iml
 .DS_Store
+docs/design/

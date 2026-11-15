@@ -63,6 +63,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import me.muriloscolari.unicep.data.repo.parseIso8601ToEpochMillis
 import me.muriloscolari.unicep.data.api.VirtualAnnouncement
 import me.muriloscolari.unicep.data.api.VirtualAssignmentItem
 import me.muriloscolari.unicep.data.api.VirtualCalendarEvent
@@ -126,6 +127,14 @@ fun VirtualScreen(
     courseDetails: Map<Long, VirtualCourseDetailResponse>,
     selectedCourseId: Long?,
     courseSubTab: Int,
+    overviewTab: Int = 0,
+    onSelectOverviewTab: (Int) -> Unit = {},
+    searchQuery: String = "",
+    onSearchQueryChange: (String) -> Unit = {},
+    selectedSemester: String = "",
+    onSelectSemester: (String) -> Unit = {},
+    assignmentFilterIndex: Int = 0,
+    onSelectAssignmentFilter: (Int) -> Unit = {},
     loading: Boolean,
     error: String?,
     onRefreshOverview: () -> Unit,
@@ -173,6 +182,7 @@ fun VirtualScreen(
                 courseId = selectedCourseId,
                 fallbackCourse = fallbackCourse,
                 detail = detail,
+                overviewBaseUrl = overview?.baseUrl.orEmpty(),
                 courseSubTab = courseSubTab,
                 loading = loading,
                 error = error,
@@ -196,6 +206,14 @@ fun VirtualScreen(
         } else {
             VirtualOverviewBody(
                 overview = overview,
+                activeTab = overviewTab,
+                onSelectTab = onSelectOverviewTab,
+                searchQuery = searchQuery,
+                onSearchQueryChange = onSearchQueryChange,
+                selectedSemester = selectedSemester,
+                onSelectSemester = onSelectSemester,
+                assignmentFilterIndex = assignmentFilterIndex,
+                onSelectAssignmentFilter = onSelectAssignmentFilter,
                 loading = loading,
                 error = error,
                 contentPadding = contentPadding,
@@ -239,6 +257,14 @@ fun VirtualScreen(
 @Composable
 private fun VirtualOverviewBody(
     overview: VirtualOverviewResponse?,
+    activeTab: Int,
+    onSelectTab: (Int) -> Unit,
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit,
+    selectedSemester: String,
+    onSelectSemester: (String) -> Unit,
+    assignmentFilterIndex: Int,
+    onSelectAssignmentFilter: (Int) -> Unit,
     loading: Boolean,
     error: String?,
     contentPadding: PaddingValues,
@@ -255,11 +281,8 @@ private fun VirtualOverviewBody(
     val colors = LocalPortalColors.current
     val appleType = LocalAppleTypography.current
     val haptics = LocalHapticFeedback.current
-
-    var activeTab by remember { mutableIntStateOf(0) }
-    var searchQuery by remember { mutableStateOf("") }
-    var selectedSemester by remember { mutableStateOf("") }
-    var assignmentFilter by remember { mutableStateOf(AssignmentFilter.ALL) }
+    val assignmentFilter = AssignmentFilter.entries.getOrElse(assignmentFilterIndex) { AssignmentFilter.ALL }
+    val virtualHomeUrl = "${overview?.baseUrl?.ifBlank { null }?.trimEnd('/') ?: "https://salavirtual.unicep.edu.br"}/d2l/home"
 
     val semesters = remember(overview?.semesters, overview?.courses) {
         val fromApi = overview?.semesters.orEmpty().map { it.name }.filter { it.isNotBlank() }
@@ -422,7 +445,7 @@ private fun VirtualOverviewBody(
                         )
                         PortalSecondaryButton(
                             text = "Abrir no site",
-                            onClick = { onOpenWeb("https://salavirtual.unicep.edu.br/d2l/home") },
+                            onClick = { onOpenWeb(virtualHomeUrl) },
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -475,7 +498,7 @@ private fun VirtualOverviewBody(
                 PortalSegmentedControl(
                     options = VirtualOverviewSubTab.entries.map { it.label },
                     selectedIndex = activeTab,
-                    onSelect = { activeTab = it }
+                    onSelect = onSelectTab
                 )
             }
 
@@ -485,7 +508,7 @@ private fun VirtualOverviewBody(
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             PortalSearchField(
                                 value = searchQuery,
-                                onValueChange = { searchQuery = it },
+                                onValueChange = onSearchQueryChange,
                                 placeholder = "Buscar disciplina na Sala Virtual..."
                             )
                             if (semesters.size > 1) {
@@ -498,13 +521,13 @@ private fun VirtualOverviewBody(
                                     FilterChipPill(
                                         label = "Todos",
                                         selected = selectedSemester.isBlank(),
-                                        onClick = { selectedSemester = "" }
+                                        onClick = { onSelectSemester("") }
                                     )
                                     semesters.forEach { sem ->
                                         FilterChipPill(
                                             label = sem,
                                             selected = selectedSemester == sem,
-                                            onClick = { selectedSemester = sem }
+                                            onClick = { onSelectSemester(sem) }
                                         )
                                     }
                                 }
@@ -540,7 +563,7 @@ private fun VirtualOverviewBody(
                                 FilterChipPill(
                                     label = f.label,
                                     selected = assignmentFilter == f,
-                                    onClick = { assignmentFilter = f }
+                                    onClick = { onSelectAssignmentFilter(f.ordinal) }
                                 )
                             }
                         }
@@ -610,6 +633,7 @@ private fun VirtualCourseDetailBody(
     courseId: Long,
     fallbackCourse: VirtualCourseSummary?,
     detail: VirtualCourseDetailResponse?,
+    overviewBaseUrl: String,
     courseSubTab: Int,
     loading: Boolean,
     error: String?,
@@ -638,8 +662,11 @@ private fun VirtualCourseDetailBody(
 
     val course = detail?.course ?: fallbackCourse
     val courseTitle = (course?.name ?: "Disciplina $courseId").toDisplayTitle()
+    val effectiveBaseUrl = detail?.baseUrl?.ifBlank { null }?.trimEnd('/')
+        ?: overviewBaseUrl.ifBlank { null }?.trimEnd('/')
+        ?: "https://salavirtual.unicep.edu.br"
     val courseWebUrl = course?.homeUrl?.ifBlank { null }
-        ?: "https://salavirtual.unicep.edu.br/d2l/home/$courseId"
+        ?: "$effectiveBaseUrl/d2l/home/$courseId"
 
     var showExpiredAssignments by remember(courseId) { mutableStateOf(false) }
     var selectionMode by remember(courseId) { mutableStateOf(false) }
@@ -664,7 +691,7 @@ private fun VirtualCourseDetailBody(
             next[req.path] = req
         }
         selectedFiles = next
-        if (next.isEmpty() && !selectionMode) {
+        if (next.isEmpty()) {
             selectionMode = false
         }
     }
@@ -1315,7 +1342,7 @@ private fun VirtualAssignmentCard(
             )
         }
 
-        val dueText = formatIsoDateTime(assignment.dueDate.ifBlank { assignment.endDate })
+        val dueText = formatIsoDateTime(assignment.dueDate.ifBlank { assignment.endDate }, assignment.dueAtMillis)
         val metaParts = buildList {
             if (dueText.isNotBlank()) add("Prazo: $dueText")
             if (assignment.score != null) {
@@ -1939,7 +1966,7 @@ private fun VirtualAssignmentSheetContent(
         }
     }
 
-    val dueText = formatIsoDateTime(assignment.dueDate.ifBlank { assignment.endDate })
+    val dueText = formatIsoDateTime(assignment.dueDate.ifBlank { assignment.endDate }, assignment.dueAtMillis)
     if (dueText.isNotBlank()) {
         Spacer(Modifier.height(10.dp))
         Text(
@@ -2251,17 +2278,23 @@ private fun assignmentStatusColor(status: String): Color {
     }
 }
 
-private fun formatIsoDateTime(raw: String): String {
+private fun formatIsoDateTime(raw: String, millisHint: Long = 0L): String {
+    if (millisHint > 0L) {
+        val formatted = PlatformBridge.formatEpochMillisLocal(millisHint)
+        if (formatted.isNotBlank()) return formatted
+    }
     val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return ""
+    val parsedMillis = parseIso8601ToEpochMillis(trimmed)
+    if (parsedMillis != null && parsedMillis > 0L) {
+        val local = PlatformBridge.formatEpochMillisLocal(parsedMillis)
+        if (local.isNotBlank()) return local
+    }
     if (trimmed.length < 10) return ""
     val datePart = trimmed.substring(0, 10)
     val parts = datePart.split("-")
     if (parts.size != 3) return trimmed
-    val formattedDate = "${parts[2]}/${parts[1]}/${parts[0]}"
-    val timePart = if (trimmed.length >= 16 && trimmed[10] == 'T') {
-        " " + trimmed.substring(11, 16)
-    } else ""
-    return formattedDate + timePart
+    return "${parts[2]}/${parts[1]}/${parts[0]}"
 }
 
 private fun formatScore(value: Double): String {

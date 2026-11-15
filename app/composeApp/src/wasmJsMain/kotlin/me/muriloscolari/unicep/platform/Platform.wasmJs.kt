@@ -397,6 +397,20 @@ private fun jsTriggerAnchorDownload(url: String, fileName: String): Boolean = js
     })()"""
 )
 
+private fun jsFormatEpochMillisLocal(millis: Double): String = js(
+    """(() => {
+        try {
+            if (!millis || millis <= 0) return '';
+            var d = new Date(millis);
+            if (isNaN(d.getTime())) return '';
+            function p(n) { return n < 10 ? '0' + n : '' + n; }
+            return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+        } catch (e) {
+            return '';
+        }
+    })()"""
+)
+
 private fun jsDownloadBase64Blob(base64: String, mimeType: String, fileName: String): Boolean = js(
     """(() => {
         try {
@@ -487,12 +501,14 @@ actual object PlatformBridge {
         runCatching { window.localStorage.removeItem(key) }
     }
 
-    actual fun openExternalUrl(url: String) {
+    actual fun openExternalUrl(url: String): Boolean {
         val clean = url.trim()
         if (!clean.startsWith("https://", ignoreCase = true) && !clean.startsWith("http://", ignoreCase = true)) {
-            return
+            return false
         }
-        window.open(clean, "_blank", "noopener,noreferrer")
+        return runCatching {
+            window.open(clean, "_blank", "noopener,noreferrer") != null
+        }.getOrDefault(false)
     }
 
     actual fun shareText(title: String, text: String): Boolean {
@@ -549,6 +565,10 @@ actual object PlatformBridge {
         popListener = listener
     }
 
+    actual fun setOpenTabListener(listener: ((Int) -> Unit)?) {}
+
+    actual fun dispatchOpenTab(tab: Int) {}
+
     actual fun setAndroidBackHandler(handler: (() -> Boolean)?) {}
 
     actual fun setAndroidBackEnabled(enabled: Boolean) {}
@@ -568,11 +588,18 @@ actual object PlatformBridge {
 
     actual fun currentTimeMillis(): Long = jsCurrentTimeMillis().toLong()
 
+    actual fun formatEpochMillisLocal(millis: Long): String {
+        if (millis <= 0L) return ""
+        return jsFormatEpochMillisLocal(millis.toDouble())
+    }
+
     actual fun isReduceMotionEnabled(): Boolean = jsPrefersReducedMotion()
 
     actual fun supportsInAppDocumentViewer(): Boolean = false
 
     actual fun supportsCustomDownloadFolder(): Boolean = false
+
+    actual fun isUsingCustomDownloadFolder(): Boolean = false
 
     actual fun getDownloadFolderLabel(): String = "Pasta Downloads do navegador"
 
@@ -580,7 +607,7 @@ actual object PlatformBridge {
 
     actual fun clearDownloadFolder() {}
 
-    actual fun saveDownloadedFile(
+    actual suspend fun saveDownloadedFile(
         courseName: String,
         fileName: String,
         mimeType: String,

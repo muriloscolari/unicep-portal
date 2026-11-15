@@ -390,6 +390,11 @@ fun App(initialTab: Int = 0) {
     DisposableEffect(Unit) {
         PlatformBridge.initNavigationHistory(MainTab.entries.getOrElse(initialTab) { MainTab.SEMESTER }.route)
         PlatformBridge.setPopRouteListener { route -> applyPopRoute(route) }
+        PlatformBridge.setOpenTabListener { tab ->
+            MainTab.entries.getOrNull(tab)?.let { targetTab ->
+                navigateToTab(targetTab)
+            }
+        }
         PlatformBridge.setAndroidPredictiveBackListener { predictiveBackState = it }
         PlatformBridge.setAndroidBackHandler {
             when {
@@ -449,6 +454,7 @@ fun App(initialTab: Int = 0) {
             PlatformBridge.setAndroidPredictiveBackListener(null)
             PlatformBridge.setAndroidBackEnabled(false)
             PlatformBridge.setAndroidBackHandler(null)
+            PlatformBridge.setOpenTabListener(null)
         }
     }
 
@@ -662,6 +668,14 @@ fun App(initialTab: Int = 0) {
                                 courseDetails = state.virtualCourseDetails,
                                 selectedCourseId = selectedVirtualCourseId,
                                 courseSubTab = virtualCourseSubTab,
+                                overviewTab = state.virtualOverviewTab,
+                                onSelectOverviewTab = { repo.setVirtualOverviewTab(it) },
+                                searchQuery = state.virtualSearchQuery,
+                                onSearchQueryChange = { repo.setVirtualSearchQuery(it) },
+                                selectedSemester = state.virtualSelectedSemester,
+                                onSelectSemester = { repo.setVirtualSelectedSemester(it) },
+                                assignmentFilterIndex = state.virtualAssignmentFilterIndex,
+                                onSelectAssignmentFilter = { repo.setVirtualAssignmentFilterIndex(it) },
                                 loading = state.virtualLoading,
                                 error = state.virtualError,
                                 onRefreshOverview = { scope.launch { repo.loadVirtualOverviewIfNeeded(force = true) } },
@@ -715,7 +729,7 @@ fun App(initialTab: Int = 0) {
                                 freqAlertThreshold = state.freqAlertThreshold,
                                 onSelectFreqAlertThreshold = { repo.setFrequencyAlertThreshold(it) },
                                 virtualNotifyNewAssignment = state.virtualNotifyNewAssignment,
-                                onToggleVirtualNotifyNewAssignment = { repo.setVirtualNotifyNewAssignment(it) },
+                                onToggleVirtualNotifyNewAssignment = { scope.launch { repo.setVirtualNotifyNewAssignment(it) } },
                                 virtualDeadlineLeadHours = state.virtualDeadlineLeadHours,
                                 onToggleVirtualDeadlineLeadHour = { repo.toggleVirtualDeadlineLeadHour(it) },
                                 onAddCustomVirtualDeadlineHour = { repo.addVirtualDeadlineLeadHour(it) },
@@ -1030,6 +1044,14 @@ fun App(initialTab: Int = 0) {
                                                     courseDetails = state.virtualCourseDetails,
                                                     selectedCourseId = selectedVirtualCourseId,
                                                     courseSubTab = virtualCourseSubTab,
+                                                    overviewTab = state.virtualOverviewTab,
+                                                    onSelectOverviewTab = { repo.setVirtualOverviewTab(it) },
+                                                    searchQuery = state.virtualSearchQuery,
+                                                    onSearchQueryChange = { repo.setVirtualSearchQuery(it) },
+                                                    selectedSemester = state.virtualSelectedSemester,
+                                                    onSelectSemester = { repo.setVirtualSelectedSemester(it) },
+                                                    assignmentFilterIndex = state.virtualAssignmentFilterIndex,
+                                                    onSelectAssignmentFilter = { repo.setVirtualAssignmentFilterIndex(it) },
                                                     loading = state.virtualLoading,
                                                     error = state.virtualError,
                                                     onRefreshOverview = { scope.launch { repo.loadVirtualOverviewIfNeeded(force = true) } },
@@ -1079,7 +1101,7 @@ fun App(initialTab: Int = 0) {
                                                     freqAlertThreshold = state.freqAlertThreshold,
                                                     onSelectFreqAlertThreshold = { repo.setFrequencyAlertThreshold(it) },
                                                     virtualNotifyNewAssignment = state.virtualNotifyNewAssignment,
-                                                    onToggleVirtualNotifyNewAssignment = { repo.setVirtualNotifyNewAssignment(it) },
+                                                    onToggleVirtualNotifyNewAssignment = { scope.launch { repo.setVirtualNotifyNewAssignment(it) } },
                                                     virtualDeadlineLeadHours = state.virtualDeadlineLeadHours,
                                                     onToggleVirtualDeadlineLeadHour = { repo.toggleVirtualDeadlineLeadHour(it) },
                                                     onAddCustomVirtualDeadlineHour = { repo.addVirtualDeadlineLeadHour(it) },

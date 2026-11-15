@@ -14,16 +14,20 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
 )
 
 const (
-	rootOrgUnitID int64 = 6606
-	leAPIVersion        = "1.74"
-	lpAPIVersion        = "1.43"
-	maxBodyBytes        = 16 << 20
+	rootOrgUnitID    int64 = 6606
+	leAPIVersion           = "1.74"
+	lpAPIVersion           = "1.43"
+	maxBodyBytes           = 16 << 20
+	maxSessions            = 4096
+	sessionIdleTTL         = 2 * time.Hour
+	overviewCacheTTL       = 90 * time.Second
 )
 
 var (
@@ -31,28 +35,60 @@ var (
 	ErrInvalidCredentials = errors.New("credenciais inválidas na Sala Virtual")
 	// ErrSessionExpired indicates Brightspace redirected to the login/session-expired page.
 	ErrSessionExpired = errors.New("sessão da Sala Virtual expirada")
+	// ErrCourseNotAvailable indicates the requested Brightspace course offering is missing or inaccessible.
+	ErrCourseNotAvailable = errors.New("disciplina não disponível na Sala Virtual")
+	// ErrFileTooLarge indicates a Brightspace file exceeded the 16 MiB download limit.
+	ErrFileTooLarge = errors.New("arquivo excede o limite de 16 MB")
+	// ErrFileNotFound indicates Brightspace returned 404 for the requested attachment/content file.
+	ErrFileNotFound = errors.New("arquivo não encontrado na Sala Virtual")
+
+	saoPauloTZ = loadSaoPauloLocation()
 )
+
+func loadSaoPauloLocation() *time.Location {
+	if loc, err := time.LoadLocation("America/Sao_Paulo"); err == nil {
+		return loc
+	}
+	return time.FixedZone("BRT", -3*3600)
+}
 
 // CredentialProvider resolves stored RA password for transparent Brightspace authentication.
 type CredentialProvider func(ra string) (password string, err error)
 
+type cachedOverview struct {
+	resp      OverviewResponse
+	expiresAt time.Time
+}
+
+type overviewCall struct {
+	done chan struct{}
+	resp OverviewResponse
+	err  error
+}
+
 // Manager maintains per-student authenticated Brightspace sessions and provides read-only data access.
 type Manager struct {
-	baseURL    string
-	baseScheme string
-	baseHost   string
-	mu         sync.RWMutex
-	sessions   map[string]*studentSession
-	creds      CredentialProvider
+	baseURL          string
+	baseScheme       string
+	baseHost         string
+	mu               sync.RWMutex
+	sessions         map[string]*studentSession
+	overviewMu       sync.Mutex
+	overviewCache    map[string]cachedOverview
+	overviewInflight map[string]*overviewCall
+	creds            CredentialProvider
 }
 
 type studentSession struct {
-	mu           sync.Mutex
-	client       *http.Client
-	userID       string
-	userName     string
-	loggedIn     bool
-	lastLoggedIn time.Time
+	mu               sync.Mutex
+	client           *http.Client
+	userID           string
+	userName         string
+	loggedIn         bool
+	lastLoggedIn     time.Time
+	lastUsedNano     atomic.Int64
+	consecutiveFails int
+	retryAfter       time.Time
 }
 
 // NewManager creates a read-only D2L Brightspace manager targeting baseURL.
@@ -67,11 +103,13 @@ func NewManager(baseURL string, creds CredentialProvider) *Manager {
 		host = parsed.Host
 	}
 	return &Manager{
-		baseURL:    trimmed,
-		baseScheme: scheme,
-		baseHost:   host,
-		sessions:   make(map[string]*studentSession),
-		creds:      creds,
+		baseURL:          trimmed,
+		baseScheme:       scheme,
+		baseHost:         host,
+		sessions:         make(map[string]*studentSession),
+		overviewCache:    make(map[string]cachedOverview),
+		overviewInflight: make(map[string]*overviewCall),
+		creds:            creds,
 	}
 }
 
@@ -80,11 +118,15 @@ func (m *Manager) BaseURL() string {
 	return m.baseURL
 }
 
-// EvictSession drops any cached Brightspace session and cookies for ra.
+// EvictSession drops any cached Brightspace session, cookies, and overview cache for ra.
 func (m *Manager) EvictSession(ra string) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	delete(m.sessions, ra)
+	m.mu.Unlock()
+
+	m.overviewMu.Lock()
+	delete(m.overviewCache, ra)
+	m.overviewMu.Unlock()
 }
 
 func (m *Manager) newHTTPClient() (*http.Client, error) {
@@ -112,17 +154,41 @@ func (m *Manager) newHTTPClient() (*http.Client, error) {
 }
 
 func (m *Manager) getOrCreateSession(ra string) (*studentSession, error) {
+	now := time.Now()
 	m.mu.RLock()
 	s, ok := m.sessions[ra]
 	m.mu.RUnlock()
 	if ok {
+		s.lastUsedNano.Store(now.UnixNano())
 		return s, nil
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if s, ok = m.sessions[ra]; ok {
+		s.lastUsedNano.Store(now.UnixNano())
 		return s, nil
+	}
+
+	cutoff := now.Add(-sessionIdleTTL).UnixNano()
+	for k, existing := range m.sessions {
+		if last := existing.lastUsedNano.Load(); last > 0 && last < cutoff {
+			delete(m.sessions, k)
+		}
+	}
+	if len(m.sessions) >= maxSessions {
+		var oldestKey string
+		var oldestNano int64
+		for k, existing := range m.sessions {
+			last := existing.lastUsedNano.Load()
+			if oldestKey == "" || last < oldestNano {
+				oldestKey = k
+				oldestNano = last
+			}
+		}
+		if oldestKey != "" {
+			delete(m.sessions, oldestKey)
+		}
 	}
 
 	client, err := m.newHTTPClient()
@@ -130,6 +196,7 @@ func (m *Manager) getOrCreateSession(ra string) (*studentSession, error) {
 		return nil, err
 	}
 	s = &studentSession{client: client}
+	s.lastUsedNano.Store(now.UnixNano())
 	m.sessions[ra] = s
 	return s, nil
 }
@@ -145,6 +212,9 @@ func (m *Manager) ensureClient(ctx context.Context, ra string, forceRelogin bool
 	if !forceRelogin && sess.loggedIn && sess.client != nil && time.Since(sess.lastLoggedIn) < 45*time.Minute {
 		return sess.client, sess.userID, sess.userName, nil
 	}
+	if !sess.retryAfter.IsZero() && time.Now().Before(sess.retryAfter) {
+		return nil, "", "", ErrInvalidCredentials
+	}
 
 	if m.creds == nil {
 		return nil, "", "", ErrSessionExpired
@@ -155,8 +225,18 @@ func (m *Manager) ensureClient(ctx context.Context, ra string, forceRelogin bool
 	}
 
 	if err := m.loginLocked(ctx, sess, ra, password); err != nil {
+		if errors.Is(err, ErrInvalidCredentials) {
+			sess.consecutiveFails++
+			if sess.consecutiveFails >= 6 {
+				sess.retryAfter = time.Now().Add(2 * time.Hour)
+			} else if sess.consecutiveFails >= 3 {
+				sess.retryAfter = time.Now().Add(30 * time.Minute)
+			}
+		}
 		return nil, "", "", err
 	}
+	sess.consecutiveFails = 0
+	sess.retryAfter = time.Time{}
 	return sess.client, sess.userID, sess.userName, nil
 }
 
@@ -172,10 +252,11 @@ func (m *Manager) loginLocked(ctx context.Context, sess *studentSession, ra, pas
 		return err
 	}
 	initResp, err := client.Do(initReq)
-	if err == nil {
-		_, _ = io.Copy(io.Discard, io.LimitReader(initResp.Body, 1<<20))
-		_ = initResp.Body.Close()
+	if err != nil {
+		return fmt.Errorf("d2l login init: %w", err)
 	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(initResp.Body, 1<<20))
+	_ = initResp.Body.Close()
 
 	// Step 2: Submit credentials via Brightspace native form endpoint.
 	form := url.Values{
@@ -242,7 +323,10 @@ func (m *Manager) doGetJSON(ctx context.Context, client *http.Client, relPath st
 	if err != nil {
 		return err
 	}
-	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+	if status == http.StatusUnauthorized || (status == http.StatusForbidden && strings.HasPrefix(strings.ToLower(relPath), "/d2l/api/lp/")) {
+		return ErrSessionExpired
+	}
+	if status == http.StatusForbidden {
 		return fmt.Errorf("d2l api status %d on %s", status, relPath)
 	}
 	if status >= 400 {
@@ -271,21 +355,83 @@ func (m *Manager) doGetBytes(ctx context.Context, client *http.Client, relPath s
 		return nil, resp.StatusCode, "", "", ErrSessionExpired
 	}
 
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
+	if resp.ContentLength > maxBodyBytes {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+		return nil, resp.StatusCode, "", "", ErrFileTooLarge
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes+1))
 	if err != nil {
 		return nil, resp.StatusCode, "", "", err
+	}
+	if int64(len(raw)) > maxBodyBytes {
+		return nil, resp.StatusCode, "", "", ErrFileTooLarge
 	}
 	return raw, resp.StatusCode, resp.Header.Get("Content-Type"), resp.Header.Get("Content-Disposition"), nil
 }
 
-// GetOverview loads semesters, courses, announcements, upcoming calendar events, and pending assignments passively.
+// GetOverview loads semesters, courses, announcements, upcoming calendar events, and pending assignments passively,
+// serving a short-lived cache hit when available.
 func (m *Manager) GetOverview(ctx context.Context, ra string) (OverviewResponse, error) {
+	return m.GetOverviewWithOptions(ctx, ra, false)
+}
+
+// GetOverviewWithOptions loads the Sala Virtual overview with per-RA singleflight coalescing and a 90s TTL cache.
+func (m *Manager) GetOverviewWithOptions(ctx context.Context, ra string, forceRefresh bool) (OverviewResponse, error) {
+	m.overviewMu.Lock()
+	if !forceRefresh {
+		if cached, ok := m.overviewCache[ra]; ok && time.Now().Before(cached.expiresAt) {
+			m.overviewMu.Unlock()
+			return cached.resp, nil
+		}
+	}
+	if call, ok := m.overviewInflight[ra]; ok {
+		m.overviewMu.Unlock()
+		select {
+		case <-call.done:
+			return call.resp, call.err
+		case <-ctx.Done():
+			return OverviewResponse{}, ctx.Err()
+		}
+	}
+	call := &overviewCall{done: make(chan struct{})}
+	m.overviewInflight[ra] = call
+	m.overviewMu.Unlock()
+
+	reqCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
+	go func() {
+		defer cancel()
+		resp, err := m.fetchOverviewUncached(reqCtx, ra)
+		call.resp = resp
+		call.err = err
+
+		m.overviewMu.Lock()
+		delete(m.overviewInflight, ra)
+		if err == nil && resp.Complete {
+			m.overviewCache[ra] = cachedOverview{
+				resp:      resp,
+				expiresAt: time.Now().Add(overviewCacheTTL),
+			}
+		}
+		m.overviewMu.Unlock()
+		close(call.done)
+	}()
+
+	select {
+	case <-call.done:
+		return call.resp, call.err
+	case <-ctx.Done():
+		return OverviewResponse{}, ctx.Err()
+	}
+}
+
+func (m *Manager) fetchOverviewUncached(ctx context.Context, ra string) (OverviewResponse, error) {
 	var out OverviewResponse
 	err := m.withClient(ctx, ra, func(client *http.Client, userID, userName string) error {
 		res := OverviewResponse{
 			BaseURL:             m.baseURL,
 			UserID:              userID,
 			UserName:            userName,
+			Complete:            true,
 			Semesters:           []SemesterOption{},
 			Courses:             []CourseSummary{},
 			UpcomingAssignments: []AssignmentItem{},
@@ -365,6 +511,10 @@ func (m *Manager) GetOverview(ctx context.Context, ra string) (OverviewResponse,
 			allNews       = append([]Announcement{}, globalNews...)
 			allAssigns    []AssignmentItem
 			calendarItems []CalendarEvent
+			successCount  int
+			failCount     int
+			firstErr      error
+			sessionErr    error
 			sem           = make(chan struct{}, 4)
 		)
 
@@ -393,24 +543,41 @@ func (m *Manager) GetOverview(ctx context.Context, ra string) (OverviewResponse,
 				sem <- struct{}{}
 				defer func() { <-sem }()
 
-				assigns, _ := m.fetchAssignments(ctx, client, course.OrgUnitID, course.Name)
-				courseNews, _ := m.fetchNews(ctx, client, course.OrgUnitID, course.Name)
+				assigns, assignErr := m.fetchAssignments(ctx, client, course.OrgUnitID, course.Name)
+				courseNews, newsErr := m.fetchNews(ctx, client, course.OrgUnitID, course.Name)
+
+				if errors.Is(assignErr, ErrSessionExpired) || errors.Is(newsErr, ErrSessionExpired) {
+					mu.Lock()
+					sessionErr = ErrSessionExpired
+					mu.Unlock()
+					return
+				}
 
 				pending := 0
 				visibleAssigns := make([]AssignmentItem, 0, len(assigns))
-				for _, a := range assigns {
-					if a.Status == "not_submitted" {
-						pending++
-					}
-					if a.Status != "expired" {
-						visibleAssigns = append(visibleAssigns, a)
+				if assignErr == nil {
+					for _, a := range assigns {
+						if a.Status == "not_submitted" {
+							pending++
+						}
+						if a.Status != "expired" {
+							visibleAssigns = append(visibleAssigns, a)
+						}
 					}
 				}
 
 				mu.Lock()
-				res.Courses[idx].AssignmentCount = len(visibleAssigns)
-				res.Courses[idx].PendingCount = pending
-				allAssigns = append(allAssigns, visibleAssigns...)
+				if assignErr != nil {
+					failCount++
+					if firstErr == nil {
+						firstErr = assignErr
+					}
+				} else {
+					successCount++
+					res.Courses[idx].AssignmentCount = len(visibleAssigns)
+					res.Courses[idx].PendingCount = pending
+					allAssigns = append(allAssigns, visibleAssigns...)
+				}
 				if len(courseNews) > 0 {
 					allNews = append(allNews, courseNews...)
 				}
@@ -419,6 +586,15 @@ func (m *Manager) GetOverview(ctx context.Context, ra string) (OverviewResponse,
 		}
 
 		enrichWG.Wait()
+		if sessionErr != nil {
+			return sessionErr
+		}
+		if len(activeCourses) > 0 && successCount == 0 && failCount > 0 {
+			return firstErr
+		}
+		if failCount > 0 {
+			res.Complete = false
+		}
 
 		sort.SliceStable(allAssigns, func(i, j int) bool {
 			return compareAssignmentPriority(allAssigns[i], allAssigns[j])
@@ -460,12 +636,7 @@ func (m *Manager) GetCourseDetail(ctx context.Context, ra string, orgUnitID int6
 			}
 		}
 		if !found {
-			course = CourseSummary{
-				OrgUnitID: orgUnitID,
-				Name:      fmt.Sprintf("Disciplina %d", orgUnitID),
-				HomeURL:   fmt.Sprintf("%s/d2l/home/%d", m.baseURL, orgUnitID),
-				CanAccess: true,
-			}
+			return ErrCourseNotAvailable
 		}
 
 		res := CourseDetailResponse{
@@ -591,6 +762,12 @@ func (m *Manager) FetchRaw(ctx context.Context, ra, relPath string) ([]byte, str
 		b, status, contentType, contentDisp, err := m.doGetBytes(ctx, client, relPath)
 		if err != nil {
 			return err
+		}
+		if status == http.StatusUnauthorized || (status == http.StatusForbidden && strings.HasPrefix(strings.ToLower(relPath), "/d2l/api/lp/")) {
+			return ErrSessionExpired
+		}
+		if status == http.StatusNotFound {
+			return ErrFileNotFound
 		}
 		if status >= 400 {
 			return fmt.Errorf("d2l download status %d", status)
@@ -1048,9 +1225,17 @@ func parseD2LTime(raw string) (time.Time, bool) {
 		time.RFC3339Nano,
 		time.RFC3339,
 		"2006-01-02T15:04:05.000Z",
-		"2006-01-02T15:04:05",
 	} {
 		if t, err := time.Parse(layout, s); err == nil {
+			return t.UTC(), true
+		}
+	}
+	for _, layout := range []string{
+		"2006-01-02T15:04:05.999999999",
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
+	} {
+		if t, err := time.ParseInLocation(layout, s, saoPauloTZ); err == nil {
 			return t.UTC(), true
 		}
 	}

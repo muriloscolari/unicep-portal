@@ -404,3 +404,111 @@ func TestD2LRoutesAndTicketIsolation(t *testing.T) {
 		t.Fatalf("expected Content-Disposition attachment with filename Slides.pdf, got %q", cd)
 	}
 }
+
+func TestD2LErrCodesSettingsAndNoStore(t *testing.T) {
+	d2lUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/d2l/login":
+			_, _ = w.Write([]byte("login"))
+		case "/d2l/lp/auth/login/login.d2l":
+			_ = r.ParseForm()
+			if r.Form.Get("password") != "valid" {
+				http.Redirect(w, r, "/d2l/login?failed=1", http.StatusFound)
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: "d2lSessionVal", Value: "ok", Path: "/"})
+			http.Redirect(w, r, "/d2l/home", http.StatusFound)
+		case "/d2l/home":
+			_, _ = w.Write([]byte("home"))
+		case "/d2l/api/lp/1.0/users/whoami":
+			_, _ = w.Write([]byte(`{"Identifier":"1","FirstName":"A","LastName":"B"}`))
+		case "/d2l/le/manageCourses/api/mycourses":
+			_, _ = w.Write([]byte(`{"Courses":[{"OrgUnitId":"50001","Name":"DSW","Code":"DSW","IsActive":true,"CanAccessCourse":true}]}`))
+		case "/content/enforced/1/big.pdf":
+			w.Header().Set("Content-Length", "20971520")
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer d2lUpstream.Close()
+
+	srv, store, cry := newTestServerWithD2L(t, "https://cdseducacional.com.br", d2lUpstream.URL)
+	encValid, _ := cry.Encrypt("valid")
+	_ = store.UpsertUser(storage.UserRecord{
+		RA:                "1234567",
+		Perfil:            "alunograd",
+		Name:              "Aluno Exemplo",
+		EncryptedPassword: encValid,
+		PollingEnabled:    true,
+	})
+	tokValid, _, _ := cry.IssueToken("1234567", "alunograd", 1)
+
+	// 1. Unknown course returns 404 + code=d2l_not_found + Cache-Control: no-store.
+	req404 := httptest.NewRequest(http.MethodGet, "/api/d2l/courses/999999", nil)
+	req404.Header.Set("Authorization", "Bearer "+tokValid)
+	rec404 := httptest.NewRecorder()
+	srv.ServeHTTP(rec404, req404)
+	if rec404.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unknown OU, got %d: %s", rec404.Code, rec404.Body.String())
+	}
+	if rec404.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("expected Cache-Control: no-store, got %q", rec404.Header().Get("Cache-Control"))
+	}
+	if !strings.Contains(rec404.Body.String(), `"d2l_not_found"`) {
+		t.Fatalf("expected d2l_not_found code, got %s", rec404.Body.String())
+	}
+
+	// 2. Oversized file returns 413 (not generic 502).
+	tReq := httptest.NewRequest(http.MethodPost, "/api/d2l/ticket", strings.NewReader(`{"path":"/content/enforced/1/big.pdf"}`))
+	tReq.Header.Set("Authorization", "Bearer "+tokValid)
+	tRec := httptest.NewRecorder()
+	srv.ServeHTTP(tRec, tReq)
+	var tPayload struct {
+		Ticket string `json:"ticket"`
+	}
+	_ = json.Unmarshal(tRec.Body.Bytes(), &tPayload)
+	bigReq := httptest.NewRequest(http.MethodGet, "/api/d2l/file?path=/content/enforced/1/big.pdf&ticket="+tPayload.Ticket, nil)
+	bigRec := httptest.NewRecorder()
+	srv.ServeHTTP(bigRec, bigReq)
+	if bigRec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(bigRec.Body.String(), `"d2l_file_too_large"`) {
+		t.Fatalf("expected 413 d2l_file_too_large, got %d: %s", bigRec.Code, bigRec.Body.String())
+	}
+
+	// 3. Invalid D2L credentials NEVER return 401 (must be 502 with code=d2l_auth_failed so portal JWT stays intact).
+	encBad, _ := cry.Encrypt("wrong")
+	_ = store.UpsertUser(storage.UserRecord{
+		RA:                "9990001",
+		Perfil:            "alunograd",
+		Name:              "Outro",
+		EncryptedPassword: encBad,
+		PollingEnabled:    true,
+	})
+	tokBad, _, _ := cry.IssueToken("9990001", "alunograd", 1)
+	reqAuth := httptest.NewRequest(http.MethodGet, "/api/d2l/overview", nil)
+	reqAuth.Header.Set("Authorization", "Bearer "+tokBad)
+	recAuth := httptest.NewRecorder()
+	srv.ServeHTTP(recAuth, reqAuth)
+	if recAuth.Code == http.StatusUnauthorized || recAuth.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 (never 401) for D2L auth failure, got %d: %s", recAuth.Code, recAuth.Body.String())
+	}
+	if !strings.Contains(recAuth.Body.String(), `"d2l_auth_failed"`) {
+		t.Fatalf("expected code=d2l_auth_failed, got %s", recAuth.Body.String())
+	}
+
+	// 4. Settings GET/PATCH toggles D2LPollingEnabled cleanly.
+	patchReq := httptest.NewRequest(http.MethodPatch, "/api/d2l/settings", strings.NewReader(`{"pollingEnabled":false}`))
+	patchReq.Header.Set("Authorization", "Bearer "+tokValid)
+	patchRec := httptest.NewRecorder()
+	srv.ServeHTTP(patchRec, patchReq)
+	if patchRec.Code != http.StatusOK || !strings.Contains(patchRec.Body.String(), `"pollingEnabled":false`) {
+		t.Fatalf("expected 200 pollingEnabled=false, got %d: %s", patchRec.Code, patchRec.Body.String())
+	}
+	getReq := httptest.NewRequest(http.MethodGet, "/api/d2l/settings", nil)
+	getReq.Header.Set("Authorization", "Bearer "+tokValid)
+	getRec := httptest.NewRecorder()
+	srv.ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK || !strings.Contains(getRec.Body.String(), `"pollingEnabled":false`) {
+		t.Fatalf("expected GET settings pollingEnabled=false, got %d: %s", getRec.Code, getRec.Body.String())
+	}
+}

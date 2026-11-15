@@ -47,18 +47,25 @@ import io.ktor.client.engine.okhttp.OkHttp
 import java.io.File
 import java.io.FileOutputStream
 import java.lang.ref.WeakReference
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlinx.coroutines.CancellableContinuation
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 
 actual object PlatformBridge {
+    private val localDateFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")
     private var appContext: Context? = null
     private var secureStore: AndroidSecureStore? = null
     private var activityRef: WeakReference<Activity>? = null
     private var backHandler: (() -> Boolean)? = null
     private var backEnabled: Boolean = false
     private var predictiveBackListener: ((PredictiveBackState) -> Unit)? = null
+    private var openTabListener: ((Int) -> Unit)? = null
     private var registeredBackCallback: OnBackPressedCallback? = null
     private var folderPickerTrigger: (() -> Unit)? = null
     private var pendingFolderContinuation: CancellableContinuation<String?>? = null
@@ -174,16 +181,19 @@ actual object PlatformBridge {
         secureStore?.remove(key)
     }
 
-    actual fun openExternalUrl(url: String) {
+    actual fun openExternalUrl(url: String): Boolean {
         val clean = url.trim()
         if (!clean.startsWith("https://", ignoreCase = true) && !clean.startsWith("http://", ignoreCase = true)) {
-            return
+            return false
         }
-        val ctx = appContext ?: return
+        val ctx = appContext ?: return false
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(clean)).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        ctx.startActivity(intent)
+        return runCatching {
+            ctx.startActivity(intent)
+            true
+        }.getOrDefault(false)
     }
 
     actual fun shareText(title: String, text: String): Boolean {
@@ -550,6 +560,23 @@ actual object PlatformBridge {
 
     actual fun currentTimeMillis(): Long = System.currentTimeMillis()
 
+    actual fun formatEpochMillisLocal(millis: Long): String {
+        if (millis <= 0L) return ""
+        return runCatching {
+            Instant.ofEpochMilli(millis)
+                .atZone(ZoneId.systemDefault())
+                .format(localDateFormatter)
+        }.getOrDefault("")
+    }
+
+    actual fun setOpenTabListener(listener: ((Int) -> Unit)?) {
+        openTabListener = listener
+    }
+
+    actual fun dispatchOpenTab(tab: Int) {
+        openTabListener?.invoke(tab)
+    }
+
     actual fun isReduceMotionEnabled(): Boolean {
         val ctx = appContext ?: return false
         return runCatching {
@@ -564,6 +591,13 @@ actual object PlatformBridge {
     actual fun supportsInAppDocumentViewer(): Boolean = true
 
     actual fun supportsCustomDownloadFolder(): Boolean = true
+
+    actual fun isUsingCustomDownloadFolder(): Boolean {
+        val rawUri = getString(PREF_TREE_URI)?.takeIf { it.isNotBlank() } ?: return false
+        val ctx = appContext ?: return false
+        val uri = runCatching { Uri.parse(rawUri) }.getOrNull() ?: return false
+        return ctx.contentResolver.persistedUriPermissions.any { it.uri == uri && it.isWritePermission }
+    }
 
     actual fun getDownloadFolderLabel(): String {
         val rawUri = getString(PREF_TREE_URI)?.takeIf { it.isNotBlank() } ?: return DEFAULT_DOWNLOAD_LABEL
@@ -614,13 +648,13 @@ actual object PlatformBridge {
         openExternalUrl(url)
     }
 
-    actual fun saveDownloadedFile(
+    actual suspend fun saveDownloadedFile(
         courseName: String,
         fileName: String,
         mimeType: String,
         bytes: ByteArray
-    ): Result<String> {
-        val ctx = appContext ?: return Result.failure(IllegalStateException("Contexto Android indisponível."))
+    ): Result<String> = withContext(Dispatchers.IO) {
+        val ctx = appContext ?: return@withContext Result.failure(IllegalStateException("Contexto Android indisponível."))
         val safeCourse = sanitizeFolderSegment(courseName, fallback = "Sala Virtual")
         val cleanMime = mimeType.substringBefore(';').trim().ifBlank { inferMimeType(fileName, bytes) }
         val safeFile = ensureFileExtension(sanitizeFileNameSegment(fileName, fallback = "arquivo"), cleanMime, bytes)
@@ -631,7 +665,7 @@ actual object PlatformBridge {
             val hasPerm = treeUri != null &&
                 ctx.contentResolver.persistedUriPermissions.any { it.uri == treeUri && it.isWritePermission }
             if (treeUri != null && hasPerm) {
-                return saveIntoSafTree(
+                return@withContext saveIntoSafTree(
                     resolver = ctx.contentResolver,
                     treeUri = treeUri,
                     folderLabel = getDownloadFolderLabel(),
@@ -641,10 +675,10 @@ actual object PlatformBridge {
                     bytes = bytes
                 )
             }
-            return Result.failure(IllegalStateException("Permissão da pasta selecionada expirou. Escolha a pasta novamente na Central."))
+            return@withContext Result.failure(IllegalStateException("Permissão da pasta selecionada expirou. Escolha a pasta novamente na Central."))
         }
 
-        return saveIntoDefaultDownloads(ctx, safeCourse, safeFile, cleanMime, bytes)
+        saveIntoDefaultDownloads(ctx, safeCourse, safeFile, cleanMime, bytes)
     }
 
     private fun deriveTreeFolderLabel(ctx: Context, treeUri: Uri): String {
@@ -814,7 +848,11 @@ actual object PlatformBridge {
                 out.write(bytes)
                 out.flush()
             }
-            "Downloads/UnicepPortal/$courseFolder/$unique"
+            if (canWritePublic) {
+                "Downloads/UnicepPortal/$courseFolder/$unique"
+            } else {
+                "Arquivos do app/Download/UnicepPortal/$courseFolder/$unique"
+            }
         }
     }
 

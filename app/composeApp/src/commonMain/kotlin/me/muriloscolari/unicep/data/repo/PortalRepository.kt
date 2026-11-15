@@ -1,12 +1,14 @@
 package me.muriloscolari.unicep.data.repo
 
 import androidx.compose.runtime.Immutable
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import me.muriloscolari.unicep.data.api.ApiException
 import me.muriloscolari.unicep.data.api.CurriculumResponse
 import me.muriloscolari.unicep.data.api.DashboardResponse
 import me.muriloscolari.unicep.data.api.FinanceResponse
@@ -44,6 +46,7 @@ object PrefKeys {
     const val VIRTUAL_NOTIFY_NEW_ASSIGNMENT = "virtual_notify_new_assignment"
     const val VIRTUAL_DEADLINE_LEAD_HOURS = "virtual_deadline_lead_hours_json"
     const val VIRTUAL_DEADLINE_NOTIFIED = "virtual_deadline_notified_json"
+    const val VIRTUAL_DEADLINE_NOTIF_IDS = "virtual_deadline_notif_ids_json"
     const val VIRTUAL_DOWNLOAD_TREE_URI = "virtual_download_tree_uri"
     const val VIRTUAL_DOWNLOAD_FOLDER_LABEL = "virtual_download_folder_label"
 }
@@ -114,6 +117,10 @@ data class PortalUiState(
     val virtualCourseDetails: Map<Long, VirtualCourseDetailResponse> = emptyMap(),
     val virtualLoading: Boolean = false,
     val virtualError: String? = null,
+    val virtualOverviewTab: Int = 0,
+    val virtualSearchQuery: String = "",
+    val virtualSelectedSemester: String = "",
+    val virtualAssignmentFilterIndex: Int = 0,
     val activeDocumentViewer: VirtualDocumentViewerState? = null,
     val documentLoadingLabel: String? = null,
     val downloadingFileKey: String? = null,
@@ -157,9 +164,28 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
         }
     }
 
-    fun setVirtualNotifyNewAssignment(enabled: Boolean) {
+    suspend fun setVirtualNotifyNewAssignment(enabled: Boolean) {
         saveVirtualNotifyNewAssignment(enabled)
         _state.update { it.copy(virtualNotifyNewAssignment = enabled) }
+        withToken { server, token ->
+            runCatching { api.updateD2LSettings(server, token, enabled) }
+        }
+    }
+
+    fun setVirtualOverviewTab(tab: Int) {
+        _state.update { it.copy(virtualOverviewTab = tab.coerceIn(0, 3)) }
+    }
+
+    fun setVirtualSearchQuery(query: String) {
+        _state.update { it.copy(virtualSearchQuery = query) }
+    }
+
+    fun setVirtualSelectedSemester(semester: String) {
+        _state.update { it.copy(virtualSelectedSemester = semester) }
+    }
+
+    fun setVirtualAssignmentFilterIndex(index: Int) {
+        _state.update { it.copy(virtualAssignmentFilterIndex = index.coerceIn(0, 2)) }
     }
 
     fun toggleVirtualDeadlineLeadHour(hours: Int) {
@@ -228,6 +254,7 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
 
     private fun clearAllCache() {
         listOf(
+            PrefKeys.LAST_NOTIFIED_ID,
             PrefKeys.CACHE_OWNER_RA,
             PrefKeys.CACHE_UPDATED_AT_MS,
             PrefKeys.CACHE_DASHBOARD,
@@ -236,7 +263,12 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
             PrefKeys.CACHE_FINANCE,
             PrefKeys.CACHE_SERVICES,
             PrefKeys.CACHE_VIRTUAL_OVERVIEW,
-            PrefKeys.FREQ_ALERT_NOTIFIED
+            PrefKeys.FREQ_ALERT_THRESHOLD,
+            PrefKeys.FREQ_ALERT_NOTIFIED,
+            PrefKeys.VIRTUAL_NOTIFY_NEW_ASSIGNMENT,
+            PrefKeys.VIRTUAL_DEADLINE_LEAD_HOURS,
+            PrefKeys.VIRTUAL_DEADLINE_NOTIFIED,
+            PrefKeys.VIRTUAL_DEADLINE_NOTIF_IDS
         ).forEach { PlatformBridge.remove(it) }
     }
 
@@ -376,6 +408,7 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
         PlatformBridge.remove(PrefKeys.JWT_TOKEN)
         PlatformBridge.remove(PrefKeys.PASSWORD)
         clearAllCache()
+        PlatformBridge.clearDownloadFolder()
         PlatformBridge.cancelGradeSync()
         _state.update {
             PortalUiState(
@@ -383,7 +416,7 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
                 loggedIn = false,
                 serverUrl = it.serverUrl,
                 stylePreference = it.stylePreference,
-                freqAlertThreshold = it.freqAlertThreshold
+                downloadFolderLabel = PlatformBridge.getDownloadFolderLabel()
             )
         }
     }
@@ -525,56 +558,69 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
     suspend fun loadVirtualOverviewIfNeeded(force: Boolean = false) = withToken { server, token ->
         if (!force && _state.value.virtualOverview != null && !_state.value.isOffline) return@withToken
         _state.update { it.copy(virtualLoading = true, virtualError = null) }
-        val result = runCatching { api.virtualOverview(server, token) }
-        val err = result.exceptionOrNull()
-        if (err is UnauthorizedException) throw err
-        val ov = result.getOrNull()
-        if (ov != null) {
-            val ownerRa = _state.value.dashboard?.student?.ra ?: PlatformBridge.getString(PrefKeys.RA).orEmpty()
-            if (ownerRa.isNotBlank()) {
-                writeCached(PrefKeys.CACHE_VIRTUAL_OVERVIEW, ov)
+        try {
+            val result = runCatching { api.virtualOverview(server, token, forceRefresh = force) }
+            val err = result.exceptionOrNull()
+            if (err is UnauthorizedException) throw err
+            val ov = result.getOrNull()
+            if (ov != null) {
+                val ownerRa = _state.value.dashboard?.student?.ra ?: PlatformBridge.getString(PrefKeys.RA).orEmpty()
+                if (ownerRa.isNotBlank()) {
+                    writeCached(PrefKeys.CACHE_VIRTUAL_OVERVIEW, ov)
+                }
+                runCatching { api.getD2LSettings(server, token) }.getOrNull()?.let { s ->
+                    saveVirtualNotifyNewAssignment(s.pollingEnabled)
+                    _state.update { it.copy(virtualNotifyNewAssignment = s.pollingEnabled) }
+                }
+                _state.update {
+                    it.copy(
+                        virtualError = if (ov.complete) null else "Algumas disciplinas não responderam por completo.",
+                        virtualOverview = ov
+                    )
+                }
+                evaluateVirtualDeadlineAlerts(ov.upcomingAssignments)
+            } else {
+                val msg = formatVirtualError(err, "Não foi possível carregar a Sala Virtual")
+                _state.update { it.copy(virtualError = msg) }
             }
-            _state.update {
-                it.copy(
-                    virtualLoading = false,
-                    virtualError = null,
-                    virtualOverview = ov
-                )
-            }
-            evaluateVirtualDeadlineAlerts(ov.upcomingAssignments)
-        } else {
-            _state.update {
-                it.copy(
-                    virtualLoading = false,
-                    virtualError = err?.message ?: "Não foi possível carregar a Sala Virtual"
-                )
-            }
+        } finally {
+            _state.update { it.copy(virtualLoading = false) }
         }
     }
 
     suspend fun loadVirtualCourse(orgUnitId: Long, force: Boolean = false) = withToken { server, token ->
         if (!force && _state.value.virtualCourseDetails.containsKey(orgUnitId)) return@withToken
         _state.update { it.copy(virtualLoading = true, virtualError = null) }
-        val result = runCatching { api.virtualCourseDetail(server, token, orgUnitId) }
-        val err = result.exceptionOrNull()
-        if (err is UnauthorizedException) throw err
-        val detail = result.getOrNull()
-        if (detail != null) {
-            _state.update {
-                it.copy(
-                    virtualLoading = false,
-                    virtualError = null,
-                    virtualCourseDetails = it.virtualCourseDetails + (orgUnitId to detail)
-                )
+        try {
+            val result = runCatching { api.virtualCourseDetail(server, token, orgUnitId) }
+            val err = result.exceptionOrNull()
+            if (err is UnauthorizedException) throw err
+            val detail = result.getOrNull()
+            if (detail != null) {
+                _state.update {
+                    it.copy(
+                        virtualError = null,
+                        virtualCourseDetails = it.virtualCourseDetails + (orgUnitId to detail)
+                    )
+                }
+            } else {
+                val msg = formatVirtualError(err, "Não foi possível carregar os detalhes da disciplina")
+                _state.update { it.copy(virtualError = msg) }
             }
-        } else {
-            _state.update {
-                it.copy(
-                    virtualLoading = false,
-                    virtualError = err?.message ?: "Não foi possível carregar os detalhes da disciplina"
-                )
+        } finally {
+            _state.update { it.copy(virtualLoading = false) }
+        }
+    }
+
+    private fun formatVirtualError(err: Throwable?, fallback: String): String {
+        val apiErr = err as? ApiException
+        if (apiErr != null) {
+            return when (apiErr.code) {
+                "d2l_auth_failed" -> "${apiErr.message ?: fallback} Se você alterou sua senha recentemente, saia e entre novamente."
+                else -> apiErr.message ?: fallback
             }
         }
+        return err?.message ?: fallback
     }
 
     suspend fun openD2LFile(
@@ -585,8 +631,19 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
     ) = withToken { server, token ->
         val displayTitle = title.ifBlank { fileName.ifBlank { "Arquivo da Sala Virtual" } }
         if (!PlatformBridge.supportsInAppDocumentViewer()) {
-            val ticket = api.createD2LTicket(server, token, path).ticket
-            PlatformBridge.openExternalUrl(api.buildD2LFileUrlWithTicket(server, ticket, path))
+            val result = runCatching {
+                val ticket = api.createD2LTicket(server, token, path).ticket
+                PlatformBridge.openExternalUrl(api.buildD2LFileUrlWithTicket(server, ticket, path))
+            }
+            val err = result.exceptionOrNull()
+            if (err is UnauthorizedException) throw err
+            if (err != null) {
+                _state.update { it.copy(statusBanner = err.message ?: "Não foi possível abrir o arquivo") }
+            } else if (result.getOrNull() == false) {
+                _state.update {
+                    it.copy(statusBanner = "Pop-up bloqueado pelo navegador. Use o botão Baixar ao lado ou libere pop-ups para este site.")
+                }
+            }
             return@withToken
         }
 
@@ -717,11 +774,26 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
         }
         var succeeded = 0
         var failed = 0
+        val failedNames = mutableListOf<String>()
         var lastErrorMsg: String? = null
 
-        try {
-            cleanItems.forEachIndexed { idx, item ->
-                val res = runCatching {
+        suspend fun attemptOne(item: VirtualDownloadRequest): Result<String> {
+            val first = runCatching {
+                val ticket = api.createD2LTicket(server, token, item.path).ticket
+                val url = api.buildD2LFileUrlWithTicket(server, ticket, item.path, download = true, fileName = item.fileName)
+                val payload = api.downloadFileBytes(url)
+                val resolvedName = resolveFileName(item.fileName, payload.suggestedFileName, "", payload.contentType)
+                PlatformBridge.saveDownloadedFile(
+                    courseName = item.courseName.ifBlank { "Sala Virtual" },
+                    fileName = resolvedName,
+                    mimeType = payload.contentType,
+                    bytes = payload.bytes
+                ).getOrThrow()
+            }
+            val apiErr = first.exceptionOrNull() as? ApiException
+            if (apiErr != null && apiErr.statusCode == 429) {
+                delay(1_500L)
+                return runCatching {
                     val ticket = api.createD2LTicket(server, token, item.path).ticket
                     val url = api.buildD2LFileUrlWithTicket(server, ticket, item.path, download = true, fileName = item.fileName)
                     val payload = api.downloadFileBytes(url)
@@ -733,12 +805,21 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
                         bytes = payload.bytes
                     ).getOrThrow()
                 }
+            }
+            return first
+        }
+
+        try {
+            cleanItems.forEachIndexed { idx, item ->
+                if (idx > 0) delay(120L)
+                val res = attemptOne(item)
                 val err = res.exceptionOrNull()
                 if (err is UnauthorizedException) throw err
                 if (err == null) {
                     succeeded++
                 } else {
                     failed++
+                    failedNames += item.fileName.ifBlank { "arquivo ${idx + 1}" }
                     lastErrorMsg = err.message
                 }
                 _state.update { it.copy(batchDownloadDone = idx + 1) }
@@ -747,7 +828,11 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
             val folder = PlatformBridge.getDownloadFolderLabel()
             val summary = when {
                 succeeded > 0 && failed == 0 -> "$succeeded arquivo(s) salvo(s) em $folder"
-                succeeded > 0 -> "$succeeded salvo(s), $failed falha(s)"
+                succeeded > 0 -> {
+                    val sample = failedNames.take(2).joinToString(", ")
+                    val suffix = if (failedNames.size > 2) " +${failedNames.size - 2}" else ""
+                    "$succeeded salvo(s), $failed falha(s): $sample$suffix"
+                }
                 else -> lastErrorMsg ?: "Não foi possível baixar os arquivos"
             }
             _state.update {
@@ -849,16 +934,19 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
         val freshOnes = notifs.filter { it.readAt == null && it.id > lastSeenId }.sortedBy { it.id }
         if (freshOnes.isEmpty()) return
         val notifyVirtualNew = readVirtualNotifyNewAssignment()
+        var maxProcessedId = lastSeenId
         var anyHandled = false
         freshOnes.forEach { n ->
             if (n.kind == "d2l_assignment") {
                 if (!notifyVirtualNew) {
+                    maxProcessedId = maxOf(maxProcessedId, n.id)
                     anyHandled = true
                     return@forEach
                 }
                 val title = "Nova atividade: ${n.disciplineName.ifBlank { "Sala Virtual" }}"
                 val body = if (n.newValue.isNotBlank()) "${n.field} • ${n.newValue}" else n.field
                 if (PlatformBridge.postSystemNotification(n.id.toInt(), title, body, openTab = 2)) {
+                    maxProcessedId = maxOf(maxProcessedId, n.id)
                     anyHandled = true
                 }
                 return@forEach
@@ -867,11 +955,12 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
             val oldTxt = if (n.oldValue.isBlank()) "—" else n.oldValue
             val body = "${n.field}: $oldTxt → ${n.newValue}"
             if (PlatformBridge.postSystemNotification(n.id.toInt(), title, body, openTab = 3)) {
+                maxProcessedId = maxOf(maxProcessedId, n.id)
                 anyHandled = true
             }
         }
         if (anyHandled) {
-            PlatformBridge.putString(PrefKeys.LAST_NOTIFIED_ID, freshOnes.last().id.toString())
+            PlatformBridge.putString(PrefKeys.LAST_NOTIFIED_ID, maxProcessedId.toString())
         }
     }
 

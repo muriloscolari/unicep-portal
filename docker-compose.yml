@@ -23,6 +23,8 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN:-https://unicep.muriloscolari.me}
       ALLOW_DEV_CORS: "false"
       TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-127.0.0.1/8,::1/128,172.16.0.0/12}
+      PORTAL_BASE_URL: ${PORTAL_BASE_URL:-https://cdseducacional.com.br}
+      D2L_BASE_URL: ${D2L_BASE_URL:-https://salavirtual.unicep.edu.br}
       DATA_DIR: /app/data
       WEB_DIR: /app/web
       POLL_INTERVAL_MINUTES: ${POLL_INTERVAL_MINUTES:-15}

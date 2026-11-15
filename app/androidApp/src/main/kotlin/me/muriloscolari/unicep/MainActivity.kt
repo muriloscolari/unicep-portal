@@ -1,5 +1,6 @@
 package me.muriloscolari.unicep
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -24,6 +25,15 @@ class MainActivity : ComponentActivity() {
         val initialTab = intent?.getIntExtra("open_tab", 0) ?: 0
         setContent {
             App(initialTab = initialTab)
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val requestedTab = intent.getIntExtra("open_tab", -1)
+        if (requestedTab >= 0) {
+            PlatformBridge.dispatchOpenTab(requestedTab)
         }
     }
 

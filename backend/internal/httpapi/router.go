@@ -54,6 +54,9 @@ type Server struct {
 	loginIPLim     *rateLimiter
 	loginRALim     *rateLimiter
 	actionRALim    *rateLimiter
+	d2lOverviewLim *rateLimiter
+	d2lDetailLim   *rateLimiter
+	d2lTicketLim   *rateLimiter
 	trustedProxies []*net.IPNet
 }
 
@@ -69,6 +72,9 @@ func NewServer(cfg config.Config, store *storage.Store, cry *crypto.Service, pm 
 		loginIPLim:     newRateLimiter(10, 5*time.Minute),
 		loginRALim:     newRateLimiter(6, 5*time.Minute),
 		actionRALim:    newRateLimiter(20, 1*time.Minute),
+		d2lOverviewLim: newRateLimiter(12, 1*time.Minute),
+		d2lDetailLim:   newRateLimiter(30, 1*time.Minute),
+		d2lTicketLim:   newRateLimiter(60, 1*time.Minute),
 		trustedProxies: parseCIDRs(cfg.TrustedProxyCIDRs),
 	}
 
@@ -94,6 +100,8 @@ func NewServer(cfg config.Config, store *storage.Store, cry *crypto.Service, pm 
 	mux.Handle("GET /api/d2l/overview", s.requireAuth(http.HandlerFunc(s.handleD2LOverview)))
 	mux.Handle("GET /api/d2l/courses/{ou}", s.requireAuth(http.HandlerFunc(s.handleD2LCourseDetail)))
 	mux.Handle("POST /api/d2l/ticket", s.requireAuth(http.HandlerFunc(s.handleD2LTicket)))
+	mux.Handle("GET /api/d2l/settings", s.requireAuth(http.HandlerFunc(s.handleGetD2LSettings)))
+	mux.Handle("PATCH /api/d2l/settings", s.requireAuth(http.HandlerFunc(s.handlePatchD2LSettings)))
 	mux.Handle("GET /api/notifications", s.requireAuth(http.HandlerFunc(s.handleListNotifications)))
 	mux.Handle("POST /api/notifications/read", s.requireAuth(http.HandlerFunc(s.handleMarkNotificationsRead)))
 	mux.Handle("POST /api/notifications/sync", s.requireAuth(http.HandlerFunc(s.handleSyncNow)))
@@ -272,7 +280,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Seed snapshot asynchronously so initial login stays snappy.
 	go func(ra string) {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if _, err := s.worker.SyncUser(ctx, ra, true); err != nil {
 			log.Printf("initial snapshot seed for %s: %v", ra, err)
@@ -673,17 +681,24 @@ func writeSandboxedFileResponse(w http.ResponseWriter, raw []byte, ct string, co
 	safeCT, attach := sanitizeProxyContentType(ct)
 	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data: https:; form-action 'none'; frame-ancestors 'none'")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("Content-Type", safeCT)
 	if attach || forceAttachment {
+		var resolvedName string
 		if safeName := sanitizeDownloadFilename(requestedName); safeName != "" {
-			if formatted := mime.FormatMediaType("attachment", map[string]string{"filename": safeName}); formatted != "" {
+			resolvedName = safeName
+		} else if contentDisposition != "" {
+			if _, params, err := mime.ParseMediaType(contentDisposition); err == nil {
+				resolvedName = sanitizeDownloadFilename(params["filename"])
+			}
+		}
+		if resolvedName != "" {
+			if formatted := mime.FormatMediaType("attachment", map[string]string{"filename": resolvedName}); formatted != "" {
 				w.Header().Set("Content-Disposition", formatted)
 			} else {
 				w.Header().Set("Content-Disposition", "attachment")
 			}
-		} else if contentDisposition != "" {
-			w.Header().Set("Content-Disposition", contentDisposition)
 		} else {
 			w.Header().Set("Content-Disposition", "attachment")
 		}
@@ -822,11 +837,19 @@ func (s *Server) writePortalErr(w http.ResponseWriter, err error) {
 
 func (s *Server) handleD2LOverview(w http.ResponseWriter, r *http.Request) {
 	if s.d2l == nil {
-		writeError(w, http.StatusServiceUnavailable, "integração com a Sala Virtual indisponível")
+		writeErrorWithCode(w, http.StatusServiceUnavailable, "d2l_unavailable", "integração com a Sala Virtual indisponível")
 		return
 	}
 	claims := currentClaims(r)
-	ov, err := s.d2l.GetOverview(r.Context(), claims.RA)
+	forceRefresh := r.URL.Query().Get("refresh") == "1" || strings.EqualFold(r.URL.Query().Get("refresh"), "true")
+	if forceRefresh {
+		if !s.d2lOverviewLim.Allow("d2loverview:" + claims.RA) {
+			w.Header().Set("Retry-After", "60")
+			writeErrorWithCode(w, http.StatusTooManyRequests, "rate_limited", "muitas atualizações na Sala Virtual; aguarde um instante")
+			return
+		}
+	}
+	ov, err := s.d2l.GetOverviewWithOptions(r.Context(), claims.RA, forceRefresh)
 	if err != nil {
 		s.writeD2LErr(w, err)
 		return
@@ -836,7 +859,7 @@ func (s *Server) handleD2LOverview(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleD2LCourseDetail(w http.ResponseWriter, r *http.Request) {
 	if s.d2l == nil {
-		writeError(w, http.StatusServiceUnavailable, "integração com a Sala Virtual indisponível")
+		writeErrorWithCode(w, http.StatusServiceUnavailable, "d2l_unavailable", "integração com a Sala Virtual indisponível")
 		return
 	}
 	ouRaw := strings.TrimSpace(r.PathValue("ou"))
@@ -846,6 +869,11 @@ func (s *Server) handleD2LCourseDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	claims := currentClaims(r)
+	if !s.d2lDetailLim.Allow("d2ldetail:" + claims.RA) {
+		w.Header().Set("Retry-After", "60")
+		writeErrorWithCode(w, http.StatusTooManyRequests, "rate_limited", "muitas consultas seguidas na Sala Virtual; aguarde alguns segundos")
+		return
+	}
 	detail, err := s.d2l.GetCourseDetail(r.Context(), claims.RA, ou)
 	if err != nil {
 		s.writeD2LErr(w, err)
@@ -857,12 +885,13 @@ func (s *Server) handleD2LCourseDetail(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleD2LTicket(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if s.d2l == nil {
-		writeError(w, http.StatusServiceUnavailable, "integração com a Sala Virtual indisponível")
+		writeErrorWithCode(w, http.StatusServiceUnavailable, "d2l_unavailable", "integração com a Sala Virtual indisponível")
 		return
 	}
 	claims := currentClaims(r)
-	if !s.actionRALim.Allow("d2lticket:" + claims.RA) {
-		writeError(w, http.StatusTooManyRequests, "muitas solicitações; aguarde alguns segundos")
+	if !s.d2lTicketLim.Allow("d2lticket:" + claims.RA) {
+		w.Header().Set("Retry-After", "60")
+		writeErrorWithCode(w, http.StatusTooManyRequests, "rate_limited", "muitas solicitações; aguarde alguns segundos")
 		return
 	}
 	var req struct {
@@ -888,9 +917,39 @@ func (s *Server) handleD2LTicket(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleGetD2LSettings(w http.ResponseWriter, r *http.Request) {
+	claims := currentClaims(r)
+	u, err := s.store.GetUser(claims.RA)
+	if err != nil || u == nil {
+		writeError(w, http.StatusNotFound, "usuário não encontrado")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{
+		"pollingEnabled": u.D2LPollingEnabled,
+	})
+}
+
+func (s *Server) handlePatchD2LSettings(w http.ResponseWriter, r *http.Request) {
+	claims := currentClaims(r)
+	var req struct {
+		PollingEnabled bool `json:"pollingEnabled"`
+	}
+	if err := decodeStrictJSON(w, r, &req, 1024); err != nil {
+		writeError(w, http.StatusBadRequest, "JSON inválido")
+		return
+	}
+	if err := s.store.SetD2LPollingEnabled(claims.RA, req.PollingEnabled); err != nil {
+		writeError(w, http.StatusInternalServerError, "erro ao atualizar preferência")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{
+		"pollingEnabled": req.PollingEnabled,
+	})
+}
+
 func (s *Server) handleD2LFile(w http.ResponseWriter, r *http.Request) {
 	if s.d2l == nil {
-		writeError(w, http.StatusServiceUnavailable, "integração com a Sala Virtual indisponível")
+		writeErrorWithCode(w, http.StatusServiceUnavailable, "d2l_unavailable", "integração com a Sala Virtual indisponível")
 		return
 	}
 	relPath := strings.TrimSpace(r.URL.Query().Get("path"))
@@ -913,11 +972,21 @@ func (s *Server) handleD2LFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) writeD2LErr(w http.ResponseWriter, err error) {
-	if errors.Is(err, d2l.ErrInvalidCredentials) || errors.Is(err, d2l.ErrSessionExpired) {
-		writeError(w, http.StatusBadGateway, "não foi possível autenticar na Sala Virtual (verifique suas credenciais do UnicepVirtual)")
-		return
+	switch {
+	case errors.Is(err, d2l.ErrCourseNotAvailable):
+		writeErrorWithCode(w, http.StatusNotFound, "d2l_not_found", "disciplina não encontrada ou sem acesso na Sala Virtual")
+	case errors.Is(err, d2l.ErrFileNotFound):
+		writeErrorWithCode(w, http.StatusNotFound, "d2l_not_found", "arquivo não encontrado na Sala Virtual")
+	case errors.Is(err, d2l.ErrFileTooLarge):
+		writeErrorWithCode(w, http.StatusRequestEntityTooLarge, "d2l_file_too_large", "o arquivo excede o limite de 16 MB; abra-o diretamente na Sala Virtual")
+	case errors.Is(err, context.DeadlineExceeded):
+		writeErrorWithCode(w, http.StatusGatewayTimeout, "d2l_timeout", "a Sala Virtual demorou muito para responder; tente novamente")
+	case errors.Is(err, d2l.ErrInvalidCredentials), errors.Is(err, d2l.ErrSessionExpired):
+		// Keep HTTP 502 (never 401) so the main portal session token stays active while signaling D2L auth failure via code.
+		writeErrorWithCode(w, http.StatusBadGateway, "d2l_auth_failed", "não foi possível autenticar na Sala Virtual; verifique suas credenciais ou faça login novamente")
+	default:
+		writeErrorWithCode(w, http.StatusBadGateway, "d2l_unavailable", "erro ao consultar a Sala Virtual (UnicepVirtual)")
 	}
-	writeError(w, http.StatusBadGateway, "erro ao consultar a Sala Virtual (UnicepVirtual)")
 }
 
 func (s *Server) staticSPAHandler(dir string) http.Handler {
@@ -1067,12 +1136,24 @@ func isWithinDir(base, target string) bool {
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
+	writeErrorWithCode(w, status, "", msg)
+}
+
+func writeErrorWithCode(w http.ResponseWriter, status int, code, msg string) {
+	payload := struct {
+		Error string `json:"error"`
+		Code  string `json:"code,omitempty"`
+	}{
+		Error: msg,
+		Code:  code,
+	}
+	writeJSON(w, status, payload)
 }
 
 func parseCIDRs(raw []string) []*net.IPNet {

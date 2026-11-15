@@ -60,6 +60,10 @@ fun evaluateVirtualDeadlineAlerts(
         ?.let { raw -> runCatching { virtualAlertJson.decodeFromString<Map<String, Boolean>>(raw) }.getOrNull() }
         ?.toMutableMap()
         ?: mutableMapOf()
+    val prevIds: MutableMap<String, Int> = PlatformBridge.getString(PrefKeys.VIRTUAL_DEADLINE_NOTIF_IDS)
+        ?.let { raw -> runCatching { virtualAlertJson.decodeFromString<Map<String, Int>>(raw) }.getOrNull() }
+        ?.toMutableMap()
+        ?: mutableMapOf()
 
     // Prune submitted / expired items so storage stays small.
     val activeAssignmentPrefixes = assignments
@@ -69,6 +73,7 @@ fun evaluateVirtualDeadlineAlerts(
         .toSet()
 
     var changed = prevMap.keys.removeAll { key -> activeAssignmentPrefixes.none { prefix -> key.startsWith(prefix) } }
+    var idsChanged = prevIds.keys.removeAll { key -> activeAssignmentPrefixes.none { prefix -> key.startsWith(prefix) } }
 
     assignments.forEach { assignment ->
         if (assignment.status != "not_submitted") return@forEach
@@ -85,7 +90,19 @@ fun evaluateVirtualDeadlineAlerts(
         if (prevMap[bucketKey] == true) return@forEach
 
         val remainingLabel = formatRemainingDeadline(remainingMs)
-        val notifId = 80_000 + (bucketKey.hashCode() and 0x7FFF)
+        val notifId = prevIds[bucketKey] ?: run {
+            val used = prevIds.values.toSet()
+            var candidate = 80_000
+            while (used.contains(candidate) && candidate < 100_000) {
+                candidate++
+            }
+            if (candidate >= 100_000) {
+                candidate = 80_000 + (((prevIds.size) % 20_000))
+            }
+            prevIds[bucketKey] = candidate
+            idsChanged = true
+            candidate
+        }
         val posted = PlatformBridge.postSystemNotification(
             id = notifId,
             title = "Prazo próximo ($remainingLabel): ${assignment.name}",
@@ -100,6 +117,9 @@ fun evaluateVirtualDeadlineAlerts(
 
     if (changed) {
         PlatformBridge.putString(PrefKeys.VIRTUAL_DEADLINE_NOTIFIED, virtualAlertJson.encodeToString(prevMap))
+    }
+    if (idsChanged) {
+        PlatformBridge.putString(PrefKeys.VIRTUAL_DEADLINE_NOTIF_IDS, virtualAlertJson.encodeToString(prevIds))
     }
 }
 
@@ -118,7 +138,17 @@ private fun formatRemainingDeadline(remainingMs: Long): String {
     }
 }
 
-private fun parseIso8601ToEpochMillis(raw: String): Long? {
+private fun maxDayOfMonth(year: Int, month: Int): Int = when (month) {
+    1, 3, 5, 7, 8, 10, 12 -> 31
+    4, 6, 9, 11 -> 30
+    2 -> {
+        val isLeap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+        if (isLeap) 29 else 28
+    }
+    else -> 0
+}
+
+fun parseIso8601ToEpochMillis(raw: String): Long? {
     val s = raw.trim()
     if (s.length < 19 || s[4] != '-' || s[7] != '-' || (s[10] != 'T' && s[10] != ' ')) return null
     val year = s.substring(0, 4).toIntOrNull() ?: return null
@@ -127,7 +157,9 @@ private fun parseIso8601ToEpochMillis(raw: String): Long? {
     val hour = s.substring(11, 13).toIntOrNull() ?: return null
     val minute = s.substring(14, 16).toIntOrNull() ?: return null
     val second = s.substring(17, 19).toIntOrNull() ?: return null
-    if (month !in 1..12 || day !in 1..31 || hour !in 0..23 || minute !in 0..59 || second !in 0..59) return null
+    if (year !in 1970..2100 || month !in 1..12) return null
+    val maxDay = maxDayOfMonth(year, month)
+    if (day !in 1..maxDay || hour !in 0..23 || minute !in 0..59 || second !in 0..59) return null
 
     var idx = 19
     if (idx < s.length && s[idx] == '.') {
@@ -137,14 +169,20 @@ private fun parseIso8601ToEpochMillis(raw: String): Long? {
     var offsetMinutes = 0
     if (idx < s.length) {
         when (s[idx]) {
-            'Z', 'z' -> offsetMinutes = 0
+            'Z', 'z' -> {
+                if (idx != s.length - 1) return null
+                offsetMinutes = 0
+            }
             '+', '-' -> {
                 val sign = if (s[idx] == '-') -1 else 1
                 val tail = s.substring(idx + 1).replace(":", "")
-                val offH = tail.take(2).toIntOrNull() ?: return null
-                val offM = tail.drop(2).take(2).toIntOrNull() ?: 0
+                if (tail.length != 2 && tail.length != 4) return null
+                val offH = tail.substring(0, 2).toIntOrNull() ?: return null
+                val offM = if (tail.length == 4) (tail.substring(2, 4).toIntOrNull() ?: return null) else 0
+                if (offH !in 0..23 || offM !in 0..59) return null
                 offsetMinutes = sign * (offH * 60 + offM)
             }
+            else -> return null
         }
     }
 

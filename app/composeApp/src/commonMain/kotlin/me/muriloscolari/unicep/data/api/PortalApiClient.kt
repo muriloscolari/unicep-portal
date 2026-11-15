@@ -2,10 +2,13 @@ package me.muriloscolari.unicep.data.api
 
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.timeout
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
+import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
@@ -19,7 +22,11 @@ import kotlinx.serialization.json.Json
 import me.muriloscolari.unicep.platform.PlatformBridge
 
 class UnauthorizedException(message: String = "Sessão expirada") : Exception(message)
-class ApiException(message: String) : Exception(message)
+class ApiException(
+    message: String,
+    val code: String = "",
+    val statusCode: Int = 0
+) : Exception(message)
 
 class DownloadedFilePayload(
     val bytes: ByteArray,
@@ -36,6 +43,11 @@ class PortalApiClient {
     private val client = HttpClient(PlatformBridge.createHttpEngine()) {
         install(ContentNegotiation) {
             json(json)
+        }
+        install(HttpTimeout) {
+            connectTimeoutMillis = 15_000
+            requestTimeoutMillis = 90_000
+            socketTimeoutMillis = 90_000
         }
     }
 
@@ -135,11 +147,28 @@ class PortalApiClient {
     fun buildProxyUrlWithTicket(baseUrl: String, ticket: String, path: String): String =
         "${cleanBase(baseUrl)}/api/proxy?path=${path.encodeURLParameter()}&ticket=${ticket.encodeURLParameter()}"
 
-    suspend fun virtualOverview(baseUrl: String, token: String): VirtualOverviewResponse =
-        getAuthed(baseUrl, "/api/d2l/overview", token)
+    suspend fun virtualOverview(baseUrl: String, token: String, forceRefresh: Boolean = false): VirtualOverviewResponse {
+        val resp = client.get("${cleanBase(baseUrl)}/api/d2l/overview") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            if (forceRefresh) parameter("refresh", "1")
+        }
+        return parseOrThrow(resp)
+    }
 
     suspend fun virtualCourseDetail(baseUrl: String, token: String, orgUnitId: Long): VirtualCourseDetailResponse =
         getAuthed(baseUrl, "/api/d2l/courses/$orgUnitId", token)
+
+    suspend fun getD2LSettings(baseUrl: String, token: String): VirtualSettingsPayload =
+        getAuthed(baseUrl, "/api/d2l/settings", token)
+
+    suspend fun updateD2LSettings(baseUrl: String, token: String, pollingEnabled: Boolean): VirtualSettingsPayload {
+        val resp = client.patch("${cleanBase(baseUrl)}/api/d2l/settings") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody(VirtualSettingsPayload(pollingEnabled = pollingEnabled))
+        }
+        return parseOrThrow(resp)
+    }
 
     suspend fun createD2LTicket(baseUrl: String, token: String, path: String): ProxyTicketResponse {
         val resp = client.post("${cleanBase(baseUrl)}/api/d2l/ticket") {
@@ -164,14 +193,22 @@ class PortalApiClient {
     }
 
     suspend fun downloadFileBytes(url: String): DownloadedFilePayload {
-        val resp = client.get(url)
+        val resp = client.get(url) {
+            timeout {
+                requestTimeoutMillis = 120_000
+                socketTimeoutMillis = 120_000
+            }
+        }
         if (resp.status == HttpStatusCode.Unauthorized) {
             throw UnauthorizedException()
         }
         if (resp.status.value >= 400) {
-            val msg = runCatching { resp.body<ErrorResponse>().error }.getOrNull()
-                ?: "Erro ao baixar arquivo (HTTP ${resp.status.value})"
-            throw ApiException(msg)
+            val errBody = runCatching { resp.body<ErrorResponse>() }.getOrNull()
+            throw ApiException(
+                message = errBody?.error ?: "Erro ao baixar arquivo (HTTP ${resp.status.value})",
+                code = errBody?.code.orEmpty(),
+                statusCode = resp.status.value
+            )
         }
         val bytes = resp.body<ByteArray>()
         val contentType = resp.headers[HttpHeaders.ContentType]
@@ -242,9 +279,12 @@ class PortalApiClient {
             throw UnauthorizedException()
         }
         if (resp.status.value >= 400) {
-            val msg = runCatching { resp.body<ErrorResponse>().error }.getOrNull()
-                ?: "Erro HTTP ${resp.status.value}"
-            throw ApiException(msg)
+            val errBody = runCatching { resp.body<ErrorResponse>() }.getOrNull()
+            throw ApiException(
+                message = errBody?.error ?: "Erro HTTP ${resp.status.value}",
+                code = errBody?.code.orEmpty(),
+                statusCode = resp.status.value
+            )
         }
         return resp.body()
     }

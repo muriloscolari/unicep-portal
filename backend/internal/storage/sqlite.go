@@ -24,6 +24,7 @@ type UserRecord struct {
 	Campus            string
 	EncryptedPassword string
 	PollingEnabled    bool
+	D2LPollingEnabled bool
 	TokenVersion      int
 	LastLoginAt       string
 }
@@ -126,7 +127,22 @@ CREATE TABLE IF NOT EXISTS d2l_snapshots (
 	if _, err := db.Exec(schema); err != nil {
 		return err
 	}
-	return ensureColumn(db, "users", "token_version", "INTEGER NOT NULL DEFAULT 1")
+	if err := ensureColumn(db, "users", "token_version", "INTEGER NOT NULL DEFAULT 1"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "users", "d2l_polling_enabled", "INTEGER NOT NULL DEFAULT 1"); err != nil {
+		return err
+	}
+	_, err := db.Exec(`
+DELETE FROM notifications
+WHERE period_key != 'test' AND id NOT IN (
+	SELECT MIN(id) FROM notifications WHERE period_key != 'test' GROUP BY ra, period_key, discipline_code, field, new_value, kind
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_dedupe
+ON notifications(ra, period_key, discipline_code, field, new_value, kind)
+WHERE period_key != 'test';
+`)
+	return err
 }
 
 func ensureColumn(db *sql.DB, table, column, definition string) error {
@@ -181,18 +197,31 @@ ON CONFLICT(ra) DO UPDATE SET
 // GetUser fetches a stored user by RA.
 func (s *Store) GetUser(ra string) (*UserRecord, error) {
 	row := s.db.QueryRow(`
-SELECT ra, perfil, name, campus, encrypted_password, polling_enabled, token_version, last_login_at
+SELECT ra, perfil, name, campus, encrypted_password, polling_enabled, d2l_polling_enabled, token_version, last_login_at
 FROM users WHERE ra = ?`, ra)
 	var u UserRecord
 	var enabled int
-	if err := row.Scan(&u.RA, &u.Perfil, &u.Name, &u.Campus, &u.EncryptedPassword, &enabled, &u.TokenVersion, &u.LastLoginAt); err != nil {
+	var d2lEnabled int
+	if err := row.Scan(&u.RA, &u.Perfil, &u.Name, &u.Campus, &u.EncryptedPassword, &enabled, &d2lEnabled, &u.TokenVersion, &u.LastLoginAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
 	u.PollingEnabled = enabled == 1
+	u.D2LPollingEnabled = d2lEnabled == 1
 	return &u, nil
+}
+
+// SetD2LPollingEnabled updates whether background Sala Virtual notifications are active for ra.
+func (s *Store) SetD2LPollingEnabled(ra string, enabled bool) error {
+	v := 0
+	if enabled {
+		v = 1
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.Exec(`UPDATE users SET d2l_polling_enabled = ?, updated_at = ? WHERE ra = ?`, v, now, ra)
+	return err
 }
 
 // GetTokenVersion returns the active JWT token version for ra (0 if user does not exist).
@@ -215,7 +244,7 @@ func (s *Store) IncrementTokenVersion(ra string) error {
 // ListPollingUsers returns all users with background polling enabled.
 func (s *Store) ListPollingUsers() ([]UserRecord, error) {
 	rows, err := s.db.Query(`
-SELECT ra, perfil, name, campus, encrypted_password, polling_enabled, token_version, last_login_at
+SELECT ra, perfil, name, campus, encrypted_password, polling_enabled, d2l_polling_enabled, token_version, last_login_at
 FROM users WHERE polling_enabled = 1`)
 	if err != nil {
 		return nil, err
@@ -226,10 +255,12 @@ FROM users WHERE polling_enabled = 1`)
 	for rows.Next() {
 		var u UserRecord
 		var enabled int
-		if err := rows.Scan(&u.RA, &u.Perfil, &u.Name, &u.Campus, &u.EncryptedPassword, &enabled, &u.TokenVersion, &u.LastLoginAt); err != nil {
+		var d2lEnabled int
+		if err := rows.Scan(&u.RA, &u.Perfil, &u.Name, &u.Campus, &u.EncryptedPassword, &enabled, &d2lEnabled, &u.TokenVersion, &u.LastLoginAt); err != nil {
 			return nil, err
 		}
 		u.PollingEnabled = enabled == 1
+		u.D2LPollingEnabled = d2lEnabled == 1
 		list = append(list, u)
 	}
 	return list, rows.Err()
@@ -264,14 +295,18 @@ ON CONFLICT(ra, period_key) DO UPDATE SET
 	return err
 }
 
-// InsertNotification stores a newly detected academic change notification.
+// InsertNotification stores a newly detected academic change notification, ignoring exact duplicates.
 func (s *Store) InsertNotification(n Notification) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := s.db.Exec(`
-INSERT INTO notifications (ra, period_key, discipline_code, discipline_name, field, old_value, new_value, kind, created_at)
+INSERT OR IGNORE INTO notifications (ra, period_key, discipline_code, discipline_name, field, old_value, new_value, kind, created_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `, n.RA, n.PeriodKey, n.DisciplineCode, n.DisciplineName, n.Field, n.OldValue, n.NewValue, n.Kind, now)
 	if err != nil {
+		return 0, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil || affected == 0 {
 		return 0, err
 	}
 	return res.LastInsertId()

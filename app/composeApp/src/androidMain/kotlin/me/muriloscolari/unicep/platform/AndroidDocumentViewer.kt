@@ -5,7 +5,10 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color as AndroidColor
 import android.graphics.pdf.PdfRenderer
+import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
@@ -73,13 +76,17 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.FileProvider
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import me.muriloscolari.unicep.ui.designsystem.LocalAppleTypography
 import me.muriloscolari.unicep.ui.designsystem.LocalPortalColors
 import me.muriloscolari.unicep.ui.designsystem.PortalIcons
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileOutputStream
 
@@ -229,15 +236,22 @@ actual fun PlatformDocumentViewer(
                         NativePdfRendererView(bytes = bytes)
                     }
                     isImage && bytes != null && bytes.isNotEmpty() -> {
-                        val imageBitmap = remember(bytes) {
-                            runCatching {
-                                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
-                            }.getOrNull()
+                        val decodedImageState by produceState<Pair<Boolean, ImageBitmap?>>(
+                            initialValue = true to null,
+                            key1 = bytes
+                        ) {
+                            val bmp = withContext(Dispatchers.IO) {
+                                decodeScaledBitmap(bytes, maxDim = 2048)?.asImageBitmap()
+                            }
+                            value = false to bmp
                         }
-                        if (imageBitmap != null) {
-                            ZoomableImageView(imageBitmap = imageBitmap, fileName = fileName)
-                        } else {
-                            UnsupportedDocumentFallback(
+                        val (decoding, imageBitmap) = decodedImageState
+                        when {
+                            decoding -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(color = colors.accent)
+                            }
+                            imageBitmap != null -> ZoomableImageView(imageBitmap = imageBitmap, fileName = fileName)
+                            else -> UnsupportedDocumentFallback(
                                 fileName = fileName,
                                 sizeBytes = bytes.size,
                                 downloading = downloading,
@@ -249,18 +263,15 @@ actual fun PlatformDocumentViewer(
                         }
                     }
                     isHtml && bytes != null && bytes.isNotEmpty() -> {
-                        val html = remember(bytes) { bytes.decodeToString() }
+                        val safeHtml = remember(bytes) {
+                            injectHtmlCsp(bytes.decodeToString())
+                        }
                         AndroidView(
                             modifier = Modifier.fillMaxSize(),
                             factory = { context ->
                                 WebView(context).apply {
-                                    settings.javaScriptEnabled = false
-                                    settings.allowFileAccess = false
-                                    settings.allowContentAccess = false
-                                    settings.builtInZoomControls = true
-                                    settings.displayZoomControls = false
-                                    webViewClient = WebViewClient()
-                                    loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+                                    configureSandboxedWebView(allowSubresourcesFrom = null)
+                                    loadDataWithBaseURL("about:blank", safeHtml, "text/html", "utf-8", null)
                                 }
                             }
                         )
@@ -277,22 +288,93 @@ actual fun PlatformDocumentViewer(
                         )
                     }
                     fallbackUrl.isNotBlank() -> {
+                        val allowedUrl = remember(fallbackUrl) { Uri.parse(fallbackUrl) }
                         AndroidView(
                             modifier = Modifier.fillMaxSize(),
                             factory = { context ->
                                 WebView(context).apply {
-                                    settings.javaScriptEnabled = false
-                                    settings.allowFileAccess = false
-                                    settings.allowContentAccess = false
-                                    settings.builtInZoomControls = true
-                                    settings.displayZoomControls = false
-                                    webViewClient = WebViewClient()
+                                    configureSandboxedWebView(allowSubresourcesFrom = allowedUrl)
                                     loadUrl(fallbackUrl)
                                 }
                             }
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+private fun injectHtmlCsp(rawHtml: String): String {
+    val cspMeta = "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:;\">"
+    val headMatch = Regex("(?i)<head[^>]*>").find(rawHtml)
+    return if (headMatch != null) {
+        val insertAt = headMatch.range.last + 1
+        rawHtml.substring(0, insertAt) + cspMeta + rawHtml.substring(insertAt)
+    } else {
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\">$cspMeta</head><body>$rawHtml</body></html>"
+    }
+}
+
+private fun WebView.configureSandboxedWebView(allowSubresourcesFrom: Uri?) {
+    settings.javaScriptEnabled = false
+    settings.allowFileAccess = false
+    settings.allowContentAccess = false
+    @Suppress("DEPRECATION")
+    settings.allowFileAccessFromFileURLs = false
+    @Suppress("DEPRECATION")
+    settings.allowUniversalAccessFromFileURLs = false
+    settings.javaScriptCanOpenWindowsAutomatically = false
+    settings.setSupportMultipleWindows(false)
+    settings.builtInZoomControls = true
+    settings.displayZoomControls = false
+    webViewClient = object : WebViewClient() {
+        override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+            return true
+        }
+
+        override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+            val reqUri = request?.url ?: return null
+            val scheme = reqUri.scheme?.lowercase().orEmpty()
+            if (scheme == "about" || scheme == "data") return null
+            if (allowSubresourcesFrom != null &&
+                reqUri.scheme.equals(allowSubresourcesFrom.scheme, ignoreCase = true) &&
+                reqUri.host.equals(allowSubresourcesFrom.host, ignoreCase = true) &&
+                reqUri.port == allowSubresourcesFrom.port &&
+                reqUri.path == allowSubresourcesFrom.path
+            ) {
+                return null
+            }
+            return WebResourceResponse("text/plain", "utf-8", 403, "Forbidden", emptyMap(), ByteArrayInputStream(ByteArray(0)))
+        }
+    }
+}
+
+private fun decodeScaledBitmap(bytes: ByteArray, maxDim: Int): Bitmap? {
+    return runCatching {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        val outW = bounds.outWidth
+        val outH = bounds.outHeight
+        if (outW <= 0 || outH <= 0) return null
+        var sampleSize = 1
+        while (outW / sampleSize > maxDim || outH / sampleSize > maxDim) {
+            sampleSize *= 2
+        }
+        val opts = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+    }.getOrNull()
+}
+
+private fun pruneStaleCacheFiles(dir: File, maxAgeMillis: Long = 3_600_000L) {
+    runCatching {
+        val cutoff = System.currentTimeMillis() - maxAgeMillis
+        dir.listFiles()?.forEach { f ->
+            if (f.isFile && f.lastModified() < cutoff) {
+                f.delete()
             }
         }
     }
@@ -306,7 +388,26 @@ private class PdfRenderSession(
     val mutex = Mutex()
     val pageCount: Int = renderer.pageCount
 
-    fun close() {
+    @Volatile
+    var closed: Boolean = false
+        private set
+
+    fun closeAsync() {
+        if (closed) return
+        CoroutineScope(Dispatchers.IO).launch {
+            mutex.withLock {
+                if (!closed) {
+                    closed = true
+                    runCatching { renderer.close() }
+                    runCatching { pfd.close() }
+                    runCatching { tempFile.delete() }
+                }
+            }
+        }
+    }
+
+    fun closeNow() {
+        closed = true
         runCatching { renderer.close() }
         runCatching { pfd.close() }
         runCatching { tempFile.delete() }
@@ -318,7 +419,6 @@ private fun NativePdfRendererView(bytes: ByteArray) {
     val colors = LocalPortalColors.current
     val appleType = LocalAppleTypography.current
     val ctx = LocalContext.current
-    val density = LocalDensity.current
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
@@ -331,6 +431,7 @@ private fun NativePdfRendererView(bytes: ByteArray) {
         val loaded = withContext(Dispatchers.IO) {
             runCatching {
                 val cacheDir = File(ctx.cacheDir, "pdf_preview").apply { mkdirs() }
+                pruneStaleCacheFiles(cacheDir)
                 val file = File.createTempFile("doc_", ".pdf", cacheDir)
                 FileOutputStream(file).use { out ->
                     out.write(bytes)
@@ -341,14 +442,19 @@ private fun NativePdfRendererView(bytes: ByteArray) {
                 PdfRenderSession(file, pfd, renderer)
             }
         }
-        session?.close()
-        session = loaded.getOrNull()
+        val nextSession = loaded.getOrNull()
+        if (!coroutineContext.isActive) {
+            nextSession?.closeNow()
+            return@LaunchedEffect
+        }
+        session?.closeAsync()
+        session = nextSession
         renderError = loaded.exceptionOrNull()?.message
     }
 
     DisposableEffect(Unit) {
         onDispose {
-            session?.close()
+            session?.closeAsync()
             session = null
         }
     }
@@ -379,9 +485,14 @@ private fun NativePdfRendererView(bytes: ByteArray) {
         }
     }
 
-    val renderTargetWidthPx = remember(containerSize.width, density) {
-        val w = if (containerSize.width > 0) containerSize.width else 1080
-        w.coerceIn(720, 1800)
+    val zoomBucket = when {
+        scale >= 2.7f -> 3
+        scale >= 1.6f -> 2
+        else -> 1
+    }
+    val renderTargetWidthPx = remember(containerSize.width, zoomBucket) {
+        val base = if (containerSize.width > 0) containerSize.width else 1080
+        (base * zoomBucket).coerceIn(720, 3000)
     }
 
     Box(
@@ -514,11 +625,17 @@ private fun PdfPageCard(
     ) {
         value = withContext(Dispatchers.IO) {
             session.mutex.withLock {
+                if (session.closed) return@withLock null
                 runCatching {
                     session.renderer.openPage(pageIndex).use { page ->
-                        val aspect = page.width.toFloat() / page.height.coerceAtLeast(1).toFloat()
-                        val w = targetWidthPx.coerceAtLeast(320)
-                        val h = (w / aspect).toInt().coerceAtLeast(1)
+                        val aspect = (page.width.toFloat() / page.height.coerceAtLeast(1).toFloat()).coerceIn(0.2f, 5f)
+                        val maxHeight = 4096
+                        var w = targetWidthPx.coerceAtLeast(320)
+                        var h = (w / aspect).toInt().coerceAtLeast(1)
+                        if (h > maxHeight) {
+                            h = maxHeight
+                            w = (h * aspect).toInt().coerceAtLeast(320)
+                        }
                         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
                         bmp.eraseColor(AndroidColor.WHITE)
                         page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
@@ -688,6 +805,7 @@ private fun openTempFileExternally(
 ) {
     runCatching {
         val dir = File(ctx.cacheDir, "exports").apply { mkdirs() }
+        pruneStaleCacheFiles(dir)
         val safeName = fileName.replace(Regex("[^a-zA-Z0-9._-]"), "_").ifBlank { "arquivo" }
         val file = File(dir, safeName)
         FileOutputStream(file).use { out ->

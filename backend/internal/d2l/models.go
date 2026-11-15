@@ -139,6 +139,7 @@ type OverviewResponse struct {
 	BaseURL             string           `json:"baseUrl"`
 	UserID              string           `json:"userId,omitempty"`
 	UserName            string           `json:"userName,omitempty"`
+	Complete            bool             `json:"complete"`
 	Semesters           []SemesterOption `json:"semesters"`
 	Courses             []CourseSummary  `json:"courses"`
 	UpcomingAssignments []AssignmentItem `json:"upcomingAssignments"`

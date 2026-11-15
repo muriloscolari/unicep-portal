@@ -61,3 +61,20 @@ func TestDiffD2LAssignments(t *testing.T) {
 		t.Fatalf("unexpected D2L notification: %+v", events[0])
 	}
 }
+
+func TestDiffD2LAssignmentsIgnoresSubmittedAndGraded(t *testing.T) {
+	prev := []d2l.AssignmentItem{
+		{ID: 1, OrgUnitID: 50001, OrgUnitName: "DSW", Name: "Existente", Status: "not_submitted"},
+	}
+	curr := []d2l.AssignmentItem{
+		{ID: 1, OrgUnitID: 50001, OrgUnitName: "DSW", Name: "Existente", Status: "not_submitted"},
+		{ID: 2, OrgUnitID: 50001, OrgUnitName: "DSW", Name: "Já Enviada", Status: "submitted"},
+		{ID: 3, OrgUnitID: 50001, OrgUnitName: "DSW", Name: "Avaliada", Status: "graded"},
+		{ID: 4, OrgUnitID: 50001, OrgUnitName: "DSW", Name: "Encerrada", Status: "expired"},
+		{ID: 5, OrgUnitID: 50001, OrgUnitName: "DSW", Name: "Nova Pendente", Status: "not_submitted"},
+	}
+	events := DiffD2LAssignments("1234567", prev, curr)
+	if len(events) != 1 || events[0].Field != "Nova Pendente" {
+		t.Fatalf("expected only 'Nova Pendente' notification, got %+v", events)
+	}
+}

@@ -67,7 +67,7 @@ func main() {
 		Handler:           httpapi.NewServer(cfg, store, cry, pm, worker, dm),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      45 * time.Second,
+		WriteTimeout:      90 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    32 << 10,
 	}

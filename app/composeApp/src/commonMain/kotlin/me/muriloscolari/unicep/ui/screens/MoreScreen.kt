@@ -991,9 +991,9 @@ private fun VirtualAlertsSettingsRow(
                 Spacer(Modifier.height(2.dp))
                 Text(
                     text = if (notifyNewAssignment) {
-                        "Notificar quando o professor postar nova atividade"
+                        "Notificar em segundo plano quando o professor postar nova atividade (sincronizado)"
                     } else {
-                        "Alertas de novas atividades desativados"
+                        "Alertas de novas atividades desativados nesta conta"
                     },
                     color = colors.textSecondary,
                     style = appleType.footnote
@@ -1130,7 +1130,7 @@ private fun DownloadFolderSettingsRow(
 ) {
     val colors = LocalPortalColors.current
     val appleType = LocalAppleTypography.current
-    val isCustom = folderLabel.isNotBlank() && folderLabel != "Downloads/UnicepPortal"
+    val isCustom = PlatformBridge.isUsingCustomDownloadFolder()
 
     Column(
         modifier = Modifier
