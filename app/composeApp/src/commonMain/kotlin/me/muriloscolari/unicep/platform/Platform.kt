@@ -53,6 +53,12 @@ enum class PortalHapticType {
     SELECTION
 }
 
+data class LocalDateTimeInfo(
+    val dayOfWeekIso: Int, // 1 = Segunda .. 7 = Domingo
+    val hour: Int,
+    val minute: Int
+)
+
 data class PredictiveBackState(
     val active: Boolean = false,
     val progress: Float = 0f,
@@ -86,6 +92,7 @@ expect object PlatformBridge {
     fun setAndroidPredictiveBackListener(listener: ((PredictiveBackState) -> Unit)?)
     fun createHttpEngine(): HttpClientEngine
     fun currentTimeMillis(): Long
+    fun currentLocalDateTime(): LocalDateTimeInfo
     fun formatEpochMillisLocal(millis: Long): String
     fun isReduceMotionEnabled(): Boolean
     fun supportsInAppDocumentViewer(): Boolean

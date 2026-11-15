@@ -310,6 +310,12 @@ private fun jsPrintExportCard(jsonPayload: String): Boolean = js(
 
 private fun jsCurrentTimeMillis(): Double = js("Date.now()")
 
+private fun jsLocalDayOfWeekIso(): Int = js("(() => { const d = new Date().getDay(); return d === 0 ? 7 : d; })()")
+
+private fun jsLocalHour(): Int = js("new Date().getHours()")
+
+private fun jsLocalMinute(): Int = js("new Date().getMinutes()")
+
 private fun jsPrefersReducedMotion(): Boolean = js(
     """(() => {
         try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
@@ -587,6 +593,12 @@ actual object PlatformBridge {
     actual fun createHttpEngine(): HttpClientEngine = Js.create()
 
     actual fun currentTimeMillis(): Long = jsCurrentTimeMillis().toLong()
+
+    actual fun currentLocalDateTime(): LocalDateTimeInfo = LocalDateTimeInfo(
+        dayOfWeekIso = jsLocalDayOfWeekIso(),
+        hour = jsLocalHour(),
+        minute = jsLocalMinute()
+    )
 
     actual fun formatEpochMillisLocal(millis: Long): String {
         if (millis <= 0L) return ""

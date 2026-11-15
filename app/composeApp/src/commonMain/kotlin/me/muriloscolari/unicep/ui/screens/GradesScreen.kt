@@ -67,7 +67,11 @@ import me.muriloscolari.unicep.data.api.PartialGradeItem
 import me.muriloscolari.unicep.data.api.PeriodOption
 import me.muriloscolari.unicep.data.api.ReportCardItem
 import me.muriloscolari.unicep.data.api.ReportCardResponse
+import me.muriloscolari.unicep.data.api.ScheduleResponse
 import me.muriloscolari.unicep.data.api.StudentInfo
+import me.muriloscolari.unicep.data.api.VirtualAssignmentItem
+import me.muriloscolari.unicep.data.api.VirtualOverviewResponse
+import me.muriloscolari.unicep.data.repo.buildTodaySummary
 import me.muriloscolari.unicep.platform.DesignStyle
 import me.muriloscolari.unicep.platform.PlatformBridge
 import me.muriloscolari.unicep.platform.PortalHapticType
@@ -157,6 +161,11 @@ fun SemesterScreen(
     onCloseRiskyAttendance: () -> Unit,
     onOpenNotifications: () -> Unit,
     freqAlertThreshold: Int = 80,
+    schedule: ScheduleResponse? = null,
+    virtualOverview: VirtualOverviewResponse? = null,
+    onOpenSearch: () -> Unit = {},
+    onOpenSchedule: () -> Unit = {},
+    onOpenVirtualAssignment: (VirtualAssignmentItem) -> Unit = {},
     loading: Boolean = false,
     listState: LazyListState = rememberLazyListState(),
     renderSheetsInPlace: Boolean = true
@@ -200,6 +209,15 @@ fun SemesterScreen(
         val avgs = mergedSubjects.mapNotNull { it.numericAverage() }
         if (avgs.isEmpty()) null else avgs.average()
     }
+    val todaySummary = remember(schedule, mergedSubjects, virtualOverview) {
+        buildTodaySummary(
+            schedule = schedule,
+            subjects = mergedSubjects,
+            virtualOverview = virtualOverview,
+            nowLocal = PlatformBridge.currentLocalDateTime(),
+            nowMillis = PlatformBridge.currentTimeMillis()
+        )
+    }
     var periodMenuOpen by remember { mutableStateOf(false) }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize().background(colors.background)) {
@@ -240,6 +258,51 @@ fun SemesterScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
+                                if (isApple) {
+                                    GlassSurface(
+                                        modifier = Modifier
+                                            .size(34.dp)
+                                            .clip(CircleShape)
+                                            .pointerHoverIcon(PointerIcon.Hand)
+                                            .clickable {
+                                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                onOpenSearch()
+                                            },
+                                        shape = CircleShape,
+                                        shadowElevation = 8.dp
+                                    ) {
+                                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = PortalIcons.Search,
+                                                contentDescription = "Busca global",
+                                                tint = colors.accent,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    Surface(
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .clip(CircleShape)
+                                            .pointerHoverIcon(PointerIcon.Hand)
+                                            .clickable {
+                                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                onOpenSearch()
+                                            },
+                                        shape = CircleShape,
+                                        color = colors.surfaceSecondary
+                                    ) {
+                                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = PortalIcons.Search,
+                                                contentDescription = "Busca global",
+                                                tint = colors.accent,
+                                                modifier = Modifier.size(17.dp)
+                                            )
+                                        }
+                                    }
+                                }
                                 if (mergedSubjects.isNotEmpty()) {
                                     if (isApple) {
                                         GlassSurface(
@@ -387,6 +450,18 @@ fun SemesterScreen(
                             )
                         }
                     }
+                }
+
+                // Painel Hoje na UNICEP
+                item(key = "today_overview") {
+                    TodayOverviewCard(
+                        summary = todaySummary,
+                        scheduleLoaded = schedule != null,
+                        virtualLoaded = virtualOverview != null,
+                        onOpenSubject = onOpenSubject,
+                        onOpenSchedule = onOpenSchedule,
+                        onOpenVirtualAssignment = onOpenVirtualAssignment
+                    )
                 }
 
                 // Widgets de resumo

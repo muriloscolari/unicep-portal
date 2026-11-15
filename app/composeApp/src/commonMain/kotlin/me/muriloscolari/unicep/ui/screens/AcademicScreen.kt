@@ -65,6 +65,7 @@ import me.muriloscolari.unicep.ui.designsystem.PortalDivider
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import me.muriloscolari.unicep.data.api.StudentInfo
+import me.muriloscolari.unicep.data.repo.parseScheduleEntries
 import me.muriloscolari.unicep.platform.buildScheduleExportData
 import me.muriloscolari.unicep.ui.designsystem.ExportActionModal
 import me.muriloscolari.unicep.ui.designsystem.GlassSurface
@@ -116,6 +117,9 @@ fun AcademicScreen(
     val inProgressCount = remember(transcript) { transcript.count { it.status == "C" } }
     val totalCount = transcript.size
     val canExportSchedule = selectedSubTab == 2 && schedule != null && schedule.rows.isNotEmpty()
+    val parsedScheduleEntries = remember(schedule) {
+        parseScheduleEntries(schedule, emptyList())
+    }
 
     fun matchesFilter(status: String?): Boolean = when (statusFilter) {
         CourseStatusFilter.ALL -> true
@@ -476,13 +480,62 @@ fun AcademicScreen(
 
                         else -> {
                             val rows = schedule?.rows.orEmpty()
-                            if (rows.isEmpty()) {
+                            val parsedEntries = parsedScheduleEntries
+                            if (rows.isEmpty() && parsedEntries.isEmpty()) {
                                 item(key = "empty_schedule") {
                                     AppleEmptyState(
                                         icon = PortalIcons.Calendar,
                                         title = "Sem aulas exibidas",
                                         subtitle = "O quadro de horários retornou vazio no portal neste momento (comum fora do horário letivo ou fins de semana)."
                                     )
+                                }
+                            } else if (parsedEntries.isNotEmpty() && parsedEntries.any { it.dayOfWeekIso > 0 }) {
+                                val groupedByDay = parsedEntries.groupBy { it.dayLabel.ifBlank { "Horário" } }
+                                groupedByDay.forEach { (dayTitle, dayClasses) ->
+                                    item(key = "sched_day_$dayTitle") {
+                                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            PortalSectionHeader(title = dayTitle)
+                                            PortalCard(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                contentPadding = PaddingValues(0.dp)
+                                            ) {
+                                                dayClasses.forEachIndexed { idx, entry ->
+                                                    if (idx > 0) PortalDivider(Modifier.padding(start = 16.dp))
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .defaultMinSize(minHeight = 50.dp)
+                                                            .padding(horizontal = 16.dp, vertical = 11.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Text(
+                                                            text = entry.timeLabel.ifBlank { "Horário" },
+                                                            color = colors.textSecondary,
+                                                            style = tabularNumberStyle(appleType.subheadline),
+                                                            maxLines = 1,
+                                                            modifier = Modifier.width(110.dp)
+                                                        )
+                                                        Spacer(Modifier.width(10.dp))
+                                                        Column(modifier = Modifier.weight(1f)) {
+                                                            Text(
+                                                                text = entry.subjectName,
+                                                                color = colors.textPrimary,
+                                                                style = appleType.body
+                                                            )
+                                                            if (entry.roomOrMeta.isNotBlank()) {
+                                                                Spacer(Modifier.height(2.dp))
+                                                                Text(
+                                                                    text = entry.roomOrMeta,
+                                                                    color = colors.textSecondary,
+                                                                    style = appleType.footnote
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             } else {
                                 item(key = "schedule_card") {

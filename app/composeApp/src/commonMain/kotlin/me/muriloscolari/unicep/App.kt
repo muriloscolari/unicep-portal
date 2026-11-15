@@ -110,6 +110,8 @@ import me.muriloscolari.unicep.data.api.ReportCardResponse
 import me.muriloscolari.unicep.data.api.StudentInfo
 import me.muriloscolari.unicep.data.api.VirtualAnnouncement
 import me.muriloscolari.unicep.data.api.VirtualAssignmentItem
+import me.muriloscolari.unicep.data.repo.GlobalSearchResult
+import me.muriloscolari.unicep.data.repo.GlobalSearchResultKind
 import me.muriloscolari.unicep.data.repo.PortalRepository
 import me.muriloscolari.unicep.platform.AppUpdateInfo
 import me.muriloscolari.unicep.platform.DesignStyle
@@ -141,6 +143,7 @@ import me.muriloscolari.unicep.ui.screens.AppleAllNotificationsSheet
 import me.muriloscolari.unicep.ui.screens.AppleAttendanceLimitSheet
 import me.muriloscolari.unicep.ui.screens.AppleSubjectDetailSheet
 import me.muriloscolari.unicep.ui.screens.CentralScreen
+import me.muriloscolari.unicep.ui.screens.GlobalSearchSheet
 import me.muriloscolari.unicep.ui.screens.LoginScreen
 import me.muriloscolari.unicep.ui.screens.SemesterScreen
 import me.muriloscolari.unicep.ui.screens.SplashLoadingScreen
@@ -179,6 +182,7 @@ fun App(initialTab: Int = 0) {
     var selectedVirtualAnnouncement by remember { mutableStateOf<VirtualAnnouncement?>(null) }
     var selectedSubjectCode by remember { mutableStateOf<String?>(null) }
     var showRiskyAttendanceModal by remember { mutableStateOf(false) }
+    var showGlobalSearchModal by remember { mutableStateOf(false) }
     var showAllNotificationsModal by remember { mutableStateOf(false) }
     var confirmLogoutDialog by remember { mutableStateOf(false) }
     var suppressHistoryPush by remember { mutableStateOf(false) }
@@ -257,6 +261,7 @@ fun App(initialTab: Int = 0) {
         val sameTabRoot = tab == currentTab &&
             selectedSubjectCode == null &&
             !showRiskyAttendanceModal &&
+            !showGlobalSearchModal &&
             !showAllNotificationsModal &&
             selectedVirtualCourseId == null &&
             selectedVirtualAssignment == null &&
@@ -267,6 +272,7 @@ fun App(initialTab: Int = 0) {
         } else {
             selectedSubjectCode = null
             showRiskyAttendanceModal = false
+            showGlobalSearchModal = false
             showAllNotificationsModal = false
             selectedVirtualCourseId = null
             virtualCourseSubTab = 0
@@ -277,8 +283,59 @@ fun App(initialTab: Int = 0) {
         }
     }
 
+    fun handleGlobalSearchResult(result: GlobalSearchResult) {
+        showGlobalSearchModal = false
+        when (result.kind) {
+            GlobalSearchResultKind.SUBJECT -> {
+                currentTab = MainTab.SEMESTER
+                showRiskyAttendanceModal = false
+                selectedSubjectCode = result.subjectCode
+            }
+            GlobalSearchResultKind.SCHEDULE,
+            GlobalSearchResultKind.CURRICULUM -> {
+                currentTab = MainTab.COURSE
+                courseSubTab = result.courseSubTab ?: 0
+            }
+            GlobalSearchResultKind.VIRTUAL_COURSE -> {
+                currentTab = MainTab.VIRTUAL
+                selectedVirtualCourseId = result.virtualCourseId
+                virtualCourseSubTab = 0
+            }
+            GlobalSearchResultKind.VIRTUAL_ASSIGNMENT -> {
+                currentTab = MainTab.VIRTUAL
+                selectedVirtualCourseId = result.virtualCourseId
+                virtualCourseSubTab = 1
+                selectedVirtualAssignment = result.virtualAssignment
+            }
+            GlobalSearchResultKind.VIRTUAL_ANNOUNCEMENT -> {
+                currentTab = MainTab.VIRTUAL
+                selectedVirtualCourseId = result.virtualCourseId
+                virtualCourseSubTab = 2
+                selectedVirtualAnnouncement = result.virtualAnnouncement
+            }
+            GlobalSearchResultKind.VIRTUAL_MATERIAL -> {
+                val topic = result.virtualTopic
+                val cName = result.virtualCourseName ?: "Sala Virtual"
+                when {
+                    topic != null && topic.downloadPath.isNotBlank() -> {
+                        scope.launch { repo.openD2LFile(topic.downloadPath, topic.title, cName, topic.title) }
+                    }
+                    topic != null && (topic.externalUrl.isNotBlank() || topic.url.isNotBlank()) -> {
+                        repo.openSalaVirtualWeb(topic.externalUrl.ifBlank { topic.url })
+                    }
+                    else -> {
+                        currentTab = MainTab.VIRTUAL
+                        selectedVirtualCourseId = result.virtualCourseId
+                        virtualCourseSubTab = 0
+                    }
+                }
+            }
+        }
+    }
+
     fun encodeRoute(): String = when (currentTab) {
         MainTab.SEMESTER -> when {
+            showGlobalSearchModal -> "semestre/busca"
             !selectedSubjectCode.isNullOrBlank() -> "semestre/subject/$selectedSubjectCode"
             showRiskyAttendanceModal -> "semestre/frequencia-limite"
             else -> "semestre"
@@ -294,9 +351,19 @@ fun App(initialTab: Int = 0) {
     fun applyPopRoute(route: String) {
         suppressHistoryPush = true
         when {
+            route == "semestre/busca" -> {
+                currentTab = MainTab.SEMESTER
+                selectedSubjectCode = null
+                showRiskyAttendanceModal = false
+                showAllNotificationsModal = false
+                selectedVirtualAssignment = null
+                selectedVirtualAnnouncement = null
+                showGlobalSearchModal = true
+            }
             route.startsWith("semestre/subject/") -> {
                 currentTab = MainTab.SEMESTER
                 showRiskyAttendanceModal = false
+                showGlobalSearchModal = false
                 showAllNotificationsModal = false
                 selectedVirtualAssignment = null
                 selectedVirtualAnnouncement = null
@@ -305,6 +372,7 @@ fun App(initialTab: Int = 0) {
             route == "semestre/frequencia-limite" -> {
                 currentTab = MainTab.SEMESTER
                 selectedSubjectCode = null
+                showGlobalSearchModal = false
                 showAllNotificationsModal = false
                 selectedVirtualAssignment = null
                 selectedVirtualAnnouncement = null
@@ -314,6 +382,7 @@ fun App(initialTab: Int = 0) {
                 currentTab = MainTab.SEMESTER
                 selectedSubjectCode = null
                 showRiskyAttendanceModal = false
+                showGlobalSearchModal = false
                 showAllNotificationsModal = false
                 selectedVirtualAssignment = null
                 selectedVirtualAnnouncement = null
@@ -375,6 +444,7 @@ fun App(initialTab: Int = 0) {
         backOverlayController.hasOverlay ||
         confirmLogoutDialog ||
         showUpdateDialog ||
+        showGlobalSearchModal ||
         showAllNotificationsModal ||
         selectedSubjectCode != null ||
         showRiskyAttendanceModal ||
@@ -413,6 +483,10 @@ fun App(initialTab: Int = 0) {
                 }
                 confirmLogoutDialog -> {
                     confirmLogoutDialog = false
+                    true
+                }
+                showGlobalSearchModal -> {
+                    showGlobalSearchModal = false
                     true
                 }
                 selectedVirtualAssignment != null -> {
@@ -469,6 +543,7 @@ fun App(initialTab: Int = 0) {
         virtualCourseSubTab,
         selectedSubjectCode,
         showRiskyAttendanceModal,
+        showGlobalSearchModal,
         showAllNotificationsModal,
         state.loggedIn
     ) {
@@ -487,7 +562,7 @@ fun App(initialTab: Int = 0) {
             MainTab.COURSE -> repo.loadAcademicIfNeeded()
             MainTab.VIRTUAL -> repo.loadVirtualOverviewIfNeeded()
             MainTab.CENTRAL -> repo.loadFinanceAndServicesIfNeeded()
-            MainTab.SEMESTER -> Unit
+            MainTab.SEMESTER -> repo.preloadHomeContextIfNeeded()
         }
     }
 
@@ -603,12 +678,18 @@ fun App(initialTab: Int = 0) {
                             isRefreshing = refreshing,
                             onRefresh = {
                                 scope.launch {
-                                    if (currentTab == MainTab.VIRTUAL) {
-                                        val ou = selectedVirtualCourseId
-                                        if (ou != null) repo.loadVirtualCourse(ou, force = true)
-                                        else repo.loadVirtualOverviewIfNeeded(force = true)
-                                    } else {
-                                        repo.refreshDashboard()
+                                    when (currentTab) {
+                                        MainTab.VIRTUAL -> {
+                                            val ou = selectedVirtualCourseId
+                                            if (ou != null) repo.loadVirtualCourse(ou, force = true)
+                                            else repo.loadVirtualOverviewIfNeeded(force = true)
+                                        }
+                                        MainTab.COURSE -> repo.loadAcademicIfNeeded(force = true)
+                                        MainTab.CENTRAL -> repo.loadFinanceAndServicesIfNeeded(force = true)
+                                        MainTab.SEMESTER -> {
+                                            repo.refreshDashboard()
+                                            repo.preloadHomeContextIfNeeded(force = true)
+                                        }
                                     }
                                 }
                             },
@@ -642,6 +723,19 @@ fun App(initialTab: Int = 0) {
                                 onCloseRiskyAttendance = { showRiskyAttendanceModal = false },
                                 onOpenNotifications = { navigateToTab(MainTab.CENTRAL) },
                                 freqAlertThreshold = state.freqAlertThreshold,
+                                schedule = state.schedule,
+                                virtualOverview = state.virtualOverview,
+                                onOpenSearch = { showGlobalSearchModal = true },
+                                onOpenSchedule = {
+                                    currentTab = MainTab.COURSE
+                                    courseSubTab = 2
+                                },
+                                onOpenVirtualAssignment = { item ->
+                                    currentTab = MainTab.VIRTUAL
+                                    selectedVirtualCourseId = item.orgUnitId
+                                    virtualCourseSubTab = 1
+                                    selectedVirtualAssignment = item
+                                },
                                 loading = state.loading,
                                 listState = semesterListState,
                                 renderSheetsInPlace = false
@@ -893,6 +987,15 @@ fun App(initialTab: Int = 0) {
                             notifications = state.notifications,
                             onDismiss = { showAllNotificationsModal = false }
                         )
+                        showGlobalSearchModal -> GlobalSearchSheet(
+                            subjects = mergedSubjects,
+                            schedule = state.schedule,
+                            curriculum = state.curriculum,
+                            virtualOverview = state.virtualOverview,
+                            virtualCourseDetails = state.virtualCourseDetails,
+                            onSelectResult = ::handleGlobalSearchResult,
+                            onDismiss = { showGlobalSearchModal = false }
+                        )
                     }
 
                     if (confirmLogoutDialog) {
@@ -1130,6 +1233,19 @@ fun App(initialTab: Int = 0) {
                                                     onCloseRiskyAttendance = { showRiskyAttendanceModal = false },
                                                     onOpenNotifications = { navigateToTab(MainTab.CENTRAL) },
                                                     freqAlertThreshold = state.freqAlertThreshold,
+                                                    schedule = state.schedule,
+                                                    virtualOverview = state.virtualOverview,
+                                                    onOpenSearch = { showGlobalSearchModal = true },
+                                                    onOpenSchedule = {
+                                                        currentTab = MainTab.COURSE
+                                                        courseSubTab = 2
+                                                    },
+                                                    onOpenVirtualAssignment = { item ->
+                                                        currentTab = MainTab.VIRTUAL
+                                                        selectedVirtualCourseId = item.orgUnitId
+                                                        virtualCourseSubTab = 1
+                                                        selectedVirtualAssignment = item
+                                                    },
                                                     loading = state.loading,
                                                     listState = semesterListState,
                                                     renderSheetsInPlace = false
@@ -1254,12 +1370,18 @@ fun App(initialTab: Int = 0) {
                                                 isRefreshing = refreshing,
                                                 onRefresh = {
                                                     scope.launch {
-                                                        if (currentTab == MainTab.VIRTUAL) {
-                                                            val ou = selectedVirtualCourseId
-                                                            if (ou != null) repo.loadVirtualCourse(ou, force = true)
-                                                            else repo.loadVirtualOverviewIfNeeded(force = true)
-                                                        } else {
-                                                            repo.refreshDashboard()
+                                                        when (currentTab) {
+                                                            MainTab.VIRTUAL -> {
+                                                                val ou = selectedVirtualCourseId
+                                                                if (ou != null) repo.loadVirtualCourse(ou, force = true)
+                                                                else repo.loadVirtualOverviewIfNeeded(force = true)
+                                                            }
+                                                            MainTab.COURSE -> repo.loadAcademicIfNeeded(force = true)
+                                                            MainTab.CENTRAL -> repo.loadFinanceAndServicesIfNeeded(force = true)
+                                                            MainTab.SEMESTER -> {
+                                                                repo.refreshDashboard()
+                                                                repo.preloadHomeContextIfNeeded(force = true)
+                                                            }
                                                         }
                                                     }
                                                 },
@@ -1438,6 +1560,15 @@ fun App(initialTab: Int = 0) {
                                 showAllNotificationsModal -> AppleAllNotificationsSheet(
                                     notifications = state.notifications,
                                     onDismiss = { showAllNotificationsModal = false }
+                                )
+                                showGlobalSearchModal -> GlobalSearchSheet(
+                                    subjects = mergedSubjects,
+                                    schedule = state.schedule,
+                                    curriculum = state.curriculum,
+                                    virtualOverview = state.virtualOverview,
+                                    virtualCourseDetails = state.virtualCourseDetails,
+                                    onSelectResult = ::handleGlobalSearchResult,
+                                    onDismiss = { showGlobalSearchModal = false }
                                 )
                             }
 

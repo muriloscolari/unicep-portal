@@ -465,7 +465,8 @@ func (s *Server) handleReport(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSchedule(w http.ResponseWriter, r *http.Request) {
 	claims := currentClaims(r)
-	html, _, _, err := s.portal.FetchHTML(r.Context(), claims.RA, "/ambiente_aluno/relatorios/quadro_horarios.asp")
+	const baseSchedulePath = "/ambiente_aluno/relatorios/quadro_horarios.asp"
+	html, _, _, err := s.portal.FetchHTML(r.Context(), claims.RA, baseSchedulePath)
 	if err != nil {
 		s.writePortalErr(w, err)
 		return
@@ -474,6 +475,48 @@ func (s *Server) handleSchedule(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "erro ao interpretar horários")
 		return
+	}
+	if len(sched.Rows) == 0 {
+		if action, method, formMap, found := portal.ParseScheduleForm(html); found {
+			targetPath := baseSchedulePath
+			if action != "" {
+				if strings.HasPrefix(action, "/") {
+					targetPath = action
+				} else if !strings.HasPrefix(action, "http") {
+					targetPath = "/ambiente_aluno/relatorios/" + strings.TrimPrefix(action, "./")
+				}
+			}
+			semOrder := []string{"2", "1"}
+			if time.Now().Month() < time.July {
+				semOrder = []string{"1", "2"}
+			}
+			for _, sem := range semOrder {
+				vals := url.Values{}
+				for k, v := range formMap {
+					vals.Set(k, v)
+				}
+				if _, hasSem := formMap["cboSemestre"]; hasSem {
+					vals.Set("cboSemestre", sem)
+				}
+				var html2 string
+				var err2 error
+				if strings.EqualFold(method, "POST") {
+					html2, _, _, err2 = s.portal.PostFormHTML(r.Context(), claims.RA, targetPath, vals)
+				} else {
+					sep := "?"
+					if strings.Contains(targetPath, "?") {
+						sep = "&"
+					}
+					html2, _, _, err2 = s.portal.FetchHTML(r.Context(), claims.RA, targetPath+sep+vals.Encode())
+				}
+				if err2 == nil {
+					if parsed2, errParse := portal.ParseSchedule(html2); errParse == nil && len(parsed2.Rows) > 0 {
+						sched = parsed2
+						break
+					}
+				}
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, sched)
 }

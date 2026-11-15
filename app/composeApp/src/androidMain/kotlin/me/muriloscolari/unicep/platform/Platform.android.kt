@@ -560,6 +560,15 @@ actual object PlatformBridge {
 
     actual fun currentTimeMillis(): Long = System.currentTimeMillis()
 
+    actual fun currentLocalDateTime(): LocalDateTimeInfo {
+        val zdt = java.time.ZonedDateTime.now()
+        return LocalDateTimeInfo(
+            dayOfWeekIso = zdt.dayOfWeek.value,
+            hour = zdt.hour,
+            minute = zdt.minute
+        )
+    }
+
     actual fun formatEpochMillisLocal(millis: Long): String {
         if (millis <= 0L) return ""
         return runCatching {
