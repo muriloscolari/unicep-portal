@@ -148,5 +148,20 @@ actual object PlatformBridge {
         backHandler = handler
     }
 
+    actual fun currentAppVersion(): String {
+        val ctx = appContext ?: return "1.2.0"
+        return AppUpdater.currentVersion(ctx)
+    }
+
+    actual suspend fun checkForAppUpdate(): AppUpdateInfo? {
+        val ctx = appContext ?: return null
+        return AppUpdater.checkLatest(ctx)
+    }
+
+    actual suspend fun downloadAndInstallAppUpdate(apkUrl: String, onProgress: (Float) -> Unit): Result<Unit> {
+        val ctx = appContext ?: return Result.failure(IllegalStateException("Contexto Android indisponível."))
+        return AppUpdater.downloadAndInstall(ctx, apkUrl, onProgress)
+    }
+
     actual fun createHttpEngine(): HttpClientEngine = OkHttp.create()
 }

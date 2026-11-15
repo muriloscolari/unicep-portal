@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -32,6 +33,7 @@ import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -52,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import me.muriloscolari.unicep.data.api.ReportCardResponse
 import me.muriloscolari.unicep.data.repo.PortalRepository
+import me.muriloscolari.unicep.platform.AppUpdateInfo
 import me.muriloscolari.unicep.platform.DesignStyle
 import me.muriloscolari.unicep.platform.PlatformBridge
 import me.muriloscolari.unicep.ui.designsystem.LocalDesignStyle
@@ -82,6 +85,57 @@ fun App(initialTab: Int = 0) {
     var selectedSubjectCode by remember { mutableStateOf<String?>(null) }
     var showRiskyAttendanceModal by remember { mutableStateOf(false) }
     var suppressHistoryPush by remember { mutableStateOf(false) }
+
+    var availableUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var updateChecking by remember { mutableStateOf(false) }
+    var updateDownloading by remember { mutableStateOf(false) }
+    var updateProgress by remember { mutableStateOf(0f) }
+    var updateStatusMessage by remember { mutableStateOf<String?>(null) }
+
+    fun checkAppUpdate(manual: Boolean) {
+        if (PlatformBridge.capabilities().isWeb || updateChecking) return
+        scope.launch {
+            updateChecking = true
+            if (manual) updateStatusMessage = null
+            val info = PlatformBridge.checkForAppUpdate()
+            updateChecking = false
+            if (info != null) {
+                availableUpdate = info
+                updateStatusMessage = "Nova versão v${info.latestVersion} disponível no Forgejo."
+                showUpdateDialog = true
+            } else if (manual) {
+                availableUpdate = null
+                updateStatusMessage = "Você já está na versão mais recente (v${PlatformBridge.currentAppVersion()})."
+            }
+        }
+    }
+
+    fun installAppUpdate() {
+        val info = availableUpdate ?: return
+        if (updateDownloading) return
+        scope.launch {
+            updateDownloading = true
+            updateProgress = 0f
+            updateStatusMessage = "Baixando v${info.latestVersion}..."
+            val res = PlatformBridge.downloadAndInstallAppUpdate(info.apkUrl) { progress ->
+                updateProgress = progress
+            }
+            updateDownloading = false
+            res.onSuccess {
+                updateStatusMessage = "Instalador do Android aberto."
+                showUpdateDialog = false
+            }.onFailure { err ->
+                updateStatusMessage = err.message ?: "Não foi possível instalar a atualização."
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        if (!PlatformBridge.capabilities().isWeb) {
+            checkAppUpdate(manual = false)
+        }
+    }
 
     fun navigateToTab(tab: MainTab) {
         selectedSubjectCode = null
@@ -328,6 +382,13 @@ fun App(initialTab: Int = 0) {
                                 onSyncNotifications = { scope.launch { repo.syncNotificationsNow() } },
                                 onMarkAllRead = { scope.launch { repo.markAllNotificationsRead() } },
                                 onTestNotification = { scope.launch { repo.sendTestNotification() } },
+                                availableUpdate = availableUpdate,
+                                updateChecking = updateChecking,
+                                updateDownloading = updateDownloading,
+                                updateProgress = updateProgress,
+                                updateStatusMessage = updateStatusMessage,
+                                onCheckUpdate = { checkAppUpdate(manual = true) },
+                                onInstallUpdate = { installAppUpdate() },
                                 onLogout = { scope.launch { repo.logout() } }
                             )
                         }
@@ -378,6 +439,58 @@ fun App(initialTab: Int = 0) {
                                 )
                             }
                         }
+                    }
+                    if (showUpdateDialog && availableUpdate != null) {
+                        val upd = availableUpdate!!
+                        AlertDialog(
+                            onDismissRequest = { if (!updateDownloading) showUpdateDialog = false },
+                            containerColor = colors.surface,
+                            titleContentColor = colors.textPrimary,
+                            textContentColor = colors.textSecondary,
+                            title = { Text("Atualização disponível (v${upd.latestVersion})", fontWeight = FontWeight.Bold) },
+                            text = {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("Versão instalada: v${upd.currentVersion} → Nova: v${upd.latestVersion}")
+                                    if (upd.releaseName.isNotBlank()) {
+                                        Text(upd.releaseName, color = colors.textPrimary, fontWeight = FontWeight.Medium)
+                                    }
+                                    if (upd.releaseNotes.isNotBlank()) {
+                                        Text(upd.releaseNotes, fontSize = 12.5.sp)
+                                    }
+                                    if (updateDownloading) {
+                                        LinearProgressIndicator(
+                                            progress = { updateProgress.coerceIn(0f, 1f) },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            color = colors.accent,
+                                            trackColor = colors.accentSoft
+                                        )
+                                        Text("Baixando APK (${(updateProgress * 100).toInt()}%)...", fontSize = 12.sp)
+                                    } else if (!updateStatusMessage.isNullOrBlank() && updateStatusMessage!!.contains("Permita", ignoreCase = true)) {
+                                        Text(updateStatusMessage!!, color = colors.orange, fontSize = 12.5.sp)
+                                    }
+                                }
+                            },
+                            confirmButton = {
+                                TextButton(
+                                    onClick = { installAppUpdate() },
+                                    enabled = !updateDownloading
+                                ) {
+                                    Text(
+                                        if (updateDownloading) "Baixando..." else "Atualizar agora",
+                                        color = colors.accent,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(
+                                    onClick = { showUpdateDialog = false },
+                                    enabled = !updateDownloading
+                                ) {
+                                    Text("Depois", color = colors.textSecondary)
+                                }
+                            }
+                        )
                     }
                 }
             }

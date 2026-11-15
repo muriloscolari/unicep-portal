@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -25,6 +26,7 @@ import me.muriloscolari.unicep.data.api.DashboardResponse
 import me.muriloscolari.unicep.data.api.FinanceResponse
 import me.muriloscolari.unicep.data.api.NotificationItem
 import me.muriloscolari.unicep.data.api.ServicesResponse
+import me.muriloscolari.unicep.platform.AppUpdateInfo
 import me.muriloscolari.unicep.platform.DesignStyle
 import me.muriloscolari.unicep.platform.DesignStylePreference
 import me.muriloscolari.unicep.platform.PlatformBridge
@@ -52,6 +54,13 @@ fun CentralScreen(
     onSyncNotifications: () -> Unit,
     onMarkAllRead: () -> Unit,
     onTestNotification: () -> Unit,
+    availableUpdate: AppUpdateInfo? = null,
+    updateChecking: Boolean = false,
+    updateDownloading: Boolean = false,
+    updateProgress: Float = 0f,
+    updateStatusMessage: String? = null,
+    onCheckUpdate: () -> Unit = {},
+    onInstallUpdate: () -> Unit = {},
     onLogout: () -> Unit
 ) {
     val colors = LocalPortalColors.current
@@ -216,6 +225,63 @@ fun CentralScreen(
                             title = link.title,
                             subtitle = link.category.takeIf { it.isNotBlank() },
                             onClick = { onOpenLink(link.path, link.proxy) }
+                        )
+                    }
+                }
+            }
+        }
+
+        if (!capabilities.isWeb) {
+            item {
+                PortalSectionHeader("Atualizações do app")
+                PortalCard(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                            Text("UNICEP Portal Android", color = colors.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                            Text(
+                                "Versão instalada: v${PlatformBridge.currentAppVersion()}",
+                                color = colors.textSecondary,
+                                fontSize = 12.5.sp
+                            )
+                        }
+                        if (availableUpdate != null) {
+                            PortalBadge("v${availableUpdate.latestVersion} disponível", colors.green)
+                        }
+                    }
+                    if (!updateStatusMessage.isNullOrBlank()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(updateStatusMessage, color = colors.textSecondary, fontSize = 12.5.sp)
+                    }
+                    if (updateDownloading) {
+                        Spacer(Modifier.height(10.dp))
+                        LinearProgressIndicator(
+                            progress = { updateProgress.coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = colors.accent,
+                            trackColor = colors.accentSoft
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Baixando atualização (${(updateProgress * 100).toInt()}%)...",
+                            color = colors.textSecondary,
+                            fontSize = 12.sp
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    if (availableUpdate != null) {
+                        PortalPrimaryButton(
+                            text = if (updateDownloading) "Baixando APK..." else "Baixar e instalar v${availableUpdate.latestVersion}",
+                            onClick = onInstallUpdate,
+                            enabled = !updateDownloading
+                        )
+                    } else {
+                        PortalSecondaryButton(
+                            text = if (updateChecking) "Verificando no Forgejo..." else "Verificar atualizações",
+                            onClick = onCheckUpdate
                         )
                     }
                 }

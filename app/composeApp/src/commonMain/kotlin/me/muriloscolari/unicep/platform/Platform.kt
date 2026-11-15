@@ -20,8 +20,21 @@ data class DeviceCapabilities(
     val isWeb: Boolean
 )
 
+data class AppUpdateInfo(
+    val currentVersion: String,
+    val latestVersion: String,
+    val releaseName: String,
+    val releaseNotes: String,
+    val apkUrl: String,
+    val apkSizeBytes: Long,
+    val htmlUrl: String
+)
+
 expect object PlatformBridge {
     fun capabilities(): DeviceCapabilities
+    fun currentAppVersion(): String
+    suspend fun checkForAppUpdate(): AppUpdateInfo?
+    suspend fun downloadAndInstallAppUpdate(apkUrl: String, onProgress: (Float) -> Unit): Result<Unit>
     fun getString(key: String): String?
     fun putString(key: String, value: String)
     fun remove(key: String)

@@ -160,5 +160,12 @@ actual object PlatformBridge {
 
     actual fun setAndroidBackHandler(handler: (() -> Boolean)?) {}
 
+    actual fun currentAppVersion(): String = "web"
+
+    actual suspend fun checkForAppUpdate(): AppUpdateInfo? = null
+
+    actual suspend fun downloadAndInstallAppUpdate(apkUrl: String, onProgress: (Float) -> Unit): Result<Unit> =
+        Result.failure(UnsupportedOperationException("Atualização automática disponível apenas no Android."))
+
     actual fun createHttpEngine(): HttpClientEngine = Js.create()
 }
