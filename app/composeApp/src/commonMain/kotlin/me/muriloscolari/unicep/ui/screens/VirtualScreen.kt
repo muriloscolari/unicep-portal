@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -171,10 +172,11 @@ fun VirtualScreen(
             bottom = appleInsets.calculateBottomPadding() + 24.dp
         )
     } else {
-        PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 104.dp)
+        PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp)
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(colors.background)) {
+    Box(modifier = Modifier.fillMaxSize().background(colors.background), contentAlignment = Alignment.TopCenter) {
+        Box(modifier = Modifier.widthIn(max = 720.dp).fillMaxSize()) {
         if (selectedCourseId != null) {
             val detail = courseDetails[selectedCourseId]
             val fallbackCourse = overview?.courses?.firstOrNull { it.orgUnitId == selectedCourseId }
@@ -226,6 +228,7 @@ fun VirtualScreen(
                 onSelectAnnouncement = onSelectAnnouncement,
                 onOpenWeb = onOpenWeb
             )
+        }
         }
 
         if (renderSheetsInPlace) {

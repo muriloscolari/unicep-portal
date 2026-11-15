@@ -272,47 +272,79 @@ fun LoginScreen(
     val scope = rememberCoroutineScope()
 
     if (style != DesignStyle.APPLE) {
-        var showServerM3 by remember { mutableStateOf(!PlatformBridge.capabilities().isWeb) }
-        LaunchedEffect(showServerM3) {
-            if (showServerM3) {
-                delay(150)
+        val reduceMotion = remember { PlatformBridge.isReduceMotionEnabled() }
+        val shakeOffset = remember { Animatable(0f) }
+
+        LaunchedEffect(error) {
+            if (!error.isNullOrBlank() && !reduceMotion) {
+                listOf(-12f, 12f, -8f, 8f, -4f, 0f).forEach { target ->
+                    shakeOffset.animateTo(target, tween(45))
+                }
+            }
+        }
+        LaunchedEffect(showServer) {
+            if (showServer) {
+                delay(160)
                 scrollState.animateScrollTo(scrollState.maxValue)
             }
         }
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(colors.background)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            colors.background,
+                            colors.accentSoft.copy(alpha = if (colors.isDark) 0.18f else 0.35f),
+                            colors.background
+                        )
+                    )
+                )
                 .systemBarsPadding()
                 .imePadding()
                 .verticalScroll(scrollState)
-                .padding(horizontal = 20.dp, vertical = 24.dp),
+                .padding(horizontal = 20.dp, vertical = 28.dp),
             contentAlignment = Alignment.Center
         ) {
             Column(
                 modifier = Modifier.widthIn(max = 420.dp).fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(64.dp)
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(colors.accent),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(PortalIcons.Academic, contentDescription = null, tint = Color.White, modifier = Modifier.size(34.dp))
-                }
-                Spacer(Modifier.height(16.dp))
-                Text("UNICEP Portal", color = colors.textPrimary, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+                AppIconSquircle(sizeDp = 78, cornerDp = 22)
+                Spacer(Modifier.height(18.dp))
+                Text(
+                    text = "UNICEP Portal",
+                    color = colors.textPrimary,
+                    style = androidx.compose.material3.MaterialTheme.typography.headlineLarge,
+                    textAlign = TextAlign.Center
+                )
                 Spacer(Modifier.height(4.dp))
-                Text("Acesso rápido às notas, boletim e avisos", color = colors.textSecondary, fontSize = 14.sp)
+                Text(
+                    text = "Notas, faltas e avisos num só lugar",
+                    color = colors.textSecondary,
+                    style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center
+                )
                 Spacer(Modifier.height(24.dp))
 
-                PortalCard(modifier = Modifier.fillMaxWidth()) {
+                PortalCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .offset { IntOffset(shakeOffset.value.toInt(), 0) },
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp)
+                ) {
+                    PortalSegmentedControl(
+                        options = perfilLabels,
+                        selectedIndex = perfilIndex,
+                        onSelect = { perfilIndex = it }
+                    )
+                    Spacer(Modifier.height(16.dp))
                     PortalTextField(
                         value = ra,
                         onValueChange = { if (it.length <= 11) ra = it },
-                        label = "RA (Usuário)",
+                        label = "RA (usuário)",
+                        leadingIcon = PortalIcons.Person,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next)
                     )
                     Spacer(Modifier.height(12.dp))
@@ -320,36 +352,89 @@ fun LoginScreen(
                         value = password,
                         onValueChange = { if (it.length <= 8) password = it },
                         label = "Senha do portal",
-                        visualTransformation = PasswordVisualTransformation(),
+                        leadingIcon = PortalIcons.Lock,
+                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
                         keyboardActions = KeyboardActions(onDone = {
                             if (ra.isNotBlank() && password.isNotBlank() && !loading) {
                                 onLogin(serverUrl, ra, password, perfilValues[perfilIndex])
                             }
-                        })
-                    )
-                    Spacer(Modifier.height(14.dp))
-                    PortalSegmentedControl(
-                        options = listOf("Graduação", "Pós-Grad."),
-                        selectedIndex = perfilIndex,
-                        onSelect = { perfilIndex = it }
+                        }),
+                        trailing = {
+                            Icon(
+                                imageVector = if (passwordVisible) PortalIcons.EyeOff else PortalIcons.Eye,
+                                contentDescription = if (passwordVisible) "Ocultar senha" else "Mostrar senha",
+                                tint = colors.textSecondary,
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .pointerHoverIcon(PointerIcon.Hand)
+                                    .clickable { passwordVisible = !passwordVisible }
+                            )
+                        }
                     )
                     Spacer(Modifier.height(12.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth().clickable { showServerM3 = !showServerM3 }.padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Servidor do homelab", color = colors.textSecondary, fontSize = 12.sp)
-                        Text(if (showServerM3) "Ocultar" else "Editar", color = colors.accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    if (!error.isNullOrBlank()) {
+                        Spacer(Modifier.height(14.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(colors.red.copy(alpha = 0.12f))
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = PortalIcons.Warning,
+                                contentDescription = null,
+                                tint = colors.red,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = error,
+                                color = colors.red,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
                     }
-                    AnimatedVisibility(visible = showServerM3) {
-                        Column {
-                            Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(18.dp))
+                    PortalPrimaryButton(
+                        text = "Entrar",
+                        onClick = { onLogin(serverUrl, ra, password, perfilValues[perfilIndex]) },
+                        enabled = ra.isNotBlank() && password.isNotBlank(),
+                        loading = loading,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = "Sua sessão fica salva com segurança neste dispositivo.",
+                        color = colors.textSecondary,
+                        fontSize = 12.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                if (!PlatformBridge.capabilities().isWeb) {
+                    Spacer(Modifier.height(14.dp))
+                    PortalTextButton(
+                        text = if (showServer) "Ocultar configurações avançadas" else "Configurações avançadas",
+                        color = colors.textSecondary,
+                        onClick = { showServer = !showServer }
+                    )
+                    AnimatedVisibility(visible = showServer) {
+                        PortalCard(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(14.dp)
+                        ) {
                             PortalTextField(
                                 value = serverUrl,
                                 onValueChange = { serverUrl = it },
-                                label = "URL do Backend",
+                                label = "URL do servidor",
+                                leadingIcon = PortalIcons.Globe,
                                 modifier = Modifier.onFocusChanged { focusState ->
                                     if (focusState.isFocused) {
                                         scope.launch {
@@ -367,18 +452,6 @@ fun LoginScreen(
                             )
                         }
                     }
-                    if (!error.isNullOrBlank()) {
-                        Spacer(Modifier.height(12.dp))
-                        Text(error, color = colors.red, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                    }
-                    Spacer(Modifier.height(18.dp))
-                    PortalPrimaryButton(
-                        text = "Entrar e Salvar Sessão",
-                        onClick = { onLogin(serverUrl, ra, password, perfilValues[perfilIndex]) },
-                        enabled = ra.isNotBlank() && password.isNotBlank(),
-                        loading = loading,
-                        modifier = Modifier.fillMaxWidth()
-                    )
                 }
             }
         }
