@@ -95,11 +95,11 @@ fun GlassSurface(
             ambientResponse(if (c.isDark) 0.14f else 0.22f)
             edgeSoftness(1.2.dp)
             pressed {
-                lightingIntensity(0.85f)
+                lightingIntensity(0f)
                 whitePointDelta(if (c.isDark) 0.08f else -0.04f)
             }
             hovered {
-                lightingIntensity(0.65f)
+                lightingIntensity(0f)
             }
         }
     }
