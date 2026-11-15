@@ -19,6 +19,7 @@ type Config struct {
 	DataDir             string
 	WebDir              string
 	PortalBaseURL       string
+	D2LBaseURL          string
 	PollIntervalMinutes int
 	NotifyAbsences      bool
 	RequireSecret       bool
@@ -84,6 +85,7 @@ func LoadFromLookup(lookup func(string) (string, bool)) (Config, error) {
 		DataDir:             getOr("DATA_DIR", "./data"),
 		WebDir:              get("WEB_DIR"),
 		PortalBaseURL:       strings.TrimRight(getOr("PORTAL_BASE_URL", "https://cdseducacional.com.br"), "/"),
+		D2LBaseURL:          strings.TrimRight(getOr("D2L_BASE_URL", "https://salavirtual.unicep.edu.br"), "/"),
 		PollIntervalMinutes: pollMin,
 		NotifyAbsences:      parseBool(get("NOTIFY_ABSENCES"), true),
 		RequireSecret:       requireSecret,

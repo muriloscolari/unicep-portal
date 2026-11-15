@@ -21,6 +21,12 @@ import me.muriloscolari.unicep.platform.PlatformBridge
 class UnauthorizedException(message: String = "Sessão expirada") : Exception(message)
 class ApiException(message: String) : Exception(message)
 
+class DownloadedFilePayload(
+    val bytes: ByteArray,
+    val contentType: String,
+    val suggestedFileName: String
+)
+
 class PortalApiClient {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -128,6 +134,101 @@ class PortalApiClient {
 
     fun buildProxyUrlWithTicket(baseUrl: String, ticket: String, path: String): String =
         "${cleanBase(baseUrl)}/api/proxy?path=${path.encodeURLParameter()}&ticket=${ticket.encodeURLParameter()}"
+
+    suspend fun virtualOverview(baseUrl: String, token: String): VirtualOverviewResponse =
+        getAuthed(baseUrl, "/api/d2l/overview", token)
+
+    suspend fun virtualCourseDetail(baseUrl: String, token: String, orgUnitId: Long): VirtualCourseDetailResponse =
+        getAuthed(baseUrl, "/api/d2l/courses/$orgUnitId", token)
+
+    suspend fun createD2LTicket(baseUrl: String, token: String, path: String): ProxyTicketResponse {
+        val resp = client.post("${cleanBase(baseUrl)}/api/d2l/ticket") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody(ProxyTicketRequest(path))
+        }
+        return parseOrThrow(resp)
+    }
+
+    fun buildD2LFileUrlWithTicket(
+        baseUrl: String,
+        ticket: String,
+        path: String,
+        download: Boolean = false,
+        fileName: String = ""
+    ): String {
+        val base = "${cleanBase(baseUrl)}/api/d2l/file?path=${path.encodeURLParameter()}&ticket=${ticket.encodeURLParameter()}"
+        if (!download) return base
+        val namePart = fileName.trim().takeIf { it.isNotEmpty() }?.let { "&name=${it.encodeURLParameter()}" } ?: ""
+        return "$base&download=1$namePart"
+    }
+
+    suspend fun downloadFileBytes(url: String): DownloadedFilePayload {
+        val resp = client.get(url)
+        if (resp.status == HttpStatusCode.Unauthorized) {
+            throw UnauthorizedException()
+        }
+        if (resp.status.value >= 400) {
+            val msg = runCatching { resp.body<ErrorResponse>().error }.getOrNull()
+                ?: "Erro ao baixar arquivo (HTTP ${resp.status.value})"
+            throw ApiException(msg)
+        }
+        val bytes = resp.body<ByteArray>()
+        val contentType = resp.headers[HttpHeaders.ContentType]
+            ?.substringBefore(';')
+            ?.trim()
+            ?.lowercase()
+            .orEmpty()
+        val disposition = resp.headers[HttpHeaders.ContentDisposition]
+        return DownloadedFilePayload(
+            bytes = bytes,
+            contentType = contentType,
+            suggestedFileName = parseDispositionFilename(disposition)
+        )
+    }
+
+    private fun parseDispositionFilename(disposition: String?): String {
+        if (disposition.isNullOrBlank()) return ""
+        val utf8Match = Regex("""filename\*\s*=\s*UTF-8''([^;\r\n]+)""", RegexOption.IGNORE_CASE)
+            .find(disposition)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.trim()
+        if (!utf8Match.isNullOrBlank()) {
+            return decodePercentUtf8(utf8Match)
+        }
+        val quoted = Regex("""filename\s*=\s*"([^"\r\n]+)"""", RegexOption.IGNORE_CASE)
+            .find(disposition)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.trim()
+        if (!quoted.isNullOrBlank()) return quoted
+        return Regex("""filename\s*=\s*([^;\r\n]+)""", RegexOption.IGNORE_CASE)
+            .find(disposition)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.trim()
+            ?.trim('"')
+            .orEmpty()
+    }
+
+    private fun decodePercentUtf8(input: String): String {
+        val bytes = ArrayList<Byte>(input.length)
+        var i = 0
+        while (i < input.length) {
+            if (input[i] == '%' && i + 2 < input.length) {
+                val hex = input.substring(i + 1, i + 3).toIntOrNull(16)
+                if (hex != null) {
+                    bytes.add(hex.toByte())
+                    i += 3
+                    continue
+                }
+            }
+            bytes.addAll(input[i].toString().encodeToByteArray().toList())
+            i++
+        }
+        return bytes.toByteArray().decodeToString()
+    }
 
     private suspend inline fun <reified T> getAuthed(baseUrl: String, path: String, token: String): T {
         val resp = client.get("${cleanBase(baseUrl)}$path") {

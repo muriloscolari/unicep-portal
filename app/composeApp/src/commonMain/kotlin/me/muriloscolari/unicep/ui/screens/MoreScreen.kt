@@ -24,10 +24,16 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,6 +52,9 @@ import me.muriloscolari.unicep.data.api.DashboardResponse
 import me.muriloscolari.unicep.data.api.FinanceResponse
 import me.muriloscolari.unicep.data.api.NotificationItem
 import me.muriloscolari.unicep.data.api.ServicesResponse
+import me.muriloscolari.unicep.data.repo.DEFAULT_VIRTUAL_DEADLINE_LEAD_HOURS
+import me.muriloscolari.unicep.data.repo.PRESET_VIRTUAL_DEADLINE_HOURS
+import me.muriloscolari.unicep.data.repo.formatLeadHoursLabel
 import me.muriloscolari.unicep.platform.AppUpdateInfo
 import me.muriloscolari.unicep.platform.DesignStyle
 import me.muriloscolari.unicep.platform.DesignStylePreference
@@ -93,6 +102,14 @@ fun CentralScreen(
     onTestNotification: () -> Unit,
     freqAlertThreshold: Int = 80,
     onSelectFreqAlertThreshold: (Int) -> Unit = {},
+    virtualNotifyNewAssignment: Boolean = true,
+    onToggleVirtualNotifyNewAssignment: (Boolean) -> Unit = {},
+    virtualDeadlineLeadHours: List<Int> = DEFAULT_VIRTUAL_DEADLINE_LEAD_HOURS,
+    onToggleVirtualDeadlineLeadHour: (Int) -> Unit = {},
+    onAddCustomVirtualDeadlineHour: (Int) -> Unit = {},
+    downloadFolderLabel: String = PlatformBridge.getDownloadFolderLabel(),
+    onPickDownloadFolder: () -> Unit = {},
+    onResetDownloadFolder: () -> Unit = {},
     availableUpdate: AppUpdateInfo? = null,
     updateChecking: Boolean = false,
     updateDownloading: Boolean = false,
@@ -203,6 +220,22 @@ fun CentralScreen(
                         selectedThreshold = freqAlertThreshold,
                         onSelect = onSelectFreqAlertThreshold
                     )
+                    PortalDivider(Modifier.padding(start = 16.dp))
+                    VirtualAlertsSettingsRow(
+                        notifyNewAssignment = virtualNotifyNewAssignment,
+                        onToggleNotifyNewAssignment = onToggleVirtualNotifyNewAssignment,
+                        selectedLeadHours = virtualDeadlineLeadHours,
+                        onToggleLeadHour = onToggleVirtualDeadlineLeadHour,
+                        onAddCustomLeadHour = onAddCustomVirtualDeadlineHour
+                    )
+                    if (PlatformBridge.supportsCustomDownloadFolder()) {
+                        PortalDivider(Modifier.padding(start = 16.dp))
+                        DownloadFolderSettingsRow(
+                            folderLabel = downloadFolderLabel,
+                            onPickFolder = onPickDownloadFolder,
+                            onResetFolder = onResetDownloadFolder
+                        )
+                    }
                 }
             }
 
@@ -232,8 +265,16 @@ fun CentralScreen(
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            text = "${n.field}: ${if (n.oldValue.isBlank()) "—" else n.oldValue} → ${n.newValue}",
-                            color = if (isGrade) colors.green else colors.orange,
+                            text = if (n.kind == "d2l_assignment") {
+                                "${n.field} • ${n.newValue}"
+                            } else {
+                                "${n.field}: ${if (n.oldValue.isBlank()) "—" else n.oldValue} → ${n.newValue}"
+                            },
+                            color = when (n.kind) {
+                                "grade" -> colors.green
+                                "d2l_assignment" -> colors.accent
+                                else -> colors.orange
+                            },
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 13.5.sp
                         )
@@ -507,6 +548,22 @@ fun CentralScreen(
                                 selectedThreshold = freqAlertThreshold,
                                 onSelect = onSelectFreqAlertThreshold
                             )
+                            PortalDivider(Modifier.padding(start = 58.dp))
+                            VirtualAlertsSettingsRow(
+                                notifyNewAssignment = virtualNotifyNewAssignment,
+                                onToggleNotifyNewAssignment = onToggleVirtualNotifyNewAssignment,
+                                selectedLeadHours = virtualDeadlineLeadHours,
+                                onToggleLeadHour = onToggleVirtualDeadlineLeadHour,
+                                onAddCustomLeadHour = onAddCustomVirtualDeadlineHour
+                            )
+                            if (PlatformBridge.supportsCustomDownloadFolder()) {
+                                PortalDivider(Modifier.padding(start = 58.dp))
+                                DownloadFolderSettingsRow(
+                                    folderLabel = downloadFolderLabel,
+                                    onPickFolder = onPickDownloadFolder,
+                                    onResetFolder = onResetDownloadFolder
+                                )
+                            }
                         }
                         PortalSectionFooter(
                             text = if (capabilities.isWeb) {
@@ -886,6 +943,260 @@ private fun FrequencyThresholdRow(
                         color = if (selected) Color.White else colors.textPrimary,
                         style = appleType.footnote,
                         fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VirtualAlertsSettingsRow(
+    notifyNewAssignment: Boolean,
+    onToggleNotifyNewAssignment: (Boolean) -> Unit,
+    selectedLeadHours: List<Int>,
+    onToggleLeadHour: (Int) -> Unit,
+    onAddCustomLeadHour: (Int) -> Unit
+) {
+    val colors = LocalPortalColors.current
+    val appleType = LocalAppleTypography.current
+    var showCustomDialog by remember { mutableStateOf(false) }
+    var customHoursInput by remember { mutableStateOf("") }
+
+    val allHourOptions = remember(selectedLeadHours) {
+        (PRESET_VIRTUAL_DEADLINE_HOURS + selectedLeadHours)
+            .filter { it in 1..336 }
+            .distinct()
+            .sorted()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                Text(
+                    text = "Sala Virtual · Novas atividades",
+                    color = colors.textPrimary,
+                    style = appleType.body,
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = if (notifyNewAssignment) {
+                        "Notificar quando o professor postar nova atividade"
+                    } else {
+                        "Alertas de novas atividades desativados"
+                    },
+                    color = colors.textSecondary,
+                    style = appleType.footnote
+                )
+            }
+            Switch(
+                checked = notifyNewAssignment,
+                onCheckedChange = {
+                    PlatformBridge.performHaptic(PortalHapticType.SELECTION)
+                    onToggleNotifyNewAssignment(it)
+                }
+            )
+        }
+
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                text = "Lembrete antes do prazo (não enviadas)",
+                color = colors.textPrimary,
+                style = appleType.body,
+                fontWeight = FontWeight.Medium
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = if (selectedLeadHours.isEmpty()) {
+                    "Nenhum lembrete de prazo selecionado"
+                } else {
+                    "Avisar " + selectedLeadHours.sorted().joinToString(", ") { formatLeadHoursLabel(it) } + " antes"
+                },
+                color = colors.textSecondary,
+                style = appleType.footnote
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                allHourOptions.forEach { hours ->
+                    val selected = selectedLeadHours.contains(hours)
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (selected) colors.accent else colors.surfaceSecondary)
+                            .clickable {
+                                PlatformBridge.performHaptic(PortalHapticType.SELECTION)
+                                onToggleLeadHour(hours)
+                            }
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = formatLeadHoursLabel(hours),
+                            color = if (selected) Color.White else colors.textPrimary,
+                            style = appleType.footnote,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
+                        )
+                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(colors.surfaceSecondary)
+                        .clickable {
+                            customHoursInput = ""
+                            showCustomDialog = true
+                        }
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "+ Outro",
+                        color = colors.accent,
+                        style = appleType.footnote,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+    }
+
+    if (showCustomDialog) {
+        val parsed = customHoursInput.trim().toIntOrNull()
+        val isValid = parsed != null && parsed in 1..336
+        AlertDialog(
+            onDismissRequest = { showCustomDialog = false },
+            title = { Text("Lembrete personalizado") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Digite quantas horas antes do prazo você quer ser avisado (de 1 a 336 horas / 14 dias).",
+                        style = appleType.footnote,
+                        color = colors.textSecondary
+                    )
+                    OutlinedTextField(
+                        value = customHoursInput,
+                        onValueChange = { input ->
+                            customHoursInput = input.filter { it.isDigit() }.take(3)
+                        },
+                        label = { Text("Horas de antecedência") },
+                        placeholder = { Text("Ex: 36") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = isValid,
+                    onClick = {
+                        if (parsed != null) {
+                            onAddCustomLeadHour(parsed)
+                        }
+                        showCustomDialog = false
+                    }
+                ) {
+                    Text("Adicionar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCustomDialog = false }) {
+                    Text("Cancelar")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun DownloadFolderSettingsRow(
+    folderLabel: String,
+    onPickFolder: () -> Unit,
+    onResetFolder: () -> Unit
+) {
+    val colors = LocalPortalColors.current
+    val appleType = LocalAppleTypography.current
+    val isCustom = folderLabel.isNotBlank() && folderLabel != "Downloads/UnicepPortal"
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+    ) {
+        Text(
+            text = "Pasta de downloads (Sala Virtual)",
+            color = colors.textPrimary,
+            style = appleType.body,
+            fontWeight = FontWeight.Medium
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = "Salva automaticamente em: $folderLabel/<Disciplina>/",
+            color = colors.textSecondary,
+            style = appleType.footnote
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(colors.accent)
+                    .clickable {
+                        PlatformBridge.performHaptic(PortalHapticType.SELECTION)
+                        onPickFolder()
+                    }
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Icon(
+                        imageVector = PortalIcons.Folder,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Text(
+                        text = if (isCustom) "Alterar pasta" else "Escolher pasta",
+                        color = Color.White,
+                        style = appleType.footnote,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+            if (isCustom) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(colors.surfaceSecondary)
+                        .clickable {
+                            PlatformBridge.performHaptic(PortalHapticType.SELECTION)
+                            onResetFolder()
+                        }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Usar padrão",
+                        color = colors.textPrimary,
+                        style = appleType.footnote,
+                        fontWeight = FontWeight.Medium
                     )
                 }
             }

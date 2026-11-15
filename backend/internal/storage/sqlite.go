@@ -116,6 +116,12 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 
 CREATE INDEX IF NOT EXISTS idx_notifications_ra_created ON notifications(ra, id DESC);
+
+CREATE TABLE IF NOT EXISTS d2l_snapshots (
+	ra TEXT PRIMARY KEY,
+	assignments_json TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
 `
 	if _, err := db.Exec(schema); err != nil {
 		return err
@@ -330,4 +336,27 @@ func (s *Store) MarkNotificationsRead(ra string, ids []int64) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// GetD2LSnapshot returns the stored JSON array of D2L assignments for ra (empty if none).
+func (s *Store) GetD2LSnapshot(ra string) (string, error) {
+	var raw string
+	err := s.db.QueryRow(`SELECT assignments_json FROM d2l_snapshots WHERE ra = ?`, ra).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return raw, err
+}
+
+// SaveD2LSnapshot stores the latest JSON array of D2L assignments for ra.
+func (s *Store) SaveD2LSnapshot(ra, assignmentsJSON string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.Exec(`
+INSERT INTO d2l_snapshots (ra, assignments_json, updated_at)
+VALUES (?, ?, ?)
+ON CONFLICT(ra) DO UPDATE SET
+	assignments_json = excluded.assignments_json,
+	updated_at = excluded.updated_at
+`, ra, assignmentsJSON, now)
+	return err
 }

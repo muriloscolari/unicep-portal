@@ -1,5 +1,6 @@
 package me.muriloscolari.unicep.platform
 
+import androidx.compose.runtime.Composable
 import io.ktor.client.engine.HttpClientEngine
 
 enum class DesignStylePreference(val label: String) {
@@ -74,7 +75,7 @@ expect object PlatformBridge {
     fun scheduleGradeSync()
     fun cancelGradeSync()
     fun requestNotificationPermissionIfNeeded()
-    fun postSystemNotification(id: Int, title: String, body: String, openTab: Int = 2): Boolean
+    fun postSystemNotification(id: Int, title: String, body: String, openTab: Int = 3): Boolean
     fun initNavigationHistory(initialRoute: String)
     fun pushNavigationRoute(route: String)
     fun setPopRouteListener(listener: (String) -> Unit)
@@ -84,4 +85,29 @@ expect object PlatformBridge {
     fun createHttpEngine(): HttpClientEngine
     fun currentTimeMillis(): Long
     fun isReduceMotionEnabled(): Boolean
+    fun supportsInAppDocumentViewer(): Boolean
+    fun supportsCustomDownloadFolder(): Boolean
+    fun getDownloadFolderLabel(): String
+    suspend fun pickDownloadFolder(): String?
+    fun clearDownloadFolder()
+    fun saveDownloadedFile(
+        courseName: String,
+        fileName: String,
+        mimeType: String,
+        bytes: ByteArray
+    ): Result<String>
+    fun triggerBrowserDownload(url: String, fileName: String)
 }
+
+@Composable
+expect fun PlatformDocumentViewer(
+    title: String,
+    courseName: String,
+    fileName: String,
+    mimeType: String,
+    bytes: ByteArray?,
+    fallbackUrl: String,
+    downloading: Boolean,
+    onDownload: () -> Unit,
+    onClose: () -> Unit
+)

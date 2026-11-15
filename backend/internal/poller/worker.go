@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"unicep-portal/internal/crypto"
+	"unicep-portal/internal/d2l"
 	"unicep-portal/internal/portal"
 	"unicep-portal/internal/storage"
 )
@@ -18,16 +20,18 @@ type Worker struct {
 	store          *storage.Store
 	crypto         *crypto.Service
 	portal         *portal.Manager
+	d2l            *d2l.Manager
 	interval       time.Duration
 	notifyAbsences bool
 }
 
-// NewWorker creates a background grade poller.
-func NewWorker(store *storage.Store, cry *crypto.Service, pm *portal.Manager, interval time.Duration, notifyAbsences bool) *Worker {
+// NewWorker creates a background grade and virtual-assignment poller.
+func NewWorker(store *storage.Store, cry *crypto.Service, pm *portal.Manager, dm *d2l.Manager, interval time.Duration, notifyAbsences bool) *Worker {
 	return &Worker{
 		store:          store,
 		crypto:         cry,
 		portal:         pm,
+		d2l:            dm,
 		interval:       interval,
 		notifyAbsences: notifyAbsences,
 	}
@@ -148,7 +152,87 @@ func (w *Worker) SyncUser(ctx context.Context, ra string, seedOnly bool) (int, e
 	}); err != nil {
 		return created, err
 	}
+
+	if d2lCreated, d2lErr := w.syncD2LAssignments(ctx, ra, seedOnly); d2lErr != nil {
+		log.Printf("poller: sync D2L %s error: %v", ra, d2lErr)
+	} else {
+		created += d2lCreated
+	}
 	return created, nil
+}
+
+func (w *Worker) syncD2LAssignments(ctx context.Context, ra string, seedOnly bool) (int, error) {
+	if w.d2l == nil {
+		return 0, nil
+	}
+	ov, err := w.d2l.GetOverview(ctx, ra)
+	if err != nil {
+		return 0, err
+	}
+	currBytes, _ := json.Marshal(ov.UpcomingAssignments)
+	prevJSON, err := w.store.GetD2LSnapshot(ra)
+	if err != nil {
+		return 0, err
+	}
+	if prevJSON == "" {
+		if err := w.store.SaveD2LSnapshot(ra, string(currBytes)); err != nil {
+			return 0, err
+		}
+		return 0, nil
+	}
+	if seedOnly {
+		return 0, nil
+	}
+
+	var prev []d2l.AssignmentItem
+	_ = json.Unmarshal([]byte(prevJSON), &prev)
+	events := DiffD2LAssignments(ra, prev, ov.UpcomingAssignments)
+	created := 0
+	for _, ev := range events {
+		if _, err := w.store.InsertNotification(ev); err == nil {
+			created++
+		}
+	}
+	if err := w.store.SaveD2LSnapshot(ra, string(currBytes)); err != nil {
+		return created, err
+	}
+	return created, nil
+}
+
+// DiffD2LAssignments compares previous and current D2L assignments and emits notifications for newly posted non-expired items.
+func DiffD2LAssignments(ra string, prev, curr []d2l.AssignmentItem) []storage.Notification {
+	seen := make(map[string]struct{}, len(prev))
+	for _, item := range prev {
+		seen[fmt.Sprintf("%d:%d", item.OrgUnitID, item.ID)] = struct{}{}
+	}
+	brt := time.FixedZone("BRT", -3*3600)
+	var out []storage.Notification
+	for _, item := range curr {
+		if item.Status == "expired" {
+			continue
+		}
+		key := fmt.Sprintf("%d:%d", item.OrgUnitID, item.ID)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		dueLabel := "Nova atividade postada"
+		if item.DueAtMillis > 0 {
+			dueLabel = "Prazo: " + time.UnixMilli(item.DueAtMillis).In(brt).Format("02/01 às 15:04")
+		} else if trimmed := strings.TrimSpace(item.DueDate); trimmed != "" {
+			dueLabel = "Prazo: " + trimmed
+		}
+		out = append(out, storage.Notification{
+			RA:             ra,
+			PeriodKey:      fmt.Sprintf("%d", item.OrgUnitID),
+			DisciplineCode: key,
+			DisciplineName: item.OrgUnitName,
+			Field:          item.Name,
+			OldValue:       "",
+			NewValue:       dueLabel,
+			Kind:           "d2l_assignment",
+		})
+	}
+	return out
 }
 
 // DiffSnapshots compares previous and current grades/report cards and returns notification records.

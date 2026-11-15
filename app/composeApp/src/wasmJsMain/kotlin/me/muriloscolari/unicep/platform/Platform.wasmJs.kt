@@ -2,6 +2,7 @@
 
 package me.muriloscolari.unicep.platform
 
+import androidx.compose.runtime.Composable
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.js.Js
 import kotlinx.browser.window
@@ -376,6 +377,73 @@ private fun jsReadCurrentRoute(): String = js(
     }"""
 )
 
+private fun jsTriggerAnchorDownload(url: String, fileName: String): Boolean = js(
+    """(() => {
+        try {
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = fileName || 'arquivo';
+            a.rel = 'noopener noreferrer';
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(function() {
+                try { document.body.removeChild(a); } catch (e) {}
+            }, 250);
+            return true;
+        } catch (e) {
+            return false;
+        }
+    })()"""
+)
+
+private fun jsDownloadBase64Blob(base64: String, mimeType: String, fileName: String): Boolean = js(
+    """(() => {
+        try {
+            var bin = atob(base64);
+            var len = bin.length;
+            var bytes = new Uint8Array(len);
+            for (var i = 0; i < len; i++) {
+                bytes[i] = bin.charCodeAt(i);
+            }
+            var blob = new Blob([bytes], { type: mimeType || 'application/octet-stream' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = fileName || 'arquivo';
+            a.rel = 'noopener noreferrer';
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(function() {
+                try { URL.revokeObjectURL(url); } catch (e) {}
+                try { document.body.removeChild(a); } catch (e) {}
+            }, 1000);
+            return true;
+        } catch (e) {
+            return false;
+        }
+    })()"""
+)
+
+private const val BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+private fun encodeBytesToBase64(bytes: ByteArray): String {
+    val out = StringBuilder((bytes.size + 2) / 3 * 4)
+    var i = 0
+    while (i < bytes.size) {
+        val b0 = bytes[i].toInt() and 0xFF
+        val b1 = if (i + 1 < bytes.size) bytes[i + 1].toInt() and 0xFF else 0
+        val b2 = if (i + 2 < bytes.size) bytes[i + 2].toInt() and 0xFF else 0
+        out.append(BASE64_ALPHABET[b0 shr 2])
+        out.append(BASE64_ALPHABET[((b0 and 0x03) shl 4) or (b1 shr 4)])
+        out.append(if (i + 1 < bytes.size) BASE64_ALPHABET[((b1 and 0x0F) shl 2) or (b2 shr 6)] else '=')
+        out.append(if (i + 2 < bytes.size) BASE64_ALPHABET[b2 and 0x3F] else '=')
+        i += 3
+    }
+    return out.toString()
+}
+
 actual object PlatformBridge {
     private var popListener: ((String) -> Unit)? = null
     private var historyInitialized = false
@@ -501,4 +569,60 @@ actual object PlatformBridge {
     actual fun currentTimeMillis(): Long = jsCurrentTimeMillis().toLong()
 
     actual fun isReduceMotionEnabled(): Boolean = jsPrefersReducedMotion()
+
+    actual fun supportsInAppDocumentViewer(): Boolean = false
+
+    actual fun supportsCustomDownloadFolder(): Boolean = false
+
+    actual fun getDownloadFolderLabel(): String = "Pasta Downloads do navegador"
+
+    actual suspend fun pickDownloadFolder(): String? = null
+
+    actual fun clearDownloadFolder() {}
+
+    actual fun saveDownloadedFile(
+        courseName: String,
+        fileName: String,
+        mimeType: String,
+        bytes: ByteArray
+    ): Result<String> {
+        val safeCourse = courseName.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().take(48)
+        val safeFile = fileName.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().ifBlank { "arquivo" }
+        val finalName = if (safeCourse.isNotBlank()) "$safeCourse - $safeFile" else safeFile
+        val ok = jsDownloadBase64Blob(
+            base64 = encodeBytesToBase64(bytes),
+            mimeType = mimeType.ifBlank { "application/octet-stream" },
+            fileName = finalName
+        )
+        return if (ok) {
+            Result.success("Downloads do navegador ($finalName)")
+        } else {
+            Result.failure(IllegalStateException("Não foi possível iniciar o download no navegador."))
+        }
+    }
+
+    actual fun triggerBrowserDownload(url: String, fileName: String) {
+        val clean = url.trim()
+        if (!clean.startsWith("https://", ignoreCase = true) && !clean.startsWith("http://", ignoreCase = true)) {
+            return
+        }
+        val safeFile = fileName.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().ifBlank { "arquivo" }
+        if (!jsTriggerAnchorDownload(clean, safeFile)) {
+            openExternalUrl(clean)
+        }
+    }
+}
+
+@Composable
+actual fun PlatformDocumentViewer(
+    title: String,
+    courseName: String,
+    fileName: String,
+    mimeType: String,
+    bytes: ByteArray?,
+    fallbackUrl: String,
+    downloading: Boolean,
+    onDownload: () -> Unit,
+    onClose: () -> Unit
+) {
 }

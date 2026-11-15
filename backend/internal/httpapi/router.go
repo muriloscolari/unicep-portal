@@ -14,12 +14,14 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"unicep-portal/internal/config"
 	"unicep-portal/internal/crypto"
+	"unicep-portal/internal/d2l"
 	"unicep-portal/internal/poller"
 	"unicep-portal/internal/portal"
 	"unicep-portal/internal/storage"
@@ -43,24 +45,26 @@ var allowedProfiles = map[string]struct{}{
 
 // Server exposes the hardened BFF JSON API and optional static Compose Web assets.
 type Server struct {
-	cfg           config.Config
-	store         *storage.Store
-	crypto        *crypto.Service
-	portal        *portal.Manager
-	worker        *poller.Worker
-	loginIPLim    *rateLimiter
-	loginRALim    *rateLimiter
-	actionRALim   *rateLimiter
+	cfg            config.Config
+	store          *storage.Store
+	crypto         *crypto.Service
+	portal         *portal.Manager
+	d2l            *d2l.Manager
+	worker         *poller.Worker
+	loginIPLim     *rateLimiter
+	loginRALim     *rateLimiter
+	actionRALim    *rateLimiter
 	trustedProxies []*net.IPNet
 }
 
 // NewServer constructs the HTTP API router and security middleware chain.
-func NewServer(cfg config.Config, store *storage.Store, cry *crypto.Service, pm *portal.Manager, worker *poller.Worker) http.Handler {
+func NewServer(cfg config.Config, store *storage.Store, cry *crypto.Service, pm *portal.Manager, worker *poller.Worker, d2lMgr *d2l.Manager) http.Handler {
 	s := &Server{
 		cfg:            cfg,
 		store:          store,
 		crypto:         cry,
 		portal:         pm,
+		d2l:            d2lMgr,
 		worker:         worker,
 		loginIPLim:     newRateLimiter(10, 5*time.Minute),
 		loginRALim:     newRateLimiter(6, 5*time.Minute),
@@ -72,6 +76,7 @@ func NewServer(cfg config.Config, store *storage.Store, cry *crypto.Service, pm 
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
 	mux.HandleFunc("GET /api/proxy", s.handleProxy)
+	mux.HandleFunc("GET /api/d2l/file", s.handleD2LFile)
 
 	// Authenticated routes (strictly Bearer JWT + active token_version)
 	mux.Handle("POST /api/auth/logout", s.requireAuth(http.HandlerFunc(s.handleLogout)))
@@ -86,6 +91,9 @@ func NewServer(cfg config.Config, store *storage.Store, cry *crypto.Service, pm 
 	mux.Handle("GET /api/services", s.requireAuth(http.HandlerFunc(s.handleServices)))
 	mux.Handle("POST /api/services/ava-sso", s.requireAuth(http.HandlerFunc(s.handleAvaSSO)))
 	mux.Handle("POST /api/proxy/ticket", s.requireAuth(http.HandlerFunc(s.handleProxyTicket)))
+	mux.Handle("GET /api/d2l/overview", s.requireAuth(http.HandlerFunc(s.handleD2LOverview)))
+	mux.Handle("GET /api/d2l/courses/{ou}", s.requireAuth(http.HandlerFunc(s.handleD2LCourseDetail)))
+	mux.Handle("POST /api/d2l/ticket", s.requireAuth(http.HandlerFunc(s.handleD2LTicket)))
 	mux.Handle("GET /api/notifications", s.requireAuth(http.HandlerFunc(s.handleListNotifications)))
 	mux.Handle("POST /api/notifications/read", s.requireAuth(http.HandlerFunc(s.handleMarkNotificationsRead)))
 	mux.Handle("POST /api/notifications/sync", s.requireAuth(http.HandlerFunc(s.handleSyncNow)))
@@ -109,7 +117,7 @@ func (s *Server) securityHeadersMiddleware(next http.Handler) http.Handler {
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
 		h.Set("Cross-Origin-Opener-Policy", "same-origin")
-		if r.URL.Path != "/api/proxy" {
+		if r.URL.Path != "/api/proxy" && r.URL.Path != "/api/d2l/file" {
 			h.Set("Content-Security-Policy", appCSP)
 		}
 		next.ServeHTTP(w, r)
@@ -287,6 +295,9 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.portal.EvictSession(claims.RA)
+	if s.d2l != nil {
+		s.d2l.EvictSession(claims.RA)
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -596,27 +607,9 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var ra string
-	if bearer := extractBearer(r); bearer != "" {
-		claims, err := s.crypto.VerifyToken(bearer)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, "sessão expirada")
-			return
-		}
-		tv, err := s.store.GetTokenVersion(claims.RA)
-		if err != nil || tv == 0 || claims.TokenVersion != tv {
-			writeError(w, http.StatusUnauthorized, "sessão revogada ou expirada")
-			return
-		}
-		ra = claims.RA
-	} else {
-		ticket := strings.TrimSpace(r.URL.Query().Get("ticket"))
-		var err error
-		ra, err = s.crypto.ConsumeProxyTicket(ticket, relPath)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, "ticket de acesso ausente ou expirado")
-			return
-		}
+	ra, ok := s.authenticateProxyRequest(w, r, relPath)
+	if !ok {
+		return
 	}
 
 	raw, ct, _, _, err := s.portal.FetchRaw(r.Context(), ra, relPath)
@@ -625,13 +618,75 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	writeSandboxedFileResponse(w, raw, ct, "", false, "")
+}
+
+func (s *Server) authenticateProxyRequest(w http.ResponseWriter, r *http.Request, ticketKey string) (string, bool) {
+	if bearer := extractBearer(r); bearer != "" {
+		claims, err := s.crypto.VerifyToken(bearer)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "sessão expirada")
+			return "", false
+		}
+		tv, err := s.store.GetTokenVersion(claims.RA)
+		if err != nil || tv == 0 || claims.TokenVersion != tv {
+			writeError(w, http.StatusUnauthorized, "sessão revogada ou expirada")
+			return "", false
+		}
+		return claims.RA, true
+	}
+	ticket := strings.TrimSpace(r.URL.Query().Get("ticket"))
+	ra, err := s.crypto.ConsumeProxyTicket(ticket, ticketKey)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "ticket de acesso ausente ou expirado")
+		return "", false
+	}
+	return ra, true
+}
+
+func sanitizeDownloadFilename(raw string) string {
+	cleaned := strings.TrimSpace(raw)
+	if cleaned == "" {
+		return ""
+	}
+	cleaned = path.Base(strings.ReplaceAll(cleaned, "\\", "/"))
+	var b strings.Builder
+	for _, r := range cleaned {
+		switch {
+		case r < 0x20 || r == 0x7f || r == '"' || r == '/' || r == '\\':
+			b.WriteRune('_')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	out := strings.Trim(strings.TrimSpace(b.String()), ".")
+	if out == "" {
+		return "arquivo"
+	}
+	if len(out) > 160 {
+		out = out[:160]
+	}
+	return out
+}
+
+func writeSandboxedFileResponse(w http.ResponseWriter, raw []byte, ct string, contentDisposition string, forceAttachment bool, requestedName string) {
 	safeCT, attach := sanitizeProxyContentType(ct)
 	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data: https:; form-action 'none'; frame-ancestors 'none'")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("Content-Type", safeCT)
-	if attach {
-		w.Header().Set("Content-Disposition", "attachment")
+	if attach || forceAttachment {
+		if safeName := sanitizeDownloadFilename(requestedName); safeName != "" {
+			if formatted := mime.FormatMediaType("attachment", map[string]string{"filename": safeName}); formatted != "" {
+				w.Header().Set("Content-Disposition", formatted)
+			} else {
+				w.Header().Set("Content-Disposition", "attachment")
+			}
+		} else if contentDisposition != "" {
+			w.Header().Set("Content-Disposition", contentDisposition)
+		} else {
+			w.Header().Set("Content-Disposition", "attachment")
+		}
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(raw)
@@ -763,6 +818,106 @@ func (s *Server) writePortalErr(w http.ResponseWriter, err error) {
 		return
 	}
 	writeError(w, http.StatusBadGateway, "erro ao consultar o portal da UNICEP")
+}
+
+func (s *Server) handleD2LOverview(w http.ResponseWriter, r *http.Request) {
+	if s.d2l == nil {
+		writeError(w, http.StatusServiceUnavailable, "integração com a Sala Virtual indisponível")
+		return
+	}
+	claims := currentClaims(r)
+	ov, err := s.d2l.GetOverview(r.Context(), claims.RA)
+	if err != nil {
+		s.writeD2LErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ov)
+}
+
+func (s *Server) handleD2LCourseDetail(w http.ResponseWriter, r *http.Request) {
+	if s.d2l == nil {
+		writeError(w, http.StatusServiceUnavailable, "integração com a Sala Virtual indisponível")
+		return
+	}
+	ouRaw := strings.TrimSpace(r.PathValue("ou"))
+	ou, err := strconv.ParseInt(ouRaw, 10, 64)
+	if err != nil || ou <= 0 {
+		writeError(w, http.StatusBadRequest, "identificador de disciplina inválido")
+		return
+	}
+	claims := currentClaims(r)
+	detail, err := s.d2l.GetCourseDetail(r.Context(), claims.RA, ou)
+	if err != nil {
+		s.writeD2LErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
+}
+
+func (s *Server) handleD2LTicket(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if s.d2l == nil {
+		writeError(w, http.StatusServiceUnavailable, "integração com a Sala Virtual indisponível")
+		return
+	}
+	claims := currentClaims(r)
+	if !s.actionRALim.Allow("d2lticket:" + claims.RA) {
+		writeError(w, http.StatusTooManyRequests, "muitas solicitações; aguarde alguns segundos")
+		return
+	}
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := decodeStrictJSON(w, r, &req, 4096); err != nil {
+		writeError(w, http.StatusBadRequest, "JSON inválido")
+		return
+	}
+	relPath := strings.TrimSpace(req.Path)
+	if !d2l.IsAllowedFilePath(relPath) {
+		writeError(w, http.StatusForbidden, "caminho não permitido na Sala Virtual")
+		return
+	}
+	ticket, err := s.crypto.IssueProxyTicket(claims.RA, "d2l:"+relPath)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "erro ao gerar ticket de acesso")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ticket":    ticket,
+		"expiresIn": 60,
+	})
+}
+
+func (s *Server) handleD2LFile(w http.ResponseWriter, r *http.Request) {
+	if s.d2l == nil {
+		writeError(w, http.StatusServiceUnavailable, "integração com a Sala Virtual indisponível")
+		return
+	}
+	relPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	if !d2l.IsAllowedFilePath(relPath) {
+		writeError(w, http.StatusForbidden, "caminho não permitido na Sala Virtual")
+		return
+	}
+	ra, ok := s.authenticateProxyRequest(w, r, "d2l:"+relPath)
+	if !ok {
+		return
+	}
+	raw, ct, cd, err := s.d2l.FetchRaw(r.Context(), ra, relPath)
+	if err != nil {
+		s.writeD2LErr(w, err)
+		return
+	}
+	forceDownload := strings.TrimSpace(r.URL.Query().Get("download")) == "1"
+	requestedName := r.URL.Query().Get("name")
+	writeSandboxedFileResponse(w, raw, ct, cd, forceDownload, requestedName)
+}
+
+func (s *Server) writeD2LErr(w http.ResponseWriter, err error) {
+	if errors.Is(err, d2l.ErrInvalidCredentials) || errors.Is(err, d2l.ErrSessionExpired) {
+		writeError(w, http.StatusBadGateway, "não foi possível autenticar na Sala Virtual (verifique suas credenciais do UnicepVirtual)")
+		return
+	}
+	writeError(w, http.StatusBadGateway, "erro ao consultar a Sala Virtual (UnicepVirtual)")
 }
 
 func (s *Server) staticSPAHandler(dir string) http.Handler {

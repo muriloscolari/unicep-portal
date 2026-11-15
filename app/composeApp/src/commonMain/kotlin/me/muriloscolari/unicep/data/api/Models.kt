@@ -230,3 +230,177 @@ data class ProxyTicketResponse(
     val ticket: String,
     val expiresIn: Int = 60
 )
+
+// --- Sala Virtual (D2L Brightspace - Passivo / Somente Leitura) ---
+
+@Immutable
+@Serializable
+data class VirtualSemesterOption(
+    val id: String = "",
+    val name: String = "",
+    val code: String = ""
+)
+
+@Immutable
+@Serializable
+data class VirtualCourseSummary(
+    val orgUnitId: Long,
+    val name: String = "",
+    val code: String = "",
+    val semesterName: String = "",
+    val isActive: Boolean = false,
+    val canAccess: Boolean = true,
+    val startDate: String = "",
+    val endDate: String = "",
+    val lastAccessed: String = "",
+    val homeUrl: String = "",
+    val pendingCount: Int = 0,
+    val assignmentCount: Int = 0
+)
+
+@Immutable
+@Serializable
+data class VirtualFileAttachment(
+    val fileId: Long = 0L,
+    val fileName: String = "",
+    val size: Long = 0L,
+    val downloadPath: String = ""
+)
+
+@Immutable
+@Serializable
+data class VirtualAnnouncement(
+    val id: Long = 0L,
+    val orgUnitId: Long = 0L,
+    val orgUnitName: String = "",
+    val title: String = "",
+    val body: String = "",
+    val createdDate: String = "",
+    val startDate: String = "",
+    val attachments: List<VirtualFileAttachment> = emptyList()
+)
+
+@Immutable
+@Serializable
+data class VirtualCalendarEvent(
+    val id: Long = 0L,
+    val orgUnitId: Long = 0L,
+    val orgUnitName: String = "",
+    val title: String = "",
+    val description: String = "",
+    val startDateTime: String = "",
+    val endDateTime: String = "",
+    val allDay: Boolean = false,
+    val webUrl: String = ""
+)
+
+@Immutable
+@Serializable
+data class VirtualAssignmentItem(
+    val id: Long = 0L,
+    val orgUnitId: Long = 0L,
+    val orgUnitName: String = "",
+    val name: String = "",
+    val instructions: String = "",
+    val dueDate: String = "",
+    val dueAtMillis: Long = 0L,
+    val startDate: String = "",
+    val endDate: String = "",
+    val outOf: Double? = null,
+    val attachments: List<VirtualFileAttachment> = emptyList(),
+    val status: String = "not_submitted",
+    val statusLabel: String = "Não enviado",
+    val submissionDate: String = "",
+    val submittedFiles: List<VirtualFileAttachment> = emptyList(),
+    val score: Double? = null,
+    val feedbackText: String = "",
+    val completionDate: String = "",
+    val webUrl: String = ""
+)
+
+@Immutable
+@Serializable
+data class VirtualContentTopic(
+    val topicId: Long = 0L,
+    val title: String = "",
+    val typeIdentifier: String = "",
+    val url: String = "",
+    val downloadPath: String = "",
+    val externalUrl: String = "",
+    val unread: Boolean = false,
+    val lastModifiedDate: String = ""
+)
+
+@Immutable
+@Serializable
+data class VirtualContentModule(
+    val moduleId: Long = 0L,
+    val title: String = "",
+    val description: String = "",
+    val topics: List<VirtualContentTopic> = emptyList(),
+    val modules: List<VirtualContentModule> = emptyList()
+)
+
+@Immutable
+@Serializable
+data class VirtualGradeItem(
+    val id: String = "",
+    val name: String = "",
+    val displayedGrade: String = "",
+    val pointsNumerator: Double? = null,
+    val pointsDenominator: Double? = null,
+    val comments: String = "",
+    val lastModified: String = "",
+    val releasedDate: String = ""
+)
+
+@Immutable
+@Serializable
+data class VirtualQuizItem(
+    val quizId: Long = 0L,
+    val name: String = "",
+    val description: String = "",
+    val isActive: Boolean = false,
+    val startDate: String = "",
+    val endDate: String = "",
+    val dueDate: String = "",
+    val timeLimitMins: Int? = null,
+    val attemptsAllowed: Int? = null,
+    val webUrl: String = ""
+)
+
+@Immutable
+@Serializable
+data class VirtualDiscussionForum(
+    val forumId: Long = 0L,
+    val name: String = "",
+    val description: String = "",
+    val webUrl: String = ""
+)
+
+@Immutable
+@Serializable
+data class VirtualOverviewResponse(
+    val baseUrl: String = "https://salavirtual.unicep.edu.br",
+    val userId: String = "",
+    val userName: String = "",
+    val semesters: List<VirtualSemesterOption> = emptyList(),
+    val courses: List<VirtualCourseSummary> = emptyList(),
+    val upcomingAssignments: List<VirtualAssignmentItem> = emptyList(),
+    val announcements: List<VirtualAnnouncement> = emptyList(),
+    val calendarEvents: List<VirtualCalendarEvent> = emptyList()
+)
+
+@Immutable
+@Serializable
+data class VirtualCourseDetailResponse(
+    val baseUrl: String = "https://salavirtual.unicep.edu.br",
+    val course: VirtualCourseSummary,
+    val announcements: List<VirtualAnnouncement> = emptyList(),
+    val modules: List<VirtualContentModule> = emptyList(),
+    val assignments: List<VirtualAssignmentItem> = emptyList(),
+    val grades: List<VirtualGradeItem> = emptyList(),
+    val quizzes: List<VirtualQuizItem> = emptyList(),
+    val discussions: List<VirtualDiscussionForum> = emptyList(),
+    val calendar: List<VirtualCalendarEvent> = emptyList()
+)

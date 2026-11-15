@@ -11,6 +11,7 @@ import (
 
 	"unicep-portal/internal/config"
 	"unicep-portal/internal/crypto"
+	"unicep-portal/internal/d2l"
 	"unicep-portal/internal/httpapi"
 	"unicep-portal/internal/poller"
 	"unicep-portal/internal/portal"
@@ -43,7 +44,18 @@ func main() {
 		return pass, u.Perfil, nil
 	})
 
-	worker := poller.NewWorker(store, cry, pm, time.Duration(cfg.PollIntervalMinutes)*time.Minute, cfg.NotifyAbsences)
+	dm := d2l.NewManager(cfg.D2LBaseURL, func(ra string) (string, error) {
+		u, err := store.GetUser(ra)
+		if err != nil {
+			return "", err
+		}
+		if u == nil {
+			return "", d2l.ErrSessionExpired
+		}
+		return cry.Decrypt(u.EncryptedPassword)
+	})
+
+	worker := poller.NewWorker(store, cry, pm, dm, time.Duration(cfg.PollIntervalMinutes)*time.Minute, cfg.NotifyAbsences)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -52,7 +64,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           httpapi.NewServer(cfg, store, cry, pm, worker),
+		Handler:           httpapi.NewServer(cfg, store, cry, pm, worker, dm),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      45 * time.Second,

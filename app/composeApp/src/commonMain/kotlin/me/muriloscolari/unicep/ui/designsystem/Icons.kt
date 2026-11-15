@@ -692,4 +692,66 @@ object PortalIcons {
             }
         }
     }
+
+    val ChevronLeft: ImageVector by lazy {
+        strokeIcon("ChevronLeft") {
+            strokePath {
+                moveTo(15f, 6f)
+                lineTo(9f, 12f)
+                lineTo(15f, 18f)
+            }
+        }
+    }
+
+    val Virtual: ImageVector by lazy {
+        strokeIcon("Virtual") {
+            strokePath {
+                moveTo(4f, 6.5f)
+                curveTo(4f, 5.4f, 4.9f, 4.5f, 6f, 4.5f)
+                horizontalLineTo(18f)
+                curveTo(19.1f, 4.5f, 20f, 5.4f, 20f, 6.5f)
+                verticalLineTo(15.5f)
+                horizontalLineTo(4f)
+                close()
+                moveTo(2.5f, 18.5f)
+                horizontalLineTo(21.5f)
+            }
+        }
+    }
+
+    val VirtualFill: ImageVector by lazy {
+        strokeIcon("VirtualFill") {
+            fillPath {
+                moveTo(4f, 6.5f)
+                curveTo(4f, 5.4f, 4.9f, 4.5f, 6f, 4.5f)
+                horizontalLineTo(18f)
+                curveTo(19.1f, 4.5f, 20f, 5.4f, 20f, 6.5f)
+                verticalLineTo(15.5f)
+                horizontalLineTo(4f)
+                close()
+            }
+            strokePath {
+                moveTo(2.5f, 18.5f)
+                horizontalLineTo(21.5f)
+            }
+        }
+    }
+
+    val Folder: ImageVector by lazy {
+        strokeIcon("Folder") {
+            strokePath {
+                moveTo(3.5f, 6.5f)
+                curveTo(3.5f, 5.4f, 4.4f, 4.5f, 5.5f, 4.5f)
+                horizontalLineTo(9.5f)
+                lineTo(11.5f, 7f)
+                horizontalLineTo(18.5f)
+                curveTo(19.6f, 7f, 20.5f, 7.9f, 20.5f, 9f)
+                verticalLineTo(17.5f)
+                curveTo(20.5f, 18.6f, 19.6f, 19.5f, 18.5f, 19.5f)
+                horizontalLineTo(5.5f)
+                curveTo(4.4f, 19.5f, 3.5f, 18.6f, 3.5f, 17.5f)
+                close()
+            }
+        }
+    }
 }
