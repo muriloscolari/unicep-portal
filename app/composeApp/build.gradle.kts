@@ -22,6 +22,7 @@ kotlin {
             namespace = "me.muriloscolari.unicep.shared"
             compileSdk = 37
             minSdk = 26
+            androidResources.enable = true
         }
     }
 
