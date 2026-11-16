@@ -78,3 +78,27 @@ func TestDiffD2LAssignmentsIgnoresSubmittedAndGraded(t *testing.T) {
 		t.Fatalf("expected only 'Nova Pendente' notification, got %+v", events)
 	}
 }
+
+func TestDiffD2LAnnouncements(t *testing.T) {
+	prev := []d2l.Announcement{
+		{ID: 100, OrgUnitID: 50001, OrgUnitName: "DSW", Title: "Aviso antigo", Body: "Conteúdo antigo"},
+	}
+	curr := []d2l.Announcement{
+		{ID: 100, OrgUnitID: 50001, OrgUnitName: "DSW", Title: "Aviso antigo", Body: "Conteúdo antigo"},
+		{ID: 101, OrgUnitID: 50001, OrgUnitName: "DSW", Title: "Prova adiada", Body: "A prova será na próxima\n\nsegunda-feira."},
+		{ID: 102, OrgUnitID: 6606, OrgUnitName: "", Title: "   ", Body: "", Attachments: []d2l.FileAttachment{{FileID: 1, FileName: "edital.pdf"}}},
+	}
+	events := DiffD2LAnnouncements("1234567", prev, curr)
+	if len(events) != 2 {
+		t.Fatalf("expected 2 new D2L announcement events, got %d: %+v", len(events), events)
+	}
+	if events[0].Kind != "d2l_announcement" || events[0].Field != "Prova adiada" || events[0].DisciplineName != "DSW" {
+		t.Fatalf("unexpected first announcement event: %+v", events[0])
+	}
+	if events[0].NewValue != "A prova será na próxima segunda-feira." {
+		t.Fatalf("unexpected collapsed body preview: %q", events[0].NewValue)
+	}
+	if events[1].DisciplineName != "UNICEP" || events[1].Field != "Novo aviso" || events[1].NewValue != "1 anexo(s)" {
+		t.Fatalf("unexpected second announcement event: %+v", events[1])
+	}
+}

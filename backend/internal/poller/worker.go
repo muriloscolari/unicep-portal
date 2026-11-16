@@ -98,7 +98,7 @@ func (w *Worker) SyncUser(ctx context.Context, ra string, seedOnly bool) (int, e
 func (w *Worker) syncUserWithRecord(ctx context.Context, ra string, d2lEnabled, seedOnly bool) (int, error) {
 	created, legacyErr := w.syncLegacy(ctx, ra, seedOnly)
 	if !seedOnly && d2lEnabled {
-		d2lCreated, d2lErr := w.syncD2LAssignments(ctx, ra, false)
+		d2lCreated, d2lErr := w.syncD2L(ctx, ra, false)
 		if d2lErr != nil {
 			log.Printf("poller: sync D2L %s error: %v", ra, d2lErr)
 		} else {
@@ -193,7 +193,7 @@ func (w *Worker) syncLegacy(ctx context.Context, ra string, seedOnly bool) (int,
 	return created, nil
 }
 
-func (w *Worker) syncD2LAssignments(ctx context.Context, ra string, seedOnly bool) (int, error) {
+func (w *Worker) syncD2L(ctx context.Context, ra string, seedOnly bool) (int, error) {
 	if w.d2l == nil {
 		return 0, nil
 	}
@@ -204,33 +204,53 @@ func (w *Worker) syncD2LAssignments(ctx context.Context, ra string, seedOnly boo
 	if !ov.Complete {
 		return 0, fmt.Errorf("d2l overview incomplete for %s", ra)
 	}
-	currBytes, _ := json.Marshal(ov.UpcomingAssignments)
-	prevJSON, err := w.store.GetD2LSnapshot(ra)
+
+	created := 0
+
+	currAssignBytes, _ := json.Marshal(ov.UpcomingAssignments)
+	prevAssignJSON, err := w.store.GetD2LSnapshot(ra)
 	if err != nil {
 		return 0, err
 	}
-	if prevJSON == "" {
-		if err := w.store.SaveD2LSnapshot(ra, string(currBytes)); err != nil {
+	if prevAssignJSON == "" {
+		if err := w.store.SaveD2LSnapshot(ra, string(currAssignBytes)); err != nil {
 			return 0, err
 		}
-		return 0, nil
-	}
-	if seedOnly {
-		return 0, nil
-	}
-
-	var prev []d2l.AssignmentItem
-	_ = json.Unmarshal([]byte(prevJSON), &prev)
-	events := DiffD2LAssignments(ra, prev, ov.UpcomingAssignments)
-	created := 0
-	for _, ev := range events {
-		if id, err := w.store.InsertNotification(ev); err == nil && id > 0 {
-			created++
+	} else if !seedOnly {
+		var prev []d2l.AssignmentItem
+		_ = json.Unmarshal([]byte(prevAssignJSON), &prev)
+		for _, ev := range DiffD2LAssignments(ra, prev, ov.UpcomingAssignments) {
+			if id, err := w.store.InsertNotification(ev); err == nil && id > 0 {
+				created++
+			}
+		}
+		if err := w.store.SaveD2LSnapshot(ra, string(currAssignBytes)); err != nil {
+			return created, err
 		}
 	}
-	if err := w.store.SaveD2LSnapshot(ra, string(currBytes)); err != nil {
+
+	currAnnBytes, _ := json.Marshal(ov.Announcements)
+	prevAnnJSON, err := w.store.GetD2LAnnouncementsSnapshot(ra)
+	if err != nil {
 		return created, err
 	}
+	if prevAnnJSON == "" {
+		if err := w.store.SaveD2LAnnouncementsSnapshot(ra, string(currAnnBytes)); err != nil {
+			return created, err
+		}
+	} else if !seedOnly {
+		var prevAnns []d2l.Announcement
+		_ = json.Unmarshal([]byte(prevAnnJSON), &prevAnns)
+		for _, ev := range DiffD2LAnnouncements(ra, prevAnns, ov.Announcements) {
+			if id, err := w.store.InsertNotification(ev); err == nil && id > 0 {
+				created++
+			}
+		}
+		if err := w.store.SaveD2LAnnouncementsSnapshot(ra, string(currAnnBytes)); err != nil {
+			return created, err
+		}
+	}
+
 	return created, nil
 }
 
@@ -268,6 +288,53 @@ func DiffD2LAssignments(ra string, prev, curr []d2l.AssignmentItem) []storage.No
 		})
 	}
 	return out
+}
+
+// DiffD2LAnnouncements compares previous and current D2L announcements and emits notifications for newly posted items.
+func DiffD2LAnnouncements(ra string, prev, curr []d2l.Announcement) []storage.Notification {
+	seen := make(map[string]struct{}, len(prev))
+	for _, item := range prev {
+		seen[fmt.Sprintf("%d:%d", item.OrgUnitID, item.ID)] = struct{}{}
+	}
+	var out []storage.Notification
+	for _, item := range curr {
+		key := fmt.Sprintf("%d:%d", item.OrgUnitID, item.ID)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		title := strings.TrimSpace(item.Title)
+		if title == "" {
+			title = "Novo aviso"
+		}
+		preview := truncatePreview(item.Body, 160)
+		if preview == "" && len(item.Attachments) > 0 {
+			preview = fmt.Sprintf("%d anexo(s)", len(item.Attachments))
+		}
+		disciplineName := strings.TrimSpace(item.OrgUnitName)
+		if disciplineName == "" {
+			disciplineName = "UNICEP"
+		}
+		out = append(out, storage.Notification{
+			RA:             ra,
+			PeriodKey:      fmt.Sprintf("%d", item.OrgUnitID),
+			DisciplineCode: key,
+			DisciplineName: disciplineName,
+			Field:          title,
+			OldValue:       "",
+			NewValue:       preview,
+			Kind:           "d2l_announcement",
+		})
+	}
+	return out
+}
+
+func truncatePreview(s string, maxRunes int) string {
+	collapsed := strings.Join(strings.Fields(s), " ")
+	runes := []rune(collapsed)
+	if len(runes) <= maxRunes {
+		return collapsed
+	}
+	return strings.TrimSpace(string(runes[:maxRunes-1])) + "…"
 }
 
 // DiffSnapshots compares previous and current grades/report cards and returns notification records.

@@ -58,12 +58,13 @@ class GradeSyncWorker(
         if (freshOnes.isNotEmpty()) {
             var anyHandled = false
             freshOnes.forEach { n ->
-                if (n.kind == "d2l_assignment") {
+                if (n.kind == "d2l_assignment" || n.kind == "d2l_announcement") {
                     if (!notifyVirtualNew) {
                         anyHandled = true
                         return@forEach
                     }
-                    val title = "Nova atividade: ${n.disciplineName.ifBlank { "Sala Virtual" }}"
+                    val prefix = if (n.kind == "d2l_announcement") "Novo aviso" else "Nova atividade"
+                    val title = "$prefix: ${n.disciplineName.ifBlank { "Sala Virtual" }}"
                     val body = if (n.newValue.isNotBlank()) "${n.field} • ${n.newValue}" else n.field
                     if (showLocalNotification(appContext, n.id.toInt(), title, body, openTab = 2)) {
                         anyHandled = true

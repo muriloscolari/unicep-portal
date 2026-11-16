@@ -133,6 +133,9 @@ CREATE TABLE IF NOT EXISTS d2l_snapshots (
 	if err := ensureColumn(db, "users", "d2l_polling_enabled", "INTEGER NOT NULL DEFAULT 1"); err != nil {
 		return err
 	}
+	if err := ensureColumn(db, "d2l_snapshots", "announcements_json", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	_, err := db.Exec(`
 DELETE FROM notifications
 WHERE period_key != 'test' AND id NOT IN (
@@ -393,5 +396,28 @@ ON CONFLICT(ra) DO UPDATE SET
 	assignments_json = excluded.assignments_json,
 	updated_at = excluded.updated_at
 `, ra, assignmentsJSON, now)
+	return err
+}
+
+// GetD2LAnnouncementsSnapshot returns the stored JSON array of D2L announcements for ra (empty if none).
+func (s *Store) GetD2LAnnouncementsSnapshot(ra string) (string, error) {
+	var raw string
+	err := s.db.QueryRow(`SELECT announcements_json FROM d2l_snapshots WHERE ra = ?`, ra).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return raw, err
+}
+
+// SaveD2LAnnouncementsSnapshot stores the latest JSON array of D2L announcements for ra.
+func (s *Store) SaveD2LAnnouncementsSnapshot(ra, announcementsJSON string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.Exec(`
+INSERT INTO d2l_snapshots (ra, assignments_json, announcements_json, updated_at)
+VALUES (?, '[]', ?, ?)
+ON CONFLICT(ra) DO UPDATE SET
+	announcements_json = excluded.announcements_json,
+	updated_at = excluded.updated_at
+`, ra, announcementsJSON, now)
 	return err
 }

@@ -265,14 +265,14 @@ fun CentralScreen(
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            text = if (n.kind == "d2l_assignment") {
-                                "${n.field} • ${n.newValue}"
+                            text = if (n.kind == "d2l_assignment" || n.kind == "d2l_announcement") {
+                                if (n.newValue.isNotBlank()) "${n.field} • ${n.newValue}" else n.field
                             } else {
                                 "${n.field}: ${if (n.oldValue.isBlank()) "—" else n.oldValue} → ${n.newValue}"
                             },
                             color = when (n.kind) {
                                 "grade" -> colors.green
-                                "d2l_assignment" -> colors.accent
+                                "d2l_assignment", "d2l_announcement" -> colors.accent
                                 else -> colors.orange
                             },
                             fontWeight = FontWeight.SemiBold,
@@ -831,13 +831,20 @@ private fun NotificationAlertRow(n: NotificationItem) {
     val colors = LocalPortalColors.current
     val appleType = LocalAppleTypography.current
     val isGrade = n.kind == "grade"
+    val isVirtual = n.kind == "d2l_assignment" || n.kind == "d2l_announcement"
     val numericNew = n.newValue.replace(',', '.').toDoubleOrNull()
     val changeColor = when {
+        isVirtual -> colors.accent
         !isGrade -> colors.orange
         numericNew != null && numericNew < 6.0 -> colors.red
         else -> colors.green
     }
     val oldDisplay = if (n.oldValue.isBlank()) "—" else n.oldValue
+    val detailText = if (isVirtual) {
+        if (n.newValue.isNotBlank()) "${n.field} • ${n.newValue}" else n.field
+    } else {
+        "${n.field}: $oldDisplay → ${n.newValue}"
+    }
     val relativeTime = remember(n.createdAt) { formatRelativeTime(n.createdAt) }
 
     Row(
@@ -865,7 +872,7 @@ private fun NotificationAlertRow(n: NotificationItem) {
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                text = "${n.field}: $oldDisplay → ${n.newValue}",
+                text = detailText,
                 color = changeColor,
                 style = appleType.subheadline,
                 fontWeight = FontWeight.Medium
@@ -983,7 +990,7 @@ private fun VirtualAlertsSettingsRow(
         ) {
             Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                 Text(
-                    text = "Sala Virtual · Novas atividades",
+                    text = "Sala Virtual · Atividades e avisos",
                     color = colors.textPrimary,
                     style = appleType.body,
                     fontWeight = FontWeight.Medium
@@ -991,9 +998,9 @@ private fun VirtualAlertsSettingsRow(
                 Spacer(Modifier.height(2.dp))
                 Text(
                     text = if (notifyNewAssignment) {
-                        "Notificar em segundo plano quando o professor postar nova atividade (sincronizado)"
+                        "Notificar em segundo plano quando o professor postar nova atividade ou aviso (sincronizado)"
                     } else {
-                        "Alertas de novas atividades desativados nesta conta"
+                        "Alertas de novas atividades e avisos desativados nesta conta"
                     },
                     color = colors.textSecondary,
                     style = appleType.footnote
