@@ -46,6 +46,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -53,8 +55,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -106,6 +110,8 @@ import me.muriloscolari.unicep.data.api.ReportCardResponse
 import me.muriloscolari.unicep.data.api.StudentInfo
 import me.muriloscolari.unicep.data.api.VirtualAnnouncement
 import me.muriloscolari.unicep.data.api.VirtualAssignmentItem
+import me.muriloscolari.unicep.data.repo.GlobalSearchResult
+import me.muriloscolari.unicep.data.repo.GlobalSearchResultKind
 import me.muriloscolari.unicep.data.repo.PortalRepository
 import me.muriloscolari.unicep.platform.AppUpdateInfo
 import me.muriloscolari.unicep.platform.DesignStyle
@@ -137,6 +143,7 @@ import me.muriloscolari.unicep.ui.screens.AppleAllNotificationsSheet
 import me.muriloscolari.unicep.ui.screens.AppleAttendanceLimitSheet
 import me.muriloscolari.unicep.ui.screens.AppleSubjectDetailSheet
 import me.muriloscolari.unicep.ui.screens.CentralScreen
+import me.muriloscolari.unicep.ui.screens.GlobalSearchSheet
 import me.muriloscolari.unicep.ui.screens.LoginScreen
 import me.muriloscolari.unicep.ui.screens.SemesterScreen
 import me.muriloscolari.unicep.ui.screens.SplashLoadingScreen
@@ -175,6 +182,7 @@ fun App(initialTab: Int = 0) {
     var selectedVirtualAnnouncement by remember { mutableStateOf<VirtualAnnouncement?>(null) }
     var selectedSubjectCode by remember { mutableStateOf<String?>(null) }
     var showRiskyAttendanceModal by remember { mutableStateOf(false) }
+    var showGlobalSearchModal by remember { mutableStateOf(false) }
     var showAllNotificationsModal by remember { mutableStateOf(false) }
     var confirmLogoutDialog by remember { mutableStateOf(false) }
     var suppressHistoryPush by remember { mutableStateOf(false) }
@@ -253,6 +261,7 @@ fun App(initialTab: Int = 0) {
         val sameTabRoot = tab == currentTab &&
             selectedSubjectCode == null &&
             !showRiskyAttendanceModal &&
+            !showGlobalSearchModal &&
             !showAllNotificationsModal &&
             selectedVirtualCourseId == null &&
             selectedVirtualAssignment == null &&
@@ -263,6 +272,7 @@ fun App(initialTab: Int = 0) {
         } else {
             selectedSubjectCode = null
             showRiskyAttendanceModal = false
+            showGlobalSearchModal = false
             showAllNotificationsModal = false
             selectedVirtualCourseId = null
             virtualCourseSubTab = 0
@@ -273,8 +283,59 @@ fun App(initialTab: Int = 0) {
         }
     }
 
+    fun handleGlobalSearchResult(result: GlobalSearchResult) {
+        showGlobalSearchModal = false
+        when (result.kind) {
+            GlobalSearchResultKind.SUBJECT -> {
+                currentTab = MainTab.SEMESTER
+                showRiskyAttendanceModal = false
+                selectedSubjectCode = result.subjectCode
+            }
+            GlobalSearchResultKind.SCHEDULE,
+            GlobalSearchResultKind.CURRICULUM -> {
+                currentTab = MainTab.COURSE
+                courseSubTab = result.courseSubTab ?: 0
+            }
+            GlobalSearchResultKind.VIRTUAL_COURSE -> {
+                currentTab = MainTab.VIRTUAL
+                selectedVirtualCourseId = result.virtualCourseId
+                virtualCourseSubTab = 0
+            }
+            GlobalSearchResultKind.VIRTUAL_ASSIGNMENT -> {
+                currentTab = MainTab.VIRTUAL
+                selectedVirtualCourseId = result.virtualCourseId
+                virtualCourseSubTab = 1
+                selectedVirtualAssignment = result.virtualAssignment
+            }
+            GlobalSearchResultKind.VIRTUAL_ANNOUNCEMENT -> {
+                currentTab = MainTab.VIRTUAL
+                selectedVirtualCourseId = result.virtualCourseId
+                virtualCourseSubTab = 2
+                selectedVirtualAnnouncement = result.virtualAnnouncement
+            }
+            GlobalSearchResultKind.VIRTUAL_MATERIAL -> {
+                val topic = result.virtualTopic
+                val cName = result.virtualCourseName ?: "Sala Virtual"
+                when {
+                    topic != null && topic.downloadPath.isNotBlank() -> {
+                        scope.launch { repo.openD2LFile(topic.downloadPath, topic.title, cName, topic.title) }
+                    }
+                    topic != null && (topic.externalUrl.isNotBlank() || topic.url.isNotBlank()) -> {
+                        repo.openSalaVirtualWeb(topic.externalUrl.ifBlank { topic.url })
+                    }
+                    else -> {
+                        currentTab = MainTab.VIRTUAL
+                        selectedVirtualCourseId = result.virtualCourseId
+                        virtualCourseSubTab = 0
+                    }
+                }
+            }
+        }
+    }
+
     fun encodeRoute(): String = when (currentTab) {
         MainTab.SEMESTER -> when {
+            showGlobalSearchModal -> "semestre/busca"
             !selectedSubjectCode.isNullOrBlank() -> "semestre/subject/$selectedSubjectCode"
             showRiskyAttendanceModal -> "semestre/frequencia-limite"
             else -> "semestre"
@@ -290,9 +351,19 @@ fun App(initialTab: Int = 0) {
     fun applyPopRoute(route: String) {
         suppressHistoryPush = true
         when {
+            route == "semestre/busca" -> {
+                currentTab = MainTab.SEMESTER
+                selectedSubjectCode = null
+                showRiskyAttendanceModal = false
+                showAllNotificationsModal = false
+                selectedVirtualAssignment = null
+                selectedVirtualAnnouncement = null
+                showGlobalSearchModal = true
+            }
             route.startsWith("semestre/subject/") -> {
                 currentTab = MainTab.SEMESTER
                 showRiskyAttendanceModal = false
+                showGlobalSearchModal = false
                 showAllNotificationsModal = false
                 selectedVirtualAssignment = null
                 selectedVirtualAnnouncement = null
@@ -301,6 +372,7 @@ fun App(initialTab: Int = 0) {
             route == "semestre/frequencia-limite" -> {
                 currentTab = MainTab.SEMESTER
                 selectedSubjectCode = null
+                showGlobalSearchModal = false
                 showAllNotificationsModal = false
                 selectedVirtualAssignment = null
                 selectedVirtualAnnouncement = null
@@ -310,6 +382,7 @@ fun App(initialTab: Int = 0) {
                 currentTab = MainTab.SEMESTER
                 selectedSubjectCode = null
                 showRiskyAttendanceModal = false
+                showGlobalSearchModal = false
                 showAllNotificationsModal = false
                 selectedVirtualAssignment = null
                 selectedVirtualAnnouncement = null
@@ -371,6 +444,7 @@ fun App(initialTab: Int = 0) {
         backOverlayController.hasOverlay ||
         confirmLogoutDialog ||
         showUpdateDialog ||
+        showGlobalSearchModal ||
         showAllNotificationsModal ||
         selectedSubjectCode != null ||
         showRiskyAttendanceModal ||
@@ -409,6 +483,10 @@ fun App(initialTab: Int = 0) {
                 }
                 confirmLogoutDialog -> {
                     confirmLogoutDialog = false
+                    true
+                }
+                showGlobalSearchModal -> {
+                    showGlobalSearchModal = false
                     true
                 }
                 selectedVirtualAssignment != null -> {
@@ -465,6 +543,7 @@ fun App(initialTab: Int = 0) {
         virtualCourseSubTab,
         selectedSubjectCode,
         showRiskyAttendanceModal,
+        showGlobalSearchModal,
         showAllNotificationsModal,
         state.loggedIn
     ) {
@@ -483,7 +562,7 @@ fun App(initialTab: Int = 0) {
             MainTab.COURSE -> repo.loadAcademicIfNeeded()
             MainTab.VIRTUAL -> repo.loadVirtualOverviewIfNeeded()
             MainTab.CENTRAL -> repo.loadFinanceAndServicesIfNeeded()
-            MainTab.SEMESTER -> Unit
+            MainTab.SEMESTER -> repo.preloadHomeContextIfNeeded()
         }
     }
 
@@ -515,65 +594,37 @@ fun App(initialTab: Int = 0) {
             )
 
             style != DesignStyle.APPLE -> {
-                // Material Design 3 clássico preservado
+                // Material Design 3 (Material You leve e moderno, sem topBar duplicada)
                 val unreadCount = state.notifications.count { it.readAt == null }
+                val effectiveReport = state.report ?: state.dashboard?.currentReport ?: ReportCardResponse()
+                val gradeItems = state.grades?.items.orEmpty()
+                val mergedSubjects = remember(gradeItems, effectiveReport.items) {
+                    mergeUnifiedSubjects(gradeItems, effectiveReport)
+                }
+                val activeSubject = mergedSubjects.firstOrNull { it.code == selectedSubjectCode }
+                val riskySubjects = remember(mergedSubjects) {
+                    mergedSubjects
+                        .filter { it.report?.isFrequencyAtLimit() == true }
+                        .sortedBy { it.report?.remainingAbsences ?: Int.MAX_VALUE }
+                }
+
                 BoxWithConstraints(modifier = Modifier.fillMaxSize().background(colors.background)) {
                     val isDesktop = maxWidth >= 640.dp
+                    val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
 
                     val topBar: @Composable () -> Unit = {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(colors.surfaceChrome)
-                                .windowInsetsPadding(WindowInsets.statusBars)
+                                .background(colors.background)
+                                .then(if (!isDesktop) Modifier.padding(top = statusTop) else Modifier)
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 16.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("UNICEP Portal", color = colors.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-                                    Text(
-                                        text = "M3",
-                                        color = colors.accent,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier
-                                            .clip(CircleShape)
-                                            .background(colors.accentSoft)
-                                            .padding(horizontal = 7.dp, vertical = 2.dp)
-                                    )
-                                }
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Box {
-                                        IconButton(onClick = { navigateToTab(MainTab.CENTRAL) }) {
-                                            Icon(PortalIcons.Bell, contentDescription = "Central e Notificações", tint = colors.accent)
-                                        }
-                                        if (unreadCount > 0) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .align(Alignment.TopEnd)
-                                                    .padding(top = 8.dp, end = 8.dp)
-                                                    .size(9.dp)
-                                                    .clip(CircleShape)
-                                                    .background(colors.red)
-                                            )
-                                        }
-                                    }
-                                    IconButton(onClick = { scope.launch { repo.refreshDashboard() } }) {
-                                        Icon(PortalIcons.Refresh, contentDescription = "Atualizar", tint = colors.accent)
-                                    }
-                                }
-                            }
                             if (state.loading) {
                                 LinearProgressIndicator(
-                                    modifier = Modifier.fillMaxWidth().height(2.dp),
+                                    modifier = Modifier.fillMaxWidth().height(2.5.dp),
                                     color = colors.accent,
-                                    trackColor = colors.surfaceSecondary
+                                    trackColor = colors.accentSoft.copy(alpha = 0.5f)
                                 )
-                            } else {
-                                PortalDivider()
                             }
                             val banner = state.statusBanner ?: state.error
                             if (!banner.isNullOrBlank()) {
@@ -621,6 +672,30 @@ fun App(initialTab: Int = 0) {
                     }
 
                     val bodyContent: @Composable () -> Unit = {
+                        val pullState = rememberPullToRefreshState()
+                        val refreshing = state.loading || state.virtualLoading
+                        PullToRefreshBox(
+                            isRefreshing = refreshing,
+                            onRefresh = {
+                                scope.launch {
+                                    when (currentTab) {
+                                        MainTab.VIRTUAL -> {
+                                            val ou = selectedVirtualCourseId
+                                            if (ou != null) repo.loadVirtualCourse(ou, force = true)
+                                            else repo.loadVirtualOverviewIfNeeded(force = true)
+                                        }
+                                        MainTab.COURSE -> repo.loadAcademicIfNeeded(force = true)
+                                        MainTab.CENTRAL -> repo.loadFinanceAndServicesIfNeeded(force = true)
+                                        MainTab.SEMESTER -> {
+                                            repo.refreshDashboard()
+                                            repo.preloadHomeContextIfNeeded(force = true)
+                                        }
+                                    }
+                                }
+                            },
+                            state = pullState,
+                            modifier = Modifier.fillMaxSize()
+                        ) {
                         when (currentTab) {
                             MainTab.SEMESTER -> SemesterScreen(
                                 dashboard = state.dashboard,
@@ -648,8 +723,22 @@ fun App(initialTab: Int = 0) {
                                 onCloseRiskyAttendance = { showRiskyAttendanceModal = false },
                                 onOpenNotifications = { navigateToTab(MainTab.CENTRAL) },
                                 freqAlertThreshold = state.freqAlertThreshold,
+                                schedule = state.schedule,
+                                virtualOverview = state.virtualOverview,
+                                onOpenSearch = { showGlobalSearchModal = true },
+                                onOpenSchedule = {
+                                    currentTab = MainTab.COURSE
+                                    courseSubTab = 2
+                                },
+                                onOpenVirtualAssignment = { item ->
+                                    currentTab = MainTab.VIRTUAL
+                                    selectedVirtualCourseId = item.orgUnitId
+                                    virtualCourseSubTab = 1
+                                    selectedVirtualAssignment = item
+                                },
                                 loading = state.loading,
-                                listState = semesterListState
+                                listState = semesterListState,
+                                renderSheetsInPlace = false
                             )
 
                             MainTab.COURSE -> AcademicScreen(
@@ -711,7 +800,7 @@ fun App(initialTab: Int = 0) {
                                 selectedAnnouncement = selectedVirtualAnnouncement,
                                 onDismissAssignment = { selectedVirtualAssignment = null },
                                 onDismissAnnouncement = { selectedVirtualAnnouncement = null },
-                                renderSheetsInPlace = state.activeDocumentViewer == null
+                                renderSheetsInPlace = false
                             )
 
                             MainTab.CENTRAL -> CentralScreen(
@@ -745,21 +834,54 @@ fun App(initialTab: Int = 0) {
                                 onInstallUpdate = { installAppUpdate() },
                                 onLogout = { scope.launch { repo.logout() } },
                                 loading = state.loading,
-                                listState = centralListState
+                                listState = centralListState,
+                                onOpenAllNotifications = { showAllNotificationsModal = true },
+                                renderSheetsInPlace = false,
+                                onRequestLogout = { confirmLogoutDialog = true }
                             )
+                        }
                         }
                     }
 
+                    val navItemColors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = colors.accent,
+                        selectedTextColor = colors.accent,
+                        indicatorColor = colors.accentSoft,
+                        unselectedIconColor = colors.textSecondary,
+                        unselectedTextColor = colors.textSecondary
+                    )
+                    val railItemColors = NavigationRailItemDefaults.colors(
+                        selectedIconColor = colors.accent,
+                        selectedTextColor = colors.accent,
+                        indicatorColor = colors.accentSoft,
+                        unselectedIconColor = colors.textSecondary,
+                        unselectedTextColor = colors.textSecondary
+                    )
+
                     if (isDesktop) {
                         Row(modifier = Modifier.fillMaxSize()) {
-                            NavigationRail(containerColor = colors.surface) {
-                                Spacer(Modifier.height(12.dp))
+                            NavigationRail(containerColor = colors.surface, contentColor = colors.textPrimary) {
+                                Spacer(Modifier.height(16.dp))
                                 MainTab.entries.forEach { tab ->
+                                    val selected = tab == currentTab
                                     NavigationRailItem(
-                                        selected = tab == currentTab,
+                                        selected = selected,
                                         onClick = { navigateToTab(tab) },
-                                        icon = { Icon(tab.icon, contentDescription = tab.label) },
-                                        label = { Text(tab.label) }
+                                        colors = railItemColors,
+                                        icon = {
+                                            BadgedBox(
+                                                badge = {
+                                                    if (tab == MainTab.CENTRAL && unreadCount > 0) {
+                                                        Badge(containerColor = colors.red, contentColor = Color.White) {
+                                                            Text(if (unreadCount > 9) "9+" else unreadCount.toString())
+                                                        }
+                                                    }
+                                                }
+                                            ) {
+                                                Icon(if (selected) tab.selectedIcon else tab.icon, contentDescription = tab.label)
+                                            }
+                                        },
+                                        label = { Text(tab.label, fontSize = 11.5.sp) }
                                     )
                                 }
                             }
@@ -773,13 +895,27 @@ fun App(initialTab: Int = 0) {
                             containerColor = colors.background,
                             topBar = topBar,
                             bottomBar = {
-                                NavigationBar(containerColor = colors.surface) {
+                                NavigationBar(containerColor = colors.surface, tonalElevation = 0.dp) {
                                     MainTab.entries.forEach { tab ->
+                                        val selected = tab == currentTab
                                         NavigationBarItem(
-                                            selected = tab == currentTab,
+                                            selected = selected,
                                             onClick = { navigateToTab(tab) },
-                                            icon = { Icon(tab.icon, contentDescription = tab.label) },
-                                            label = { Text(tab.label, fontSize = 11.sp) }
+                                            colors = navItemColors,
+                                            icon = {
+                                                BadgedBox(
+                                                    badge = {
+                                                        if (tab == MainTab.CENTRAL && unreadCount > 0) {
+                                                            Badge(containerColor = colors.red, contentColor = Color.White) {
+                                                                Text(if (unreadCount > 9) "9+" else unreadCount.toString())
+                                                            }
+                                                        }
+                                                    }
+                                                ) {
+                                                    Icon(if (selected) tab.selectedIcon else tab.icon, contentDescription = tab.label)
+                                                }
+                                            },
+                                            label = { Text(tab.label, fontSize = 11.5.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium) }
                                         )
                                     }
                                 }
@@ -800,6 +936,80 @@ fun App(initialTab: Int = 0) {
                                 bodyContent()
                             }
                         }
+                    }
+
+                    // Camada raiz de Sheets e Alertas (cobre a NavigationBar)
+                    when {
+                        state.activeDocumentViewer != null -> Unit
+                        selectedVirtualAssignment != null -> VirtualAssignmentSheet(
+                            assignment = selectedVirtualAssignment!!,
+                            onViewD2LFile = { path, title, courseName, fileName ->
+                                scope.launch { repo.openD2LFile(path, title, courseName, fileName) }
+                            },
+                            onDownloadD2LFile = { path, fileName, courseName ->
+                                scope.launch { repo.downloadD2LFile(path, fileName, courseName) }
+                            },
+                            onDownloadBatch = { items ->
+                                scope.launch { repo.downloadD2LFilesBatch(items) }
+                            },
+                            downloadingFileKey = state.downloadingFileKey,
+                            onOpenWeb = { url -> repo.openSalaVirtualWeb(url) },
+                            onDismiss = { selectedVirtualAssignment = null }
+                        )
+                        selectedVirtualAnnouncement != null -> VirtualAnnouncementSheet(
+                            announcement = selectedVirtualAnnouncement!!,
+                            onViewD2LFile = { path, title, courseName, fileName ->
+                                scope.launch { repo.openD2LFile(path, title, courseName, fileName) }
+                            },
+                            onDownloadD2LFile = { path, fileName, courseName ->
+                                scope.launch { repo.downloadD2LFile(path, fileName, courseName) }
+                            },
+                            onDownloadBatch = { items ->
+                                scope.launch { repo.downloadD2LFilesBatch(items) }
+                            },
+                            downloadingFileKey = state.downloadingFileKey,
+                            onDismiss = { selectedVirtualAnnouncement = null }
+                        )
+                        activeSubject != null -> AppleSubjectDetailSheet(
+                            subject = activeSubject,
+                            freqAlertThreshold = state.freqAlertThreshold,
+                            onDismiss = { selectedSubjectCode = null }
+                        )
+                        showRiskyAttendanceModal && riskySubjects.isNotEmpty() -> AppleAttendanceLimitSheet(
+                            subjects = riskySubjects,
+                            onSelectSubject = { code ->
+                                showRiskyAttendanceModal = false
+                                selectedSubjectCode = code
+                            },
+                            onDismiss = { showRiskyAttendanceModal = false }
+                        )
+                        showAllNotificationsModal -> AppleAllNotificationsSheet(
+                            notifications = state.notifications,
+                            onDismiss = { showAllNotificationsModal = false }
+                        )
+                        showGlobalSearchModal -> GlobalSearchSheet(
+                            subjects = mergedSubjects,
+                            schedule = state.schedule,
+                            curriculum = state.curriculum,
+                            virtualOverview = state.virtualOverview,
+                            virtualCourseDetails = state.virtualCourseDetails,
+                            onSelectResult = ::handleGlobalSearchResult,
+                            onDismiss = { showGlobalSearchModal = false }
+                        )
+                    }
+
+                    if (confirmLogoutDialog) {
+                        AppleAlert(
+                            title = "Sair da conta?",
+                            message = "Sua sessão salva será removida deste dispositivo.",
+                            confirmText = "Sair",
+                            confirmDestructive = true,
+                            onConfirm = {
+                                confirmLogoutDialog = false
+                                scope.launch { repo.logout() }
+                            },
+                            onDismiss = { confirmLogoutDialog = false }
+                        )
                     }
 
                     if (showUpdateDialog && availableUpdate != null) {
@@ -1023,6 +1233,19 @@ fun App(initialTab: Int = 0) {
                                                     onCloseRiskyAttendance = { showRiskyAttendanceModal = false },
                                                     onOpenNotifications = { navigateToTab(MainTab.CENTRAL) },
                                                     freqAlertThreshold = state.freqAlertThreshold,
+                                                    schedule = state.schedule,
+                                                    virtualOverview = state.virtualOverview,
+                                                    onOpenSearch = { showGlobalSearchModal = true },
+                                                    onOpenSchedule = {
+                                                        currentTab = MainTab.COURSE
+                                                        courseSubTab = 2
+                                                    },
+                                                    onOpenVirtualAssignment = { item ->
+                                                        currentTab = MainTab.VIRTUAL
+                                                        selectedVirtualCourseId = item.orgUnitId
+                                                        virtualCourseSubTab = 1
+                                                        selectedVirtualAssignment = item
+                                                    },
                                                     loading = state.loading,
                                                     listState = semesterListState,
                                                     renderSheetsInPlace = false
@@ -1147,12 +1370,18 @@ fun App(initialTab: Int = 0) {
                                                 isRefreshing = refreshing,
                                                 onRefresh = {
                                                     scope.launch {
-                                                        if (currentTab == MainTab.VIRTUAL) {
-                                                            val ou = selectedVirtualCourseId
-                                                            if (ou != null) repo.loadVirtualCourse(ou, force = true)
-                                                            else repo.loadVirtualOverviewIfNeeded(force = true)
-                                                        } else {
-                                                            repo.refreshDashboard()
+                                                        when (currentTab) {
+                                                            MainTab.VIRTUAL -> {
+                                                                val ou = selectedVirtualCourseId
+                                                                if (ou != null) repo.loadVirtualCourse(ou, force = true)
+                                                                else repo.loadVirtualOverviewIfNeeded(force = true)
+                                                            }
+                                                            MainTab.COURSE -> repo.loadAcademicIfNeeded(force = true)
+                                                            MainTab.CENTRAL -> repo.loadFinanceAndServicesIfNeeded(force = true)
+                                                            MainTab.SEMESTER -> {
+                                                                repo.refreshDashboard()
+                                                                repo.preloadHomeContextIfNeeded(force = true)
+                                                            }
                                                         }
                                                     }
                                                 },
@@ -1331,6 +1560,15 @@ fun App(initialTab: Int = 0) {
                                 showAllNotificationsModal -> AppleAllNotificationsSheet(
                                     notifications = state.notifications,
                                     onDismiss = { showAllNotificationsModal = false }
+                                )
+                                showGlobalSearchModal -> GlobalSearchSheet(
+                                    subjects = mergedSubjects,
+                                    schedule = state.schedule,
+                                    curriculum = state.curriculum,
+                                    virtualOverview = state.virtualOverview,
+                                    virtualCourseDetails = state.virtualCourseDetails,
+                                    onSelectResult = ::handleGlobalSearchResult,
+                                    onDismiss = { showGlobalSearchModal = false }
                                 )
                             }
 

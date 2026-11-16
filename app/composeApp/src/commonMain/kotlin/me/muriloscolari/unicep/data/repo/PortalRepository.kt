@@ -502,8 +502,8 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
     suspend fun loadAcademicIfNeeded(force: Boolean = false) = withToken { server, token ->
         if (!force && _state.value.curriculum != null && _state.value.schedule != null && !_state.value.isOffline) return@withToken
         _state.update { it.copy(loading = true) }
-        val curr = runCatching { api.curriculum(server, token) }.getOrNull()
-        val sched = runCatching { api.schedule(server, token) }.getOrNull()
+        val curr = runCatching { api.curriculum(server, token) }.onFailure { if (it is UnauthorizedException) throw it }.getOrNull()
+        val sched = runCatching { api.schedule(server, token) }.onFailure { if (it is UnauthorizedException) throw it }.getOrNull()
         val ownerRa = _state.value.dashboard?.student?.ra ?: PlatformBridge.getString(PrefKeys.RA).orEmpty()
         var syncedNow: Long? = null
         if (ownerRa.isNotBlank() && (curr != null || sched != null)) {
@@ -523,6 +523,29 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
                 curriculum = curr ?: it.curriculum,
                 schedule = sched ?: it.schedule
             )
+        }
+    }
+
+    suspend fun preloadHomeContextIfNeeded(force: Boolean = false) = withToken { server, token ->
+        val needSchedule = force || _state.value.schedule == null
+        val needVirtual = force || _state.value.virtualOverview == null
+        if (!needSchedule && !needVirtual) return@withToken
+
+        val ownerRa = _state.value.dashboard?.student?.ra ?: PlatformBridge.getString(PrefKeys.RA).orEmpty()
+        if (needSchedule) {
+            val sched = runCatching { api.schedule(server, token) }.onFailure { if (it is UnauthorizedException) throw it }.getOrNull()
+            if (sched != null) {
+                if (ownerRa.isNotBlank()) writeCached(PrefKeys.CACHE_SCHEDULE, sched)
+                _state.update { it.copy(schedule = sched) }
+            }
+        }
+        if (needVirtual) {
+            val ov = runCatching { api.virtualOverview(server, token, forceRefresh = false) }.onFailure { if (it is UnauthorizedException) throw it }.getOrNull()
+            if (ov != null) {
+                if (ownerRa.isNotBlank()) writeCached(PrefKeys.CACHE_VIRTUAL_OVERVIEW, ov)
+                _state.update { it.copy(virtualOverview = ov) }
+                evaluateVirtualDeadlineAlerts(ov.upcomingAssignments)
+            }
         }
     }
 

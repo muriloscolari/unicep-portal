@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/charmap"
@@ -276,6 +277,39 @@ func (m *Manager) FetchHTML(ctx context.Context, ra, relPath string) (string, St
 	return decoded, info, nacOpen, nil
 }
 
+// PostFormHTML submits an ISO-8859-1 form to a portal path and decodes the HTML response, retrying once on session expiry.
+func (m *Manager) PostFormHTML(ctx context.Context, ra, relPath string, values url.Values) (string, StudentInfo, bool, error) {
+	sess, err := m.getOrCreateSession(ra, "alunograd")
+	if err != nil {
+		return "", StudentInfo{}, false, err
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+
+	targetURL := m.normalizeURL(relPath)
+	if sess.info.Name == "" {
+		if err := m.reloginLocked(ctx, sess, ra); err != nil {
+			return "", StudentInfo{}, false, err
+		}
+	}
+
+	raw, _, err := m.doPostFormRaw(ctx, sess.client, targetURL, values)
+	if errors.Is(err, ErrSessionExpired) {
+		if err := m.reloginLocked(ctx, sess, ra); err != nil {
+			return "", StudentInfo{}, false, err
+		}
+		raw, _, err = m.doPostFormRaw(ctx, sess.client, targetURL, values)
+	}
+	if err != nil {
+		return "", StudentInfo{}, false, err
+	}
+	decoded, err := DecodePortalHTML(raw)
+	if err != nil {
+		return "", StudentInfo{}, false, err
+	}
+	return decoded, sess.info, sess.nacOpen, nil
+}
+
 // FetchRaw fetches raw bytes and Content-Type for HTML pages or PDFs, transparently refreshing expired sessions.
 func (m *Manager) FetchRaw(ctx context.Context, ra, relPath string) ([]byte, string, StudentInfo, bool, error) {
 	sess, err := m.getOrCreateSession(ra, "alunograd")
@@ -321,6 +355,37 @@ func (m *Manager) doGetRaw(ctx context.Context, client *http.Client, targetURL s
 	if err != nil {
 		return nil, "", err
 	}
+	resp, err := client.Do(req)
+	if err != nil {
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) && errors.Is(urlErr.Err, ErrSessionExpired) {
+			return nil, "", ErrSessionExpired
+		}
+		if errors.Is(err, ErrSessionExpired) {
+			return nil, "", ErrSessionExpired
+		}
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 16*1024*1024))
+	if err != nil {
+		return nil, "", err
+	}
+	ct := resp.Header.Get("Content-Type")
+	return body, ct, nil
+}
+
+func (m *Manager) doPostFormRaw(ctx context.Context, client *http.Client, targetURL string, values url.Values) ([]byte, string, error) {
+	encoded, err := encodeFormISO88591(values)
+	if err != nil {
+		return nil, "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, strings.NewReader(encoded))
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := client.Do(req)
 	if err != nil {
 		var urlErr *url.Error
@@ -455,11 +520,12 @@ func escapeISO88591Bytes(b []byte) string {
 	return buf.String()
 }
 
-// DecodePortalHTML converts windows-1252 HTML responses to UTF-8 unless the document is explicitly UTF-8.
+// DecodePortalHTML converts windows-1252 HTML responses to UTF-8 unless the document is already valid UTF-8.
 func DecodePortalHTML(raw []byte) (string, error) {
+	if utf8.Valid(raw) {
+		return string(raw), nil
+	}
 	sample := strings.ToLower(string(raw[:min(len(raw), 1024)]))
-	// ambiente_estudante.asp declares both utf-8 and iso-8859-1; Chrome renders utf-8 for it,
-	// whereas report pages (/Templates/tela_janela2.dwt) only declare iso-8859-1.
 	if strings.Contains(sample, `<meta charset="utf-8"`) {
 		return string(raw), nil
 	}

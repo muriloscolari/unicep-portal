@@ -65,6 +65,7 @@ import me.muriloscolari.unicep.ui.designsystem.PortalDivider
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import me.muriloscolari.unicep.data.api.StudentInfo
+import me.muriloscolari.unicep.data.repo.parseScheduleEntries
 import me.muriloscolari.unicep.platform.buildScheduleExportData
 import me.muriloscolari.unicep.ui.designsystem.ExportActionModal
 import me.muriloscolari.unicep.ui.designsystem.GlassSurface
@@ -116,6 +117,9 @@ fun AcademicScreen(
     val inProgressCount = remember(transcript) { transcript.count { it.status == "C" } }
     val totalCount = transcript.size
     val canExportSchedule = selectedSubTab == 2 && schedule != null && schedule.rows.isNotEmpty()
+    val parsedScheduleEntries = remember(schedule) {
+        parseScheduleEntries(schedule, emptyList())
+    }
 
     fun matchesFilter(status: String?): Boolean = when (statusFilter) {
         CourseStatusFilter.ALL -> true
@@ -124,241 +128,12 @@ fun AcademicScreen(
         CourseStatusFilter.PENDING -> status != "A" && status != "C"
     }
 
-    if (style != DesignStyle.APPLE) {
-        Box(modifier = Modifier.fillMaxSize().background(colors.background)) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .appleScrollBoundaryHaptics(listState),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 104.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Curso", color = colors.textPrimary, style = MaterialTheme.typography.headlineLarge)
-                        if (canExportSchedule) {
-                            IconButton(
-                                onClick = {
-                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    showExportScheduleSheet = true
-                                }
-                            ) {
-                                Icon(
-                                    imageVector = PortalIcons.Share,
-                                    contentDescription = "Exportar horário das aulas",
-                                    tint = colors.accent
-                                )
-                            }
-                        }
-                    }
-                }
-
-            if (totalCount > 0) {
-                item {
-                    val ratio = (approvedCount.toFloat() / totalCount.toFloat()).coerceIn(0f, 1f)
-                    val pct = (ratio * 100f).toInt()
-                    PortalCard(modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Progresso do Curso", color = colors.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                            PortalBadge("$approvedCount/$totalCount ($pct%)", colors.green)
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(6.dp)
-                                .clip(CircleShape)
-                                .background(colors.surfaceSecondary)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth(ratio)
-                                    .fillMaxHeight()
-                                    .clip(CircleShape)
-                                    .background(colors.green)
-                            )
-                        }
-                        if (inProgressCount > 0) {
-                            Spacer(Modifier.height(6.dp))
-                            Text(
-                                text = "$inProgressCount disciplina(s) em andamento neste semestre",
-                                color = colors.textSecondary,
-                                fontSize = 12.sp
-                            )
-                        }
-                    }
-                }
-            }
-
-            item {
-                PortalSegmentedControl(
-                    options = listOf("Histórico", "Grade", "Horário"),
-                    selectedIndex = selectedSubTab,
-                    onSelect = { idx ->
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onSelectSubTab(idx)
-                    }
-                )
-            }
-
-            if (selectedSubTab < 2) {
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        PortalTextField(
-                            value = search,
-                            onValueChange = { search = it },
-                            label = "Filtrar disciplina..."
-                        )
-                        CourseFilterChipsRow(
-                            selected = statusFilter,
-                            onSelect = {
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                statusFilter = it
-                            }
-                        )
-                    }
-                }
-            }
-
-            when (selectedSubTab) {
-                0 -> {
-                    val list = transcript.filter {
-                        (search.isBlank() || it.name.contains(search, ignoreCase = true)) &&
-                            matchesFilter(it.status)
-                    }
-                    if (list.isEmpty()) {
-                        item {
-                            PortalCard(modifier = Modifier.fillMaxWidth()) {
-                                Text("Nenhuma disciplina encontrada no histórico.", color = colors.textSecondary, fontSize = 14.sp)
-                            }
-                        }
-                    } else {
-                        items(list, key = { "${it.name}_${it.yearSem}" }) { item ->
-                            val statusColor = when (item.status) {
-                                "A" -> colors.green
-                                "C" -> colors.accent
-                                "R" -> colors.red
-                                else -> colors.textSecondary
-                            }
-                            PortalCard(
-                                modifier = Modifier.fillMaxWidth(),
-                                onClick = if (item.syllabusUrl.isNotBlank()) ({ onOpenProxy(item.syllabusUrl) }) else null
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.Top
-                                ) {
-                                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                                        Text(item.name, color = colors.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                                        val meta = listOfNotNull(
-                                            item.yearSem.takeIf { it != "/" && it.isNotBlank() },
-                                            item.hours.takeIf { it.isNotBlank() }?.let { "${it}h" },
-                                            item.average.takeIf { it.isNotBlank() }?.let { "Média $it" },
-                                            item.freqPercent.takeIf { it.isNotBlank() }?.let { "Freq $it%" }
-                                        ).joinToString(" • ")
-                                        if (meta.isNotBlank()) {
-                                            Spacer(Modifier.height(3.dp))
-                                            Text(meta, color = colors.textSecondary, fontSize = 12.sp)
-                                        }
-                                    }
-                                    if (item.status.isNotBlank()) {
-                                        PortalBadge(item.statusLabel.ifBlank { item.status }, statusColor)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                1 -> {
-                    val matrix = curriculum?.matrix.orEmpty().filter { row ->
-                        val matchesQuery = search.isBlank() ||
-                            row.name.contains(search, ignoreCase = true) ||
-                            row.code.contains(search, ignoreCase = true)
-                        val rowStatus = transcriptStatusByName[row.name.trim().uppercase()]
-                        matchesQuery && matchesFilter(rowStatus)
-                    }
-                    if (matrix.isEmpty()) {
-                        item {
-                            PortalCard(modifier = Modifier.fillMaxWidth()) {
-                                Text("Matriz curricular indisponível ou sem resultados.", color = colors.textSecondary, fontSize = 14.sp)
-                            }
-                        }
-                    } else {
-                        item {
-                            PortalCard(contentPadding = PaddingValues(0.dp)) {
-                                matrix.forEachIndexed { idx, row ->
-                                    if (idx > 0) PortalDivider(Modifier.padding(start = 16.dp))
-                                    PortalListRow(
-                                        title = row.name,
-                                        subtitle = listOfNotNull(
-                                            row.period.takeIf { it.isNotBlank() },
-                                            row.code,
-                                            row.hours.takeIf { it.isNotBlank() }?.let { "${it}h" },
-                                            row.prerequisite.takeIf { it.isNotBlank() && it != "-" }?.let { "Pré-req: $it" }
-                                        ).joinToString(" • ")
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                else -> {
-                    val rows = schedule?.rows.orEmpty()
-                    if (rows.isEmpty()) {
-                        item {
-                            PortalCard(modifier = Modifier.fillMaxWidth()) {
-                                Text(
-                                    "O quadro de horários retornou vazio no portal neste momento (comum fora do horário letivo ou fins de semana).",
-                                    color = colors.textSecondary,
-                                    fontSize = 14.sp
-                                )
-                            }
-                        }
-                    } else {
-                        item {
-                            PortalCard(contentPadding = PaddingValues(0.dp)) {
-                                rows.forEachIndexed { idx, cols ->
-                                    if (idx > 0) PortalDivider(Modifier.padding(start = 16.dp))
-                                    PortalListRow(
-                                        title = cols.firstOrNull().orEmpty(),
-                                        subtitle = cols.drop(1).filter { it.isNotBlank() }.joinToString(" • ")
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-            if (showExportScheduleSheet && schedule != null) {
-                ExportActionModal(
-                    fileName = "unicep_horario",
-                    data = buildScheduleExportData(student = student, schedule = schedule),
-                    onDismiss = { showExportScheduleSheet = false }
-                )
-            }
-        }
-        return
-    }
-
-    // Apple Liquid Glass AcademicScreen
+    val isApple = style == DesignStyle.APPLE
     BoxWithConstraints(modifier = Modifier.fillMaxSize().background(colors.background)) {
         val isWide = maxWidth >= 640.dp
         val horizontalPad = if (isWide) 24.dp else 16.dp
-        val topPad = appleInsets.calculateTopPadding()
-        val bottomPad = appleInsets.calculateBottomPadding()
+        val topPad = if (isApple) appleInsets.calculateTopPadding() else 12.dp
+        val bottomPad = if (isApple) appleInsets.calculateBottomPadding() else 24.dp
 
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
             LazyColumn(
@@ -384,28 +159,52 @@ fun AcademicScreen(
                         Text(
                             text = "Curso",
                             color = colors.textPrimary,
-                            style = appleType.largeTitle
+                            style = if (isApple) appleType.largeTitle else MaterialTheme.typography.headlineLarge
                         )
                         if (canExportSchedule) {
-                            GlassSurface(
-                                modifier = Modifier
-                                    .size(34.dp)
-                                    .clip(CircleShape)
-                                    .pointerHoverIcon(PointerIcon.Hand)
-                                    .clickable {
-                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        showExportScheduleSheet = true
-                                    },
-                                shape = CircleShape,
-                                shadowElevation = 8.dp
-                            ) {
-                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = PortalIcons.Share,
-                                        contentDescription = "Exportar horário das aulas",
-                                        tint = colors.accent,
-                                        modifier = Modifier.size(16.dp)
-                                    )
+                            if (isApple) {
+                                GlassSurface(
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .clip(CircleShape)
+                                        .pointerHoverIcon(PointerIcon.Hand)
+                                        .clickable {
+                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            showExportScheduleSheet = true
+                                        },
+                                    shape = CircleShape,
+                                    shadowElevation = 8.dp
+                                ) {
+                                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = PortalIcons.Share,
+                                            contentDescription = "Exportar horário das aulas",
+                                            tint = colors.accent,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            } else {
+                                Surface(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .pointerHoverIcon(PointerIcon.Hand)
+                                        .clickable {
+                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            showExportScheduleSheet = true
+                                        },
+                                    shape = CircleShape,
+                                    color = colors.surfaceSecondary
+                                ) {
+                                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = PortalIcons.Share,
+                                            contentDescription = "Exportar horário das aulas",
+                                            tint = colors.accent,
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -681,13 +480,62 @@ fun AcademicScreen(
 
                         else -> {
                             val rows = schedule?.rows.orEmpty()
-                            if (rows.isEmpty()) {
+                            val parsedEntries = parsedScheduleEntries
+                            if (rows.isEmpty() && parsedEntries.isEmpty()) {
                                 item(key = "empty_schedule") {
                                     AppleEmptyState(
                                         icon = PortalIcons.Calendar,
                                         title = "Sem aulas exibidas",
                                         subtitle = "O quadro de horários retornou vazio no portal neste momento (comum fora do horário letivo ou fins de semana)."
                                     )
+                                }
+                            } else if (parsedEntries.isNotEmpty() && parsedEntries.any { it.dayOfWeekIso > 0 }) {
+                                val groupedByDay = parsedEntries.groupBy { it.dayLabel.ifBlank { "Horário" } }
+                                groupedByDay.forEach { (dayTitle, dayClasses) ->
+                                    item(key = "sched_day_$dayTitle") {
+                                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            PortalSectionHeader(title = dayTitle)
+                                            PortalCard(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                contentPadding = PaddingValues(0.dp)
+                                            ) {
+                                                dayClasses.forEachIndexed { idx, entry ->
+                                                    if (idx > 0) PortalDivider(Modifier.padding(start = 16.dp))
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .defaultMinSize(minHeight = 50.dp)
+                                                            .padding(horizontal = 16.dp, vertical = 11.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Text(
+                                                            text = entry.timeLabel.ifBlank { "Horário" },
+                                                            color = colors.textSecondary,
+                                                            style = tabularNumberStyle(appleType.subheadline),
+                                                            maxLines = 1,
+                                                            modifier = Modifier.width(110.dp)
+                                                        )
+                                                        Spacer(Modifier.width(10.dp))
+                                                        Column(modifier = Modifier.weight(1f)) {
+                                                            Text(
+                                                                text = entry.subjectName,
+                                                                color = colors.textPrimary,
+                                                                style = appleType.body
+                                                            )
+                                                            if (entry.roomOrMeta.isNotBlank()) {
+                                                                Spacer(Modifier.height(2.dp))
+                                                                Text(
+                                                                    text = entry.roomOrMeta,
+                                                                    color = colors.textSecondary,
+                                                                    style = appleType.footnote
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             } else {
                                 item(key = "schedule_card") {

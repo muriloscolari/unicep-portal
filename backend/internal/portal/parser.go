@@ -393,6 +393,55 @@ func ParseCurriculum(html string) ([]CurriculumItem, error) {
 	return items, nil
 }
 
+// ParseScheduleForm extracts the year/semester filter form from quadro_horarios.asp.
+func ParseScheduleForm(html string) (action string, method string, values map[string]string, found bool) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		return "", "", nil, false
+	}
+	form := doc.Find("form").First()
+	if form.Length() == 0 {
+		return "", "", nil, false
+	}
+	action, _ = form.Attr("action")
+	method, _ = form.Attr("method")
+	if strings.TrimSpace(method) == "" {
+		method = "GET"
+	}
+	vals := make(map[string]string)
+	form.Find("input[name]").Each(func(_ int, sel *goquery.Selection) {
+		name, ok := sel.Attr("name")
+		if !ok || strings.TrimSpace(name) == "" {
+			return
+		}
+		t, _ := sel.Attr("type")
+		tLower := strings.ToLower(strings.TrimSpace(t))
+		if tLower == "button" || tLower == "reset" {
+			return
+		}
+		v, _ := sel.Attr("value")
+		vals[name] = v
+	})
+	form.Find("select[name]").Each(func(_ int, sel *goquery.Selection) {
+		name, ok := sel.Attr("name")
+		if !ok || strings.TrimSpace(name) == "" {
+			return
+		}
+		selected := sel.Find("option[selected]").First()
+		if selected.Length() == 0 {
+			selected = sel.Find("option").First()
+		}
+		if selected.Length() > 0 {
+			v, exists := selected.Attr("value")
+			if !exists {
+				v = cleanText(selected.Text())
+			}
+			vals[name] = v
+		}
+	})
+	return strings.TrimSpace(action), strings.ToUpper(strings.TrimSpace(method)), vals, len(vals) > 0
+}
+
 // ParseSchedule parses quadro_horarios.asp generically into headers + rows.
 func ParseSchedule(html string) (ScheduleResponse, error) {
 	res := ScheduleResponse{Title: "Horário das Aulas", Headers: []string{}, Rows: [][]string{}}
@@ -400,21 +449,90 @@ func ParseSchedule(html string) (ScheduleResponse, error) {
 	if err != nil {
 		return res, err
 	}
-	doc.Find("table.topoesq tr").Each(func(_ int, row *goquery.Selection) {
+	table := findDataTable(doc, "HORÁRIOS")
+	if table == nil {
+		table = findDataTable(doc, "SEGUNDA")
+	}
+	if table == nil {
+		t := doc.Find("table.topoesq").First()
+		if t.Length() > 0 {
+			table = t
+		}
+	}
+	if table == nil {
+		return res, nil
+	}
+	headerFound := false
+	table.Find("tr").Each(func(_ int, row *goquery.Selection) {
+		if row.Find("table").Length() > 0 {
+			return
+		}
 		cells := row.ChildrenFiltered("td, th")
 		if cells.Length() < 2 {
 			return
 		}
 		vals := make([]string, 0, cells.Length())
+		allBlank := true
 		cells.Each(func(_ int, c *goquery.Selection) {
-			vals = append(vals, cleanText(c.Text()))
+			txt := cleanText(c.Text())
+			if txt != "" {
+				allBlank = false
+			}
+			vals = append(vals, txt)
 		})
-		if len(res.Headers) == 0 {
-			res.Headers = vals
-		} else {
-			res.Rows = append(res.Rows, vals)
+		if allBlank {
+			return
 		}
+		if !headerFound {
+			joined := strings.ToUpper(strings.Join(vals, " "))
+			if strings.Contains(joined, "HORÁRIO") || strings.Contains(joined, "HORARIO") || strings.Contains(joined, "SEGUNDA") {
+				res.Headers = vals
+				headerFound = true
+			}
+			return
+		}
+		// Skip rows where all class columns (after time/first column) are empty
+		hasContent := false
+		for _, v := range vals {
+			if v != "" {
+				hasContent = true
+				break
+			}
+		}
+		if !hasContent {
+			return
+		}
+		res.Rows = append(res.Rows, vals)
 	})
+	if !headerFound {
+		// Fallback for generic topoesq tables without HORÁRIOS/SEGUNDA header
+		table.Find("tr").Each(func(_ int, row *goquery.Selection) {
+			if row.Find("table").Length() > 0 {
+				return
+			}
+			cells := row.ChildrenFiltered("td, th")
+			if cells.Length() < 2 {
+				return
+			}
+			vals := make([]string, 0, cells.Length())
+			allBlank := true
+			cells.Each(func(_ int, c *goquery.Selection) {
+				txt := cleanText(c.Text())
+				if txt != "" {
+					allBlank = false
+				}
+				vals = append(vals, txt)
+			})
+			if allBlank {
+				return
+			}
+			if len(res.Headers) == 0 {
+				res.Headers = vals
+			} else {
+				res.Rows = append(res.Rows, vals)
+			}
+		})
+	}
 	return res, nil
 }
 
