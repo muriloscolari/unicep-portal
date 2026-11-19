@@ -107,7 +107,15 @@ func TestD2LClientPassiveFlow(t *testing.T) {
 		if !requireSess(w, r) {
 			return
 		}
-		_, _ = w.Write([]byte(`[{"Status":3,"Feedback":{"Score":9.5,"Feedback":{"Text":"Excelente"}},"Submissions":[{"Id":55,"SubmissionDate":"2026-11-14T18:00:00Z","Files":[{"FileId":88,"FileName":"entrega.pdf","Size":1024}]}]}]`))
+		_, _ = w.Write([]byte(`[{"Status":3,"Feedback":{"Score":9.5,"Feedback":{"Text":"Excelente"}},"Submissions":[{"Id":55,"SubmissionDate":"2026-11-14T18:00:00Z","Files":[{"FileId":88,"FileName":"entrega.pdf","Size":1024,"IsDeleted":false},{"FileId":89,"FileName":"antigo.pdf","Size":512,"IsDeleted":true}]}]}]`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/50001/dropbox/folders/10/submissions/55/files/88", func(w http.ResponseWriter, r *http.Request) {
+		if !requireSess(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/pdf")
+		w.Header().Set("Content-Disposition", `attachment; filename="entrega.pdf"`)
+		_, _ = w.Write([]byte("%PDF-1.4-SUB"))
 	})
 	mux.HandleFunc("/d2l/api/le/1.74/50001/dropbox/folders/11/submissions/", func(w http.ResponseWriter, r *http.Request) {
 		if !requireSess(w, r) {
@@ -174,6 +182,15 @@ func TestD2LClientPassiveFlow(t *testing.T) {
 	if ov.UpcomingAssignments[0].Status != "graded" || ov.UpcomingAssignments[0].Score == nil || *ov.UpcomingAssignments[0].Score != 9.5 {
 		t.Fatalf("unexpected assignment status: %+v", ov.UpcomingAssignments[0])
 	}
+	subFiles := ov.UpcomingAssignments[0].SubmittedFiles
+	wantSubPath := "/d2l/api/le/1.74/50001/dropbox/folders/10/submissions/55/files/88"
+	if len(subFiles) != 1 || subFiles[0].FileID != 88 || subFiles[0].DownloadPath != wantSubPath {
+		t.Fatalf("expected 1 active submitted file with DownloadPath %q, got %+v", wantSubPath, subFiles)
+	}
+	subRaw, subCT, _, err := mgr.FetchRaw(ctx, "1234567", subFiles[0].DownloadPath)
+	if err != nil || string(subRaw) != "%PDF-1.4-SUB" || subCT != "application/pdf" {
+		t.Fatalf("unexpected FetchRaw submission result: err=%v ct=%q raw=%q", err, subCT, string(subRaw))
+	}
 	if len(ov.Announcements) != 2 || strings.Contains(ov.Announcements[1].Body, "alert") {
 		t.Fatalf("unexpected sanitized announcements: %+v", ov.Announcements)
 	}
@@ -215,6 +232,7 @@ func TestIsAllowedFilePath(t *testing.T) {
 	allowed := []string{
 		"/d2l/api/le/1.74/50001/content/topics/501/file?stream=false",
 		"/d2l/api/le/1.74/50001/dropbox/folders/10/attachments/77",
+		"/d2l/api/le/1.74/50001/dropbox/folders/10/submissions/55/files/88",
 		"/content/enforced/50001-DSW/aula1.pdf?ou=50001",
 	}
 	for _, p := range allowed {
@@ -227,6 +245,10 @@ func TestIsAllowedFilePath(t *testing.T) {
 		"",
 		"https://evil.example/file.pdf",
 		"/d2l/api/le/1.74/50001/dropbox/folders/10/submissions/",
+		"/d2l/api/le/1.74/50001/dropbox/folders/10/submissions/55/files/88/markAsRead",
+		"/d2l/api/le/1.74/50001/dropbox/folders/10/submissions/0/files/88",
+		"/d2l/api/le/1.74/50001/dropbox/folders/10/submissions/abc/files/88",
+		"/d2l/api/le/1.74/50001/dropbox/folders/10/submissions/55/files/",
 		"/d2l/api/le/1.74/50001/content/../../secret",
 		"/d2l/lp/auth/login/login.d2l",
 	}

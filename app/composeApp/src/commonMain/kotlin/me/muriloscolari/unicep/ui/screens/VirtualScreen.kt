@@ -111,6 +111,7 @@ import me.muriloscolari.unicep.ui.designsystem.PortalSegmentedControl
 import me.muriloscolari.unicep.ui.designsystem.SelectableRichText
 import me.muriloscolari.unicep.ui.designsystem.appleScrollBoundaryHaptics
 import me.muriloscolari.unicep.ui.designsystem.tabularNumberStyle
+import me.muriloscolari.unicep.ui.util.isInAppPreviewSupported
 import me.muriloscolari.unicep.ui.util.shouldDirectDownloadOnWeb
 import me.muriloscolari.unicep.ui.util.toDisplayTitle
 
@@ -2185,25 +2186,69 @@ private fun VirtualAssignmentSheetContent(
 
     if (assignment.submittedFiles.isNotEmpty() || assignment.submissionDate.isNotBlank()) {
         Spacer(Modifier.height(12.dp))
-        PortalSectionHeader(title = "Seu Envio")
-        Spacer(Modifier.height(4.dp))
-        PortalCard {
-            SelectionContainer {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    if (assignment.submissionDate.isNotBlank()) {
-                        Text(
-                            text = "Enviado em ${formatIsoDateTime(assignment.submissionDate)}",
-                            color = colors.textSecondary,
-                            fontSize = 12.sp
-                        )
+        val downloadableSubmitted = assignment.submittedFiles.filter { it.downloadPath.isNotBlank() }
+        PortalSectionHeader(
+            title = "Seu Envio",
+            trailing = if (downloadableSubmitted.size > 1) {
+                {
+                    TextButton(
+                        modifier = Modifier.pointerHoverIcon(PointerIcon.Hand),
+                        onClick = {
+                            onDownloadBatch(
+                                downloadableSubmitted.map {
+                                    VirtualDownloadRequest(
+                                        path = it.downloadPath,
+                                        fileName = it.fileName,
+                                        courseName = courseName
+                                    )
+                                }
+                            )
+                        }
+                    ) {
+                        Text("Baixar todos (${downloadableSubmitted.size})", color = colors.accent, fontSize = 12.sp)
                     }
-                    assignment.submittedFiles.forEach { sf ->
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = "• ${sf.fileName}",
-                            color = colors.textPrimary,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium
+                }
+            } else null
+        )
+        Spacer(Modifier.height(4.dp))
+        PortalCard(contentPadding = PaddingValues(0.dp)) {
+            if (assignment.submissionDate.isNotBlank()) {
+                SelectionContainer {
+                    Text(
+                        text = "Enviado em ${formatIsoDateTime(assignment.submissionDate)}",
+                        color = colors.textSecondary,
+                        fontSize = 12.sp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                    )
+                }
+                if (assignment.submittedFiles.isNotEmpty()) {
+                    PortalDivider()
+                }
+            }
+            assignment.submittedFiles.forEachIndexed { idx, sf ->
+                if (idx > 0) PortalDivider()
+                if (sf.downloadPath.isNotBlank()) {
+                    AttachmentRow(
+                        attachment = sf,
+                        isDownloading = downloadingFileKey == sf.downloadPath,
+                        onView = {
+                            onViewD2LFile(sf.downloadPath, sf.fileName, courseName, sf.fileName)
+                        },
+                        onDownload = {
+                            onDownloadD2LFile(sf.downloadPath, sf.fileName, courseName)
+                        }
+                    )
+                } else {
+                    SelectionContainer {
+                        PortalListRow(
+                            title = sf.fileName,
+                            subtitle = formatBytes(sf.size).ifBlank { "Atualize a atividade para baixar" },
+                            leadingIcon = PortalIcons.Document,
+                            leadingTint = colors.accent,
+                            showChevron = false,
+                            onClick = null
                         )
                     }
                 }
@@ -2407,7 +2452,7 @@ private fun AttachmentRow(
     val actionHint = if (isWeb) {
         if (shouldDirectDownloadOnWeb(attachment.fileName)) "Clique para baixar" else "Clique para abrir"
     } else {
-        "Toque para abrir"
+        if (isInAppPreviewSupported(attachment.fileName)) "Toque para abrir" else "Toque para baixar ou abrir"
     }
     val subtitle = if (sizeLabel.isNotBlank()) "$sizeLabel · $actionHint" else actionHint
     PortalListRow(
@@ -2446,7 +2491,7 @@ private fun AttachmentRow(
                 }
             }
         },
-        onClick = onView
+        onClick = if (attachment.downloadPath.isNotBlank()) onView else null
     )
 }
 

@@ -822,7 +822,9 @@ func IsAllowedFilePath(p string) bool {
 	}
 	lowerClean := strings.ToLower(cleaned)
 	if strings.HasPrefix(lowerClean, "/d2l/api/le/") {
-		return strings.Contains(lowerClean, "/attachments/") || strings.HasSuffix(lowerClean, "/file")
+		return strings.Contains(lowerClean, "/attachments/") ||
+			strings.HasSuffix(lowerClean, "/file") ||
+			isAllowedSubmissionFilePath(lowerClean)
 	}
 	allowed := []string{
 		"/content/enforced/",
@@ -834,6 +836,60 @@ func IsAllowedFilePath(p string) bool {
 		}
 	}
 	return false
+}
+
+func isAllowedD2LAPIVersion(seg string) bool {
+	if len(seg) < 3 || len(seg) > 12 {
+		return false
+	}
+	dots := 0
+	for i := 0; i < len(seg); i++ {
+		c := seg[i]
+		if c == '.' {
+			if i == 0 || i == len(seg)-1 {
+				return false
+			}
+			dots++
+			if dots > 1 {
+				return false
+			}
+		} else if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return dots == 1
+}
+
+func isPositiveIntSegment(seg string) bool {
+	if len(seg) == 0 || len(seg) > 20 || seg[0] == '0' {
+		return false
+	}
+	for i := 0; i < len(seg); i++ {
+		if seg[i] < '0' || seg[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func isAllowedSubmissionFilePath(lowerClean string) bool {
+	trimmed := strings.TrimPrefix(lowerClean, "/")
+	segs := strings.Split(trimmed, "/")
+	if len(segs) != 12 {
+		return false
+	}
+	return segs[0] == "d2l" &&
+		segs[1] == "api" &&
+		segs[2] == "le" &&
+		isAllowedD2LAPIVersion(segs[3]) &&
+		isPositiveIntSegment(segs[4]) &&
+		segs[5] == "dropbox" &&
+		segs[6] == "folders" &&
+		isPositiveIntSegment(segs[7]) &&
+		segs[8] == "submissions" &&
+		isPositiveIntSegment(segs[9]) &&
+		segs[10] == "files" &&
+		isPositiveIntSegment(segs[11])
 }
 
 func (m *Manager) fetchCourses(ctx context.Context, client *http.Client) ([]CourseSummary, error) {
@@ -1031,10 +1087,18 @@ func (m *Manager) fetchAssignments(ctx context.Context, client *http.Client, org
 						item.SubmissionDate = strings.TrimSpace(s.SubmissionDate)
 					}
 					for _, sf := range s.Files {
+						if sf.IsDeleted {
+							continue
+						}
+						var dlPath string
+						if s.ID > 0 && sf.FileID > 0 {
+							dlPath = fmt.Sprintf("/d2l/api/le/%s/%d/dropbox/folders/%d/submissions/%d/files/%d", leAPIVersion, orgUnitID, f.ID, s.ID, sf.FileID)
+						}
 						item.SubmittedFiles = append(item.SubmittedFiles, FileAttachment{
-							FileID:   sf.FileID,
-							FileName: strings.TrimSpace(sf.FileName),
-							Size:     sf.Size,
+							FileID:       sf.FileID,
+							FileName:     strings.TrimSpace(sf.FileName),
+							Size:         sf.Size,
+							DownloadPath: dlPath,
 						})
 					}
 				}
@@ -1591,9 +1655,10 @@ type rawEnrollmentsResp struct {
 }
 
 type rawAttachment struct {
-	FileID   int64  `json:"FileId"`
-	FileName string `json:"FileName"`
-	Size     int64  `json:"Size"`
+	FileID    int64  `json:"FileId"`
+	FileName  string `json:"FileName"`
+	Size      int64  `json:"Size"`
+	IsDeleted bool   `json:"IsDeleted"`
 }
 
 type rawNewsItem struct {

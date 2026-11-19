@@ -87,11 +87,40 @@ class TextAndTimeUtilTest {
         assertTrue(shouldDirectDownloadOnWeb("planilha.xlsx"))
         assertTrue(shouldDirectDownloadOnWeb("slides.pptx"))
         assertTrue(shouldDirectDownloadOnWeb("material.zip?dl=1"))
+        assertTrue(shouldDirectDownloadOnWeb("entrega.rar"))
+        assertTrue(shouldDirectDownloadOnWeb("pacote.7z"))
+        assertTrue(shouldDirectDownloadOnWeb("codigo.py"))
 
         assertFalse(shouldDirectDownloadOnWeb("aula1.pdf"))
         assertFalse(shouldDirectDownloadOnWeb("diagrama.png"))
         assertFalse(shouldDirectDownloadOnWeb("foto.jpg"))
+        assertFalse(shouldDirectDownloadOnWeb("animacao.webp"))
+        assertFalse(shouldDirectDownloadOnWeb("notas.txt"))
         assertFalse(shouldDirectDownloadOnWeb("pagina.html"))
         assertFalse(shouldDirectDownloadOnWeb("sem_extensao"))
+    }
+
+    @Test
+    fun inAppPreviewAndPlainTextDetectionCoversSupportedAndUnsupportedFormats() {
+        assertTrue(isInAppPreviewSupported("entrega.pdf"))
+        assertTrue(isInAppPreviewSupported("captura.png"))
+        assertTrue(isInAppPreviewSupported("foto.jpg"))
+        assertTrue(isInAppPreviewSupported("index.html"))
+        assertTrue(isInAppPreviewSupported("leia-me.txt"))
+        assertTrue(isInAppPreviewSupported("README.md"))
+        assertTrue(isInAppPreviewSupported("Main.kt"))
+        assertTrue(isInAppPreviewSupported("script.py"))
+        assertTrue(isInAppPreviewSupported("dados.json"))
+
+        assertFalse(isInAppPreviewSupported("relatorio.docx"))
+        assertFalse(isInAppPreviewSupported("Personagens (1).zip"))
+        assertFalse(isInAppPreviewSupported("arquivo.rar"))
+        assertFalse(isInAppPreviewSupported("planilha.xlsx"))
+        assertFalse(isInAppPreviewSupported("sem_extensao"))
+
+        assertTrue(isPlainTextDocumentFile("Main.kt"))
+        assertTrue(isPlainTextDocumentFile("consulta.sql"))
+        assertFalse(isPlainTextDocumentFile("aula.pdf"))
+        assertFalse(isPlainTextDocumentFile("foto.png"))
     }
 }

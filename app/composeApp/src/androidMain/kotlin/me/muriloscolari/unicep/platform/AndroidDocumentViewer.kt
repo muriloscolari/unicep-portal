@@ -7,6 +7,7 @@ import android.graphics.Color as AndroidColor
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.webkit.MimeTypeMap
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -37,8 +38,11 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -70,10 +74,12 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.CoroutineScope
@@ -83,9 +89,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import me.muriloscolari.unicep.ui.designsystem.CopyTextButton
 import me.muriloscolari.unicep.ui.designsystem.LocalAppleTypography
 import me.muriloscolari.unicep.ui.designsystem.LocalPortalColors
 import me.muriloscolari.unicep.ui.designsystem.PortalIcons
+import me.muriloscolari.unicep.ui.util.isPlainTextDocumentFile
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -102,6 +110,14 @@ private fun ByteArray?.looksLikeHtml(): Boolean {
     if (this == null || isEmpty()) return false
     val head = copyOfRange(0, size.coerceAtMost(512)).decodeToString().trimStart().lowercase()
     return head.startsWith("<!doctype html") || head.startsWith("<html") || head.startsWith("<head") || head.startsWith("<body")
+}
+
+private fun ByteArray.containsZeroByte(): Boolean {
+    val limit = minOf(size, 4096)
+    for (i in 0 until limit) {
+        if (this[i] == 0.toByte()) return true
+    }
+    return false
 }
 
 @Composable
@@ -131,13 +147,21 @@ actual fun PlatformDocumentViewer(
             fileName.endsWith(".png", ignoreCase = true) ||
             fileName.endsWith(".jpg", ignoreCase = true) ||
             fileName.endsWith(".jpeg", ignoreCase = true) ||
-            fileName.endsWith(".webp", ignoreCase = true)
+            fileName.endsWith(".webp", ignoreCase = true) ||
+            fileName.endsWith(".gif", ignoreCase = true) ||
+            fileName.endsWith(".bmp", ignoreCase = true)
     }
     val isHtml = remember(mimeType, fileName, bytes) {
         mimeType.contains("html", ignoreCase = true) ||
             fileName.endsWith(".html", ignoreCase = true) ||
             fileName.endsWith(".htm", ignoreCase = true) ||
             bytes.looksLikeHtml()
+    }
+    val isPlainText = remember(mimeType, fileName, bytes, isPdf, isImage, isHtml) {
+        !isPdf && !isImage && !isHtml &&
+            bytes != null && bytes.isNotEmpty() && bytes.size <= 2 * 1024 * 1024 &&
+            (mimeType.startsWith("text/", ignoreCase = true) || isPlainTextDocumentFile(fileName)) &&
+            !bytes.containsZeroByte()
     }
 
     Box(
@@ -275,6 +299,12 @@ actual fun PlatformDocumentViewer(
                                 }
                             }
                         )
+                    }
+                    isPlainText && bytes != null -> {
+                        val textContent = remember(bytes) {
+                            bytes.decodeToString().replace("\r\n", "\n").replace("\r", "\n")
+                        }
+                        SelectableTextDocumentView(text = textContent)
                     }
                     bytes != null && bytes.isNotEmpty() -> {
                         UnsupportedDocumentFallback(
@@ -797,6 +827,90 @@ private fun UnsupportedDocumentFallback(
     }
 }
 
+@Composable
+private fun SelectableTextDocumentView(text: String) {
+    val colors = LocalPortalColors.current
+    val scrollState = rememberScrollState()
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(scrollState)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End
+        ) {
+            CopyTextButton(
+                textToCopy = text,
+                label = "Copiar texto",
+                copiedLabel = "Copiado"
+            )
+        }
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            color = colors.surface
+        ) {
+            SelectionContainer(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp)
+            ) {
+                Text(
+                    text = text,
+                    color = colors.textPrimary,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp
+                )
+            }
+        }
+    }
+}
+
+private fun resolveExternalMimeType(fileName: String, serverMimeType: String): String {
+    val cleanServer = serverMimeType.substringBefore(';').trim().lowercase()
+    if (cleanServer.isNotBlank() && cleanServer != "application/octet-stream") {
+        return cleanServer
+    }
+    val cleanFile = fileName.trim().substringBefore('?').substringBefore('#').substringAfterLast('/')
+    val dotIdx = cleanFile.lastIndexOf('.')
+    val ext = if (dotIdx > 0 && dotIdx < cleanFile.lastIndex) cleanFile.substring(dotIdx + 1).lowercase() else ""
+    if (ext.isNotBlank()) {
+        val mapped = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
+        if (!mapped.isNullOrBlank()) return mapped
+        val fallback = when (ext) {
+            "doc" -> "application/msword"
+            "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            "xls" -> "application/vnd.ms-excel"
+            "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            "ppt" -> "application/vnd.ms-powerpoint"
+            "pptx" -> "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            "odt" -> "application/vnd.oasis.opendocument.text"
+            "ods" -> "application/vnd.oasis.opendocument.spreadsheet"
+            "odp" -> "application/vnd.oasis.opendocument.presentation"
+            "zip" -> "application/zip"
+            "rar" -> "application/vnd.rar"
+            "7z" -> "application/x-7z-compressed"
+            "pdf" -> "application/pdf"
+            "txt" -> "text/plain"
+            "csv" -> "text/csv"
+            "json" -> "application/json"
+            "xml" -> "application/xml"
+            "html", "htm" -> "text/html"
+            "png" -> "image/png"
+            "jpg", "jpeg" -> "image/jpeg"
+            "webp" -> "image/webp"
+            "gif" -> "image/gif"
+            else -> null
+        }
+        if (fallback != null) return fallback
+    }
+    return "*/*"
+}
+
 private fun openTempFileExternally(
     ctx: android.content.Context,
     fileName: String,
@@ -813,8 +927,9 @@ private fun openTempFileExternally(
             out.flush()
         }
         val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
+        val resolvedMime = resolveExternalMimeType(fileName, mimeType)
         val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, mimeType.ifBlank { "*/*" })
+            setDataAndType(uri, resolvedMime)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         ctx.startActivity(Intent.createChooser(intent, fileName))

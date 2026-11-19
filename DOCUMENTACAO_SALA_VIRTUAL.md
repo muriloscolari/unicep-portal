@@ -98,6 +98,7 @@ Todos os endpoints REST abaixo funcionam via **`GET`** usando os cookies da sess
   - `GET /d2l/api/le/1.74/{ou}/dropbox/folders/{dbId}/attachments/{fileId}` — download de anexo do enunciado (`200 OK`, binário direto).
   - `GET /d2l/api/le/1.74/{ou}/dropbox/folders/{dbId}/submissions/` — status do envio do aluno (`Status`, `Submissions[{Id, SubmissionDate, Comment, Files[]}]`, `Feedback.{Score, Feedback.{Text,Html}, Files[]}`, `CompletionDate`).
     - *Nota:* `/submissions/mysubmissions/` retorna `403` e `/feedback/` retorna `404` com sessão web de aluno; `/submissions/` retorna `200 OK`.
+  - `GET /d2l/api/le/1.74/{ou}/dropbox/folders/{dbId}/submissions/{submissionId}/files/{fileId}` — download de arquivo enviado pelo aluno (`200 OK`, binário direto com sessão do aluno).
 
 ### 4.3. Notas (Gradebook do AVA)
 - **Web UI:** `/d2l/lms/grades/my_grades/main.d2l?ou={ou}`

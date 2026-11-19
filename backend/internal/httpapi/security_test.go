@@ -309,6 +309,10 @@ func TestD2LRoutesAndTicketIsolation(t *testing.T) {
 		case "/d2l/api/le/1.74/50001/content/topics/501/file":
 			w.Header().Set("Content-Type", "application/pdf")
 			_, _ = w.Write([]byte("%PDF-1.4-D2L"))
+		case "/d2l/api/le/1.74/50001/dropbox/folders/10/submissions/55/files/88":
+			w.Header().Set("Content-Type", "application/zip")
+			w.Header().Set("Content-Disposition", `attachment; filename="entrega.zip"`)
+			_, _ = w.Write([]byte("PK\x03\x04ZIP"))
 		default:
 			http.NotFound(w, r)
 		}
@@ -349,6 +353,15 @@ func TestD2LRoutesAndTicketIsolation(t *testing.T) {
 	srv.ServeHTTP(badTicketRec, badTicketReq)
 	if badTicketRec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for disallowed D2L path, got %d", badTicketRec.Code)
+	}
+
+	// Mutating submission endpoint must remain blocked (403).
+	markReadReq := httptest.NewRequest(http.MethodPost, "/api/d2l/ticket", strings.NewReader(`{"path":"/d2l/api/le/1.74/50001/dropbox/folders/10/submissions/55/files/88/markAsRead"}`))
+	markReadReq.Header.Set("Authorization", "Bearer "+tok)
+	markReadRec := httptest.NewRecorder()
+	srv.ServeHTTP(markReadRec, markReadReq)
+	if markReadRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for submission markAsRead path, got %d", markReadRec.Code)
 	}
 
 	// Valid D2L file ticket downloads PDF with sandbox CSP and cannot be replayed.
@@ -402,6 +415,32 @@ func TestD2LRoutesAndTicketIsolation(t *testing.T) {
 	}
 	if cd := dlRec.Header().Get("Content-Disposition"); !strings.Contains(cd, "attachment") || !strings.Contains(cd, "Slides.pdf") {
 		t.Fatalf("expected Content-Disposition attachment with filename Slides.pdf, got %q", cd)
+	}
+
+	// Valid D2L student submission file ticket downloads archive with sandbox CSP and attachment disposition.
+	subPath := "/d2l/api/le/1.74/50001/dropbox/folders/10/submissions/55/files/88"
+	subTReq := httptest.NewRequest(http.MethodPost, "/api/d2l/ticket", strings.NewReader(`{"path":"`+subPath+`"}`))
+	subTReq.Header.Set("Authorization", "Bearer "+tok)
+	subTRec := httptest.NewRecorder()
+	srv.ServeHTTP(subTRec, subTReq)
+	if subTRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on submission d2l ticket, got %d: %s", subTRec.Code, subTRec.Body.String())
+	}
+	var subTResp struct {
+		Ticket string `json:"ticket"`
+	}
+	_ = json.Unmarshal(subTRec.Body.Bytes(), &subTResp)
+	subFReq := httptest.NewRequest(http.MethodGet, "/api/d2l/file?path="+subPath+"&ticket="+subTResp.Ticket, nil)
+	subFRec := httptest.NewRecorder()
+	srv.ServeHTTP(subFRec, subFReq)
+	if subFRec.Code != http.StatusOK || subFRec.Body.String() != "PK\x03\x04ZIP" {
+		t.Fatalf("expected 200 and ZIP body on submission /api/d2l/file, got %d %q", subFRec.Code, subFRec.Body.String())
+	}
+	if !strings.Contains(subFRec.Header().Get("Content-Security-Policy"), "sandbox") {
+		t.Fatalf("expected sandbox CSP on submission download, got %q", subFRec.Header().Get("Content-Security-Policy"))
+	}
+	if cd := subFRec.Header().Get("Content-Disposition"); !strings.Contains(cd, "attachment") || !strings.Contains(cd, "entrega.zip") {
+		t.Fatalf("expected Content-Disposition attachment with filename entrega.zip, got %q", cd)
 	}
 }
 

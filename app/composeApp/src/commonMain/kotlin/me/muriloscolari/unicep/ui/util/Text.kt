@@ -100,10 +100,26 @@ data class TextLinkSpan(
 
 private val URL_CANDIDATE_REGEX = Regex("""(?:https?://|www\.)[^\s<>"]+""", RegexOption.IGNORE_CASE)
 
-private val DIRECT_DOWNLOAD_WEB_EXTENSIONS = setOf(
-    "doc", "docx", "xls", "xlsx", "ppt", "pptx",
-    "odt", "ods", "odp", "zip", "rar", "7z", "tar", "gz", "csv"
+private val WEB_INLINE_PREVIEW_EXTENSIONS = setOf(
+    "pdf", "png", "jpg", "jpeg", "gif", "webp", "txt", "html", "htm"
 )
+
+private val PLAIN_TEXT_DOCUMENT_EXTENSIONS = setOf(
+    "txt", "md", "csv", "json", "xml", "yaml", "yml",
+    "sql", "java", "kt", "py", "c", "cpp", "h", "hpp", "cs", "js", "ts", "css", "sh", "ini", "log"
+)
+
+private val ANDROID_IN_APP_PREVIEW_EXTENSIONS = setOf(
+    "pdf", "png", "jpg", "jpeg", "webp", "gif", "bmp", "html", "htm"
+) + PLAIN_TEXT_DOCUMENT_EXTENSIONS
+
+private fun extractNormalizedFileExtension(fileName: String): String? {
+    val clean = fileName.trim().substringBefore('?').substringBefore('#')
+    val lastSegment = clean.substringAfterLast('/')
+    val dotIdx = lastSegment.lastIndexOf('.')
+    if (dotIdx <= 0 || dotIdx == lastSegment.lastIndex) return null
+    return lastSegment.substring(dotIdx + 1).lowercase()
+}
 
 fun extractTextLinks(text: String): List<TextLinkSpan> {
     if (text.isBlank()) return emptyList()
@@ -144,10 +160,16 @@ fun extractTextLinks(text: String): List<TextLinkSpan> {
 }
 
 fun shouldDirectDownloadOnWeb(fileName: String): Boolean {
-    val clean = fileName.trim().substringBefore('?').substringBefore('#')
-    val lastSegment = clean.substringAfterLast('/')
-    val dotIdx = lastSegment.lastIndexOf('.')
-    if (dotIdx <= 0 || dotIdx == lastSegment.lastIndex) return false
-    val ext = lastSegment.substring(dotIdx + 1).lowercase()
-    return ext in DIRECT_DOWNLOAD_WEB_EXTENSIONS
+    val ext = extractNormalizedFileExtension(fileName) ?: return false
+    return ext !in WEB_INLINE_PREVIEW_EXTENSIONS
+}
+
+fun isPlainTextDocumentFile(fileName: String): Boolean {
+    val ext = extractNormalizedFileExtension(fileName) ?: return false
+    return ext in PLAIN_TEXT_DOCUMENT_EXTENSIONS
+}
+
+fun isInAppPreviewSupported(fileName: String): Boolean {
+    val ext = extractNormalizedFileExtension(fileName) ?: return false
+    return ext in ANDROID_IN_APP_PREVIEW_EXTENSIONS
 }
