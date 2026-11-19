@@ -1,8 +1,21 @@
 package me.muriloscolari.unicep.platform
 
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import io.ktor.client.engine.HttpClientEngine
 import me.muriloscolari.unicep.data.api.UserCalendarEvent
+
+enum class WebShortcutAction {
+    ESCAPE,
+    GLOBAL_SEARCH,
+    TAB_1,
+    TAB_2,
+    TAB_3,
+    TAB_4,
+    TAB_5
+}
 
 object AppTabIndex {
     const val SEMESTER = 0
@@ -87,6 +100,7 @@ expect object PlatformBridge {
     fun putString(key: String, value: String)
     fun remove(key: String)
     fun openExternalUrl(url: String): Boolean
+    fun copyText(text: String): Boolean
     fun shareText(title: String, text: String): Boolean
     fun exportPng(fileName: String, data: ExportCardData): Boolean
     fun printDocument(title: String, data: ExportCardData): Boolean
@@ -99,7 +113,11 @@ expect object PlatformBridge {
     fun postSystemNotification(id: Int, title: String, body: String, openTab: Int = 3): Boolean
     fun initNavigationHistory(initialRoute: String)
     fun pushNavigationRoute(route: String)
+    fun readInitialNavigationRoute(): String?
     fun setPopRouteListener(listener: (String) -> Unit)
+    fun setWebKeyShortcutListener(listener: ((WebShortcutAction) -> Boolean)?)
+    fun setPageTitle(title: String)
+    fun notifyFirstFrameRendered()
     fun setOpenTabListener(listener: ((Int) -> Unit)?)
     fun dispatchOpenTab(tab: Int)
     fun setAndroidBackHandler(handler: (() -> Boolean)?)
@@ -124,6 +142,18 @@ expect object PlatformBridge {
     ): Result<String>
     fun triggerBrowserDownload(url: String, fileName: String)
 }
+
+@Composable
+expect fun PlatformVerticalScrollbar(
+    listState: LazyListState,
+    modifier: Modifier = Modifier
+)
+
+@Composable
+expect fun PlatformVerticalScrollbar(
+    scrollState: ScrollState,
+    modifier: Modifier = Modifier
+)
 
 @Composable
 expect fun PlatformDocumentViewer(

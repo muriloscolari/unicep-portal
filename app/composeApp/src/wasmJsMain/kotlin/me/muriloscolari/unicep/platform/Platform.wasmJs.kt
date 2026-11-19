@@ -2,11 +2,21 @@
 
 package me.muriloscolari.unicep.platform
 
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.VerticalScrollbar
+import androidx.compose.foundation.defaultScrollbarStyle
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.rememberScrollbarAdapter
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.js.Js
 import kotlinx.browser.window
 import me.muriloscolari.unicep.data.api.UserCalendarEvent
+import me.muriloscolari.unicep.ui.designsystem.LocalPortalColors
+import org.w3c.dom.events.Event
 
 private fun jsonString(s: String): String = buildString(s.length + 2) {
     append('"')
@@ -46,27 +56,84 @@ private fun encodeExportJson(data: ExportCardData): String = buildString {
 
 private fun jsCopyTextToClipboard(text: String): Boolean = js(
     """(() => {
+        function fallbackCopy(val) {
+            try {
+                var ta = document.createElement('textarea');
+                ta.value = val;
+                ta.setAttribute('readonly', '');
+                ta.style.position = 'fixed';
+                ta.style.left = '-9999px';
+                ta.style.top = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                ta.setSelectionRange(0, val.length);
+                var ok = document.execCommand('copy');
+                document.body.removeChild(ta);
+                return !!ok;
+            } catch (e2) {
+                return false;
+            }
+        }
         try {
             if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(text);
+                navigator.clipboard.writeText(text).catch(function() { fallbackCopy(text); });
                 return true;
             }
         } catch (e) {}
+        return fallbackCopy(text);
+    })()"""
+)
+
+private fun jsSetDocumentTitle(title: String): Unit = js(
+    """{
+        try { document.title = title; } catch (e) {}
+    }"""
+)
+
+private fun jsReadInitialHashRoute(): String = js(
+    """(() => {
         try {
-            var ta = document.createElement('textarea');
-            ta.value = text;
-            ta.style.position = 'fixed';
-            ta.style.left = '-9999px';
-            document.body.appendChild(ta);
-            ta.select();
-            var ok = document.execCommand('copy');
-            document.body.removeChild(ta);
-            return !!ok;
-        } catch (e2) {
+            var h = window.location.hash || '';
+            return h.startsWith('#') ? h.slice(1) : '';
+        } catch (e) {
+            return '';
+        }
+    })()"""
+)
+
+private fun jsHideInitialLoader(): Unit = js(
+    """{
+        try {
+            var loader = document.getElementById('loader');
+            if (loader) {
+                loader.style.opacity = '0';
+                setTimeout(function() {
+                    try { loader.remove(); } catch (e) {}
+                }, 220);
+            }
+        } catch (e) {}
+    }"""
+)
+
+private fun jsIsInputFocused(): Boolean = js(
+    """(() => {
+        try {
+            var el = document.activeElement;
+            if (!el) return false;
+            var tag = (el.tagName || '').toLowerCase();
+            return tag === 'input' || tag === 'textarea' || tag === 'select' || !!el.isContentEditable;
+        } catch (e) {
             return false;
         }
     })()"""
 )
+
+private fun jsGetKeyboardEventKey(ev: Event): String = js("(ev && ev.key) ? String(ev.key) : ''")
+
+private fun jsGetKeyboardEventCode(ev: Event): String = js("(ev && ev.code) ? String(ev.code) : ''")
+
+private fun jsGetKeyboardEventFlags(ev: Event): Int =
+    js("ev ? ((ev.ctrlKey ? 1 : 0) | (ev.metaKey ? 2 : 0) | (ev.altKey ? 4 : 0) | (ev.shiftKey ? 8 : 0)) : 0")
 
 private fun jsExportCardPng(fileName: String, jsonPayload: String): Boolean = js(
     """(() => {
@@ -475,6 +542,7 @@ private fun encodeBytesToBase64(bytes: ByteArray): String {
 
 actual object PlatformBridge {
     private var popListener: ((String) -> Unit)? = null
+    private var webShortcutListener: ((WebShortcutAction) -> Boolean)? = null
     private var historyInitialized = false
     private var rootRoute = "semestre"
     private var lastKnownRoute = ""
@@ -490,6 +558,31 @@ actual object PlatformBridge {
                 } else if (route.isNotBlank()) {
                     lastKnownRoute = route
                     popListener?.invoke(route)
+                }
+            }
+            window.addEventListener("keydown") { ev ->
+                val key = jsGetKeyboardEventKey(ev)
+                val code = jsGetKeyboardEventCode(ev)
+                val flags = jsGetKeyboardEventFlags(ev)
+                val hasCtrlOrMeta = (flags and 3) != 0
+                val hasAlt = (flags and 4) != 0
+                val action = when {
+                    key == "Escape" -> WebShortcutAction.ESCAPE
+                    hasCtrlOrMeta && !hasAlt && (key.equals("k", ignoreCase = true) || code == "KeyK") ->
+                        WebShortcutAction.GLOBAL_SEARCH
+                    hasAlt && !hasCtrlOrMeta && !jsIsInputFocused() -> when {
+                        key == "1" || code == "Digit1" -> WebShortcutAction.TAB_1
+                        key == "2" || code == "Digit2" -> WebShortcutAction.TAB_2
+                        key == "3" || code == "Digit3" -> WebShortcutAction.TAB_3
+                        key == "4" || code == "Digit4" -> WebShortcutAction.TAB_4
+                        key == "5" || code == "Digit5" -> WebShortcutAction.TAB_5
+                        else -> null
+                    }
+                    else -> null
+                }
+                if (action != null && webShortcutListener?.invoke(action) == true) {
+                    ev.preventDefault()
+                    ev.stopPropagation()
                 }
             }
         }
@@ -524,6 +617,10 @@ actual object PlatformBridge {
         return runCatching {
             window.open(clean, "_blank", "noopener,noreferrer") != null
         }.getOrDefault(false)
+    }
+
+    actual fun copyText(text: String): Boolean {
+        return jsCopyTextToClipboard(text)
     }
 
     actual fun shareText(title: String, text: String): Boolean {
@@ -580,8 +677,23 @@ actual object PlatformBridge {
         jsPushHistoryRoute(route)
     }
 
+    actual fun readInitialNavigationRoute(): String? =
+        jsReadInitialHashRoute().trim().takeIf { it.isNotBlank() && it != "guard" }
+
     actual fun setPopRouteListener(listener: (String) -> Unit) {
         popListener = listener
+    }
+
+    actual fun setWebKeyShortcutListener(listener: ((WebShortcutAction) -> Boolean)?) {
+        webShortcutListener = listener
+    }
+
+    actual fun setPageTitle(title: String) {
+        jsSetDocumentTitle(title)
+    }
+
+    actual fun notifyFirstFrameRendered() {
+        jsHideInitialLoader()
     }
 
     actual fun setOpenTabListener(listener: ((Int) -> Unit)?) {}
@@ -667,6 +779,46 @@ actual object PlatformBridge {
             openExternalUrl(clean)
         }
     }
+}
+
+@Composable
+actual fun PlatformVerticalScrollbar(
+    listState: LazyListState,
+    modifier: Modifier
+) {
+    val colors = LocalPortalColors.current
+    val base = defaultScrollbarStyle()
+    VerticalScrollbar(
+        adapter = rememberScrollbarAdapter(listState),
+        modifier = modifier,
+        style = base.copy(
+            thickness = 6.dp,
+            shape = CircleShape,
+            unhoverColor = colors.textSecondary.copy(alpha = 0.28f),
+            hoverColor = colors.textSecondary.copy(alpha = 0.58f),
+            hoverDurationMillis = 200
+        )
+    )
+}
+
+@Composable
+actual fun PlatformVerticalScrollbar(
+    scrollState: ScrollState,
+    modifier: Modifier
+) {
+    val colors = LocalPortalColors.current
+    val base = defaultScrollbarStyle()
+    VerticalScrollbar(
+        adapter = rememberScrollbarAdapter(scrollState),
+        modifier = modifier,
+        style = base.copy(
+            thickness = 6.dp,
+            shape = CircleShape,
+            unhoverColor = colors.textSecondary.copy(alpha = 0.28f),
+            hoverColor = colors.textSecondary.copy(alpha = 0.58f),
+            hoverDurationMillis = 200
+        )
+    )
 }
 
 @Composable

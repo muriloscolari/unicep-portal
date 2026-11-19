@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.app.ActivityManager
 import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
@@ -34,6 +35,10 @@ import android.webkit.WebViewClient
 import androidx.activity.BackEventCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
@@ -198,6 +203,15 @@ actual object PlatformBridge {
         }
         return runCatching {
             ctx.startActivity(intent)
+            true
+        }.getOrDefault(false)
+    }
+
+    actual fun copyText(text: String): Boolean {
+        val ctx = activityRef?.get() ?: appContext ?: return false
+        return runCatching {
+            val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return false
+            cm.setPrimaryClip(ClipData.newPlainText("UNICEP Portal", text))
             true
         }.getOrDefault(false)
     }
@@ -502,7 +516,15 @@ actual object PlatformBridge {
 
     actual fun pushNavigationRoute(route: String) {}
 
+    actual fun readInitialNavigationRoute(): String? = null
+
     actual fun setPopRouteListener(listener: (String) -> Unit) {}
+
+    actual fun setWebKeyShortcutListener(listener: ((WebShortcutAction) -> Boolean)?) {}
+
+    actual fun setPageTitle(title: String) {}
+
+    actual fun notifyFirstFrameRendered() {}
 
     actual fun setAndroidBackHandler(handler: (() -> Boolean)?) {
         backHandler = handler
@@ -994,4 +1016,18 @@ actual object PlatformBridge {
         }
         return "${stem}_${System.currentTimeMillis()}$ext"
     }
+}
+
+@Composable
+actual fun PlatformVerticalScrollbar(
+    listState: LazyListState,
+    modifier: Modifier
+) {
+}
+
+@Composable
+actual fun PlatformVerticalScrollbar(
+    scrollState: ScrollState,
+    modifier: Modifier
+) {
 }

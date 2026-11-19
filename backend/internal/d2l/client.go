@@ -1536,7 +1536,8 @@ type richText struct {
 }
 
 func (r richText) PlainText() string {
-	if t := strings.TrimSpace(r.Text); t != "" {
+	normalized := strings.ReplaceAll(strings.ReplaceAll(r.Text, "\r\n", "\n"), "\r", "\n")
+	if t := strings.TrimSpace(normalized); t != "" {
 		return t
 	}
 	return htmlToPlainText(r.HTML)

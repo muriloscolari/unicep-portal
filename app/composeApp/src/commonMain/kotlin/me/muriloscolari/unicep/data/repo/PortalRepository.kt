@@ -27,6 +27,7 @@ import me.muriloscolari.unicep.data.api.VirtualOverviewResponse
 import me.muriloscolari.unicep.platform.AppTabIndex
 import me.muriloscolari.unicep.platform.DesignStylePreference
 import me.muriloscolari.unicep.platform.PlatformBridge
+import me.muriloscolari.unicep.ui.util.shouldDirectDownloadOnWeb
 
 object PrefKeys {
     const val SERVER_URL = "server_url"
@@ -678,61 +679,68 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
         title: String = "",
         courseName: String = "",
         fileName: String = ""
-    ) = withToken { server, token ->
-        val displayTitle = title.ifBlank { fileName.ifBlank { "Arquivo da Sala Virtual" } }
-        if (!PlatformBridge.supportsInAppDocumentViewer()) {
+    ) {
+        val targetName = fileName.ifBlank { title }
+        if (!PlatformBridge.supportsInAppDocumentViewer() && shouldDirectDownloadOnWeb(targetName)) {
+            downloadD2LFile(path, targetName, courseName)
+            return
+        }
+        withToken { server, token ->
+            val displayTitle = title.ifBlank { fileName.ifBlank { "Arquivo da Sala Virtual" } }
+            if (!PlatformBridge.supportsInAppDocumentViewer()) {
+                val result = runCatching {
+                    val ticket = api.createD2LTicket(server, token, path).ticket
+                    PlatformBridge.openExternalUrl(api.buildD2LFileUrlWithTicket(server, ticket, path))
+                }
+                val err = result.exceptionOrNull()
+                if (err is UnauthorizedException) throw err
+                if (err != null) {
+                    _state.update { it.copy(statusBanner = err.message ?: "Não foi possível abrir o arquivo") }
+                } else if (result.getOrNull() == false) {
+                    _state.update {
+                        it.copy(statusBanner = "Pop-up bloqueado pelo navegador. Use o botão Baixar ao lado ou libere pop-ups para este site.")
+                    }
+                }
+                return@withToken
+            }
+
+            _state.update { it.copy(documentLoadingLabel = displayTitle) }
             val result = runCatching {
                 val ticket = api.createD2LTicket(server, token, path).ticket
-                PlatformBridge.openExternalUrl(api.buildD2LFileUrlWithTicket(server, ticket, path))
+                val url = api.buildD2LFileUrlWithTicket(server, ticket, path)
+                api.downloadFileBytes(url)
             }
             val err = result.exceptionOrNull()
-            if (err is UnauthorizedException) throw err
-            if (err != null) {
-                _state.update { it.copy(statusBanner = err.message ?: "Não foi possível abrir o arquivo") }
-            } else if (result.getOrNull() == false) {
-                _state.update {
-                    it.copy(statusBanner = "Pop-up bloqueado pelo navegador. Use o botão Baixar ao lado ou libere pop-ups para este site.")
-                }
+            if (err is UnauthorizedException) {
+                _state.update { it.copy(documentLoadingLabel = null) }
+                throw err
             }
-            return@withToken
-        }
+            val payload = result.getOrNull()
+            if (payload == null) {
+                _state.update {
+                    it.copy(
+                        documentLoadingLabel = null,
+                        statusBanner = err?.message ?: "Não foi possível abrir o arquivo"
+                    )
+                }
+                return@withToken
+            }
 
-        _state.update { it.copy(documentLoadingLabel = displayTitle) }
-        val result = runCatching {
-            val ticket = api.createD2LTicket(server, token, path).ticket
-            val url = api.buildD2LFileUrlWithTicket(server, ticket, path)
-            api.downloadFileBytes(url)
-        }
-        val err = result.exceptionOrNull()
-        if (err is UnauthorizedException) {
-            _state.update { it.copy(documentLoadingLabel = null) }
-            throw err
-        }
-        val payload = result.getOrNull()
-        if (payload == null) {
+            val resolvedName = resolveFileName(fileName, payload.suggestedFileName, title, payload.contentType)
             _state.update {
                 it.copy(
                     documentLoadingLabel = null,
-                    statusBanner = err?.message ?: "Não foi possível abrir o arquivo"
+                    activeDocumentViewer = VirtualDocumentViewerState(
+                        title = displayTitle,
+                        courseName = courseName.ifBlank { "Sala Virtual" },
+                        fileName = resolvedName,
+                        path = path,
+                        mimeType = payload.contentType,
+                        bytes = payload.bytes,
+                        fallbackUrl = ""
+                    )
                 )
             }
-            return@withToken
-        }
-
-        val resolvedName = resolveFileName(fileName, payload.suggestedFileName, title, payload.contentType)
-        _state.update {
-            it.copy(
-                documentLoadingLabel = null,
-                activeDocumentViewer = VirtualDocumentViewerState(
-                    title = displayTitle,
-                    courseName = courseName.ifBlank { "Sala Virtual" },
-                    fileName = resolvedName,
-                    path = path,
-                    mimeType = payload.contentType,
-                    bytes = payload.bytes,
-                    fallbackUrl = ""
-                )
-            )
         }
     }
 
@@ -1094,6 +1102,15 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
     suspend fun markAllNotificationsRead() = withToken { server, token ->
         api.markNotificationsRead(server, token)
         val notifs = api.notifications(server, token).items
+        _state.update { it.copy(notifications = notifs) }
+    }
+
+    suspend fun refreshNotificationsSilently() {
+        val server = _state.value.serverUrl
+        val token = PlatformBridge.getString(PrefKeys.JWT_TOKEN)
+        if (!_state.value.loggedIn || token.isNullOrBlank()) return
+        val notifs = runCatching { api.notifications(server, token).items }.getOrNull() ?: return
+        notifyNewUnread(notifs)
         _state.update { it.copy(notifications = notifs) }
     }
 

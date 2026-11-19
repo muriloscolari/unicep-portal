@@ -90,3 +90,64 @@ fun initialsFromName(fullName: String?): String {
     val last = parts.last().first().uppercaseChar()
     return "$first$last"
 }
+
+data class TextLinkSpan(
+    val start: Int,
+    val end: Int,
+    val displayText: String,
+    val url: String
+)
+
+private val URL_CANDIDATE_REGEX = Regex("""(?:https?://|www\.)[^\s<>"]+""", RegexOption.IGNORE_CASE)
+
+private val DIRECT_DOWNLOAD_WEB_EXTENSIONS = setOf(
+    "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+    "odt", "ods", "odp", "zip", "rar", "7z", "tar", "gz", "csv"
+)
+
+fun extractTextLinks(text: String): List<TextLinkSpan> {
+    if (text.isBlank()) return emptyList()
+    val out = mutableListOf<TextLinkSpan>()
+    for (match in URL_CANDIDATE_REGEX.findAll(text)) {
+        val start = match.range.first
+        if (start > 0) {
+            val prev = text[start - 1]
+            if (!prev.isWhitespace() && prev !in "(\"[{'=:") {
+                continue
+            }
+        }
+        var raw = match.value
+        while (raw.isNotEmpty()) {
+            val last = raw.last()
+            val shouldTrim = when (last) {
+                '.', ',', ';', ':', '!', '?', '\'', '"' -> true
+                ')' -> raw.count { it == ')' } > raw.count { it == '(' }
+                ']' -> raw.count { it == ']' } > raw.count { it == '[' }
+                '}' -> raw.count { it == '}' } > raw.count { it == '{' }
+                else -> false
+            }
+            if (!shouldTrim) break
+            raw = raw.dropLast(1)
+        }
+        if (raw.isBlank()) continue
+        val url = if (raw.startsWith("www.", ignoreCase = true)) "https://$raw" else raw
+        val hasHost = url.substringAfter("://", "").substringBefore('/').contains('.')
+        if (!hasHost) continue
+        out += TextLinkSpan(
+            start = start,
+            end = start + raw.length,
+            displayText = raw,
+            url = url
+        )
+    }
+    return out
+}
+
+fun shouldDirectDownloadOnWeb(fileName: String): Boolean {
+    val clean = fileName.trim().substringBefore('?').substringBefore('#')
+    val lastSegment = clean.substringAfterLast('/')
+    val dotIdx = lastSegment.lastIndexOf('.')
+    if (dotIdx <= 0 || dotIdx == lastSegment.lastIndex) return false
+    val ext = lastSegment.substring(dotIdx + 1).lowercase()
+    return ext in DIRECT_DOWNLOAD_WEB_EXTENSIONS
+}

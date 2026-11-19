@@ -121,6 +121,7 @@ import me.muriloscolari.unicep.platform.DesignStyle
 import me.muriloscolari.unicep.platform.PlatformBridge
 import me.muriloscolari.unicep.platform.PlatformDocumentViewer
 import me.muriloscolari.unicep.platform.PredictiveBackState
+import me.muriloscolari.unicep.platform.WebShortcutAction
 import me.muriloscolari.unicep.ui.designsystem.AppleActivityIndicator
 import me.muriloscolari.unicep.ui.designsystem.AppleAlert
 import me.muriloscolari.unicep.ui.designsystem.AppleMotion
@@ -198,6 +199,8 @@ fun App(initialTab: Int = 0) {
     var calendarDraftDate by remember { mutableStateOf<CalendarDate?>(null) }
     var confirmDeleteCalendarEvent by remember { mutableStateOf<UserCalendarEvent?>(null) }
     var suppressHistoryPush by remember { mutableStateOf(false) }
+    val initialWebRoute = remember { PlatformBridge.readInitialNavigationRoute() }
+    var appliedInitialWebRoute by remember { mutableStateOf(initialWebRoute.isNullOrBlank()) }
     val backOverlayController = remember { BackOverlayController() }
     var predictiveBackState by remember { mutableStateOf(PredictiveBackState()) }
 
@@ -308,6 +311,25 @@ fun App(initialTab: Int = 0) {
             selectedVirtualAnnouncement = null
             tabBarMinimized = false
             currentTab = tab
+        }
+    }
+
+    fun refreshCurrentTab() {
+        scope.launch {
+            when (currentTab) {
+                MainTab.VIRTUAL -> {
+                    val ou = selectedVirtualCourseId
+                    if (ou != null) repo.loadVirtualCourse(ou, force = true)
+                    else repo.loadVirtualOverviewIfNeeded(force = true)
+                }
+                MainTab.COURSE -> repo.loadAcademicIfNeeded(force = true)
+                MainTab.CALENDAR -> repo.loadCalendarContextIfNeeded(force = true)
+                MainTab.CENTRAL -> repo.loadFinanceAndServicesIfNeeded(force = true)
+                MainTab.SEMESTER -> {
+                    repo.refreshDashboard()
+                    repo.preloadHomeContextIfNeeded(force = true)
+                }
+            }
         }
     }
 
@@ -495,7 +517,58 @@ fun App(initialTab: Int = 0) {
                 selectedVirtualAssignment = null
                 selectedVirtualAnnouncement = null
             }
+            else -> suppressHistoryPush = false
         }
+    }
+
+    fun dismissTopOverlay(): Boolean = when {
+        state.activeDocumentViewer != null -> {
+            repo.closeDocumentViewer()
+            true
+        }
+        backOverlayController.popTop() -> true
+        showUpdateDialog && !updateDownloading -> {
+            showUpdateDialog = false
+            true
+        }
+        confirmLogoutDialog -> {
+            confirmLogoutDialog = false
+            true
+        }
+        confirmDeleteCalendarEvent != null -> {
+            confirmDeleteCalendarEvent = null
+            true
+        }
+        showCalendarEditor -> {
+            showCalendarEditor = false
+            editingCalendarEvent = null
+            true
+        }
+        showGlobalSearchModal -> {
+            showGlobalSearchModal = false
+            true
+        }
+        selectedVirtualAssignment != null -> {
+            selectedVirtualAssignment = null
+            true
+        }
+        selectedVirtualAnnouncement != null -> {
+            selectedVirtualAnnouncement = null
+            true
+        }
+        showAllNotificationsModal -> {
+            showAllNotificationsModal = false
+            true
+        }
+        selectedSubjectCode != null -> {
+            selectedSubjectCode = null
+            true
+        }
+        showRiskyAttendanceModal -> {
+            showRiskyAttendanceModal = false
+            true
+        }
+        else -> false
     }
 
     LaunchedEffect(Unit) {
@@ -533,55 +606,39 @@ fun App(initialTab: Int = 0) {
                 navigateToTab(targetTab)
             }
         }
+        PlatformBridge.setWebKeyShortcutListener { action ->
+            when (action) {
+                WebShortcutAction.ESCAPE -> dismissTopOverlay()
+                WebShortcutAction.GLOBAL_SEARCH -> {
+                    if (state.loggedIn) {
+                        showGlobalSearchModal = !showGlobalSearchModal
+                        true
+                    } else false
+                }
+                WebShortcutAction.TAB_1,
+                WebShortcutAction.TAB_2,
+                WebShortcutAction.TAB_3,
+                WebShortcutAction.TAB_4,
+                WebShortcutAction.TAB_5 -> {
+                    if (state.loggedIn) {
+                        val idx = when (action) {
+                            WebShortcutAction.TAB_1 -> 0
+                            WebShortcutAction.TAB_2 -> 1
+                            WebShortcutAction.TAB_3 -> 2
+                            WebShortcutAction.TAB_4 -> 3
+                            WebShortcutAction.TAB_5 -> 4
+                            else -> 0
+                        }
+                        MainTab.entries.getOrNull(idx)?.let { navigateToTab(it) }
+                        true
+                    } else false
+                }
+            }
+        }
         PlatformBridge.setAndroidPredictiveBackListener { predictiveBackState = it }
         PlatformBridge.setAndroidBackHandler {
             when {
-                state.activeDocumentViewer != null -> {
-                    repo.closeDocumentViewer()
-                    true
-                }
-                backOverlayController.popTop() -> true
-                showUpdateDialog && !updateDownloading -> {
-                    showUpdateDialog = false
-                    true
-                }
-                confirmLogoutDialog -> {
-                    confirmLogoutDialog = false
-                    true
-                }
-                confirmDeleteCalendarEvent != null -> {
-                    confirmDeleteCalendarEvent = null
-                    true
-                }
-                showCalendarEditor -> {
-                    showCalendarEditor = false
-                    editingCalendarEvent = null
-                    true
-                }
-                showGlobalSearchModal -> {
-                    showGlobalSearchModal = false
-                    true
-                }
-                selectedVirtualAssignment != null -> {
-                    selectedVirtualAssignment = null
-                    true
-                }
-                selectedVirtualAnnouncement != null -> {
-                    selectedVirtualAnnouncement = null
-                    true
-                }
-                showAllNotificationsModal -> {
-                    showAllNotificationsModal = false
-                    true
-                }
-                selectedSubjectCode != null -> {
-                    selectedSubjectCode = null
-                    true
-                }
-                showRiskyAttendanceModal -> {
-                    showRiskyAttendanceModal = false
-                    true
-                }
+                dismissTopOverlay() -> true
                 currentTab == MainTab.VIRTUAL && selectedVirtualCourseId != null -> {
                     if (virtualCourseSubTab > 0) {
                         virtualCourseSubTab = 0
@@ -602,11 +659,36 @@ fun App(initialTab: Int = 0) {
             }
         }
         onDispose {
+            PlatformBridge.setWebKeyShortcutListener(null)
             PlatformBridge.setAndroidPredictiveBackListener(null)
             PlatformBridge.setAndroidBackEnabled(false)
             PlatformBridge.setAndroidBackHandler(null)
             PlatformBridge.setOpenTabListener(null)
         }
+    }
+
+    LaunchedEffect(state.loggedIn) {
+        if (state.loggedIn && !appliedInitialWebRoute) {
+            appliedInitialWebRoute = true
+            initialWebRoute?.let { applyPopRoute(it) }
+        }
+    }
+
+    LaunchedEffect(state.loggedIn, currentTab, selectedVirtualCourseId, state.virtualOverview, showGlobalSearchModal) {
+        val pageTitle = when {
+            !state.loggedIn -> "Entrar · UNICEP Portal"
+            showGlobalSearchModal -> "Busca · UNICEP Portal"
+            currentTab == MainTab.VIRTUAL && selectedVirtualCourseId != null -> {
+                val courseName = state.virtualOverview?.courses
+                    ?.firstOrNull { it.orgUnitId == selectedVirtualCourseId }
+                    ?.name
+                    ?.toDisplayTitle()
+                    ?.takeIf { it.isNotBlank() }
+                if (courseName != null) "$courseName · UNICEP Portal" else "Sala Virtual · UNICEP Portal"
+            }
+            else -> "${currentTab.label} · UNICEP Portal"
+        }
+        PlatformBridge.setPageTitle(pageTitle)
     }
 
     LaunchedEffect(
@@ -618,9 +700,10 @@ fun App(initialTab: Int = 0) {
         showRiskyAttendanceModal,
         showGlobalSearchModal,
         showAllNotificationsModal,
-        state.loggedIn
+        state.loggedIn,
+        appliedInitialWebRoute
     ) {
-        if (!state.loggedIn) return@LaunchedEffect
+        if (!state.loggedIn || !appliedInitialWebRoute) return@LaunchedEffect
         val route = encodeRoute()
         if (suppressHistoryPush) {
             suppressHistoryPush = false
@@ -642,8 +725,13 @@ fun App(initialTab: Int = 0) {
 
     LaunchedEffect(state.loggedIn) {
         if (state.loggedIn && PlatformBridge.capabilities().isWeb) {
+            var tick = 0
             while (true) {
                 repo.evaluateDueCalendarReminders()
+                if (tick > 0 && tick % 5 == 0) {
+                    repo.refreshNotificationsSilently()
+                }
+                tick++
                 delay(60_000L)
             }
         }
@@ -692,7 +780,7 @@ fun App(initialTab: Int = 0) {
                 }
 
                 BoxWithConstraints(modifier = Modifier.fillMaxSize().background(colors.background)) {
-                    val isDesktop = maxWidth >= 640.dp
+                    val isDesktop = maxWidth >= 720.dp
                     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
 
                     val topBar: @Composable () -> Unit = {
@@ -754,29 +842,12 @@ fun App(initialTab: Int = 0) {
                         }
                     }
 
+                    val refreshing = state.loading || state.virtualLoading || state.calendarLoading
                     val bodyContent: @Composable () -> Unit = {
                         val pullState = rememberPullToRefreshState()
-                        val refreshing = state.loading || state.virtualLoading || state.calendarLoading
                         PullToRefreshBox(
                             isRefreshing = refreshing,
-                            onRefresh = {
-                                scope.launch {
-                                    when (currentTab) {
-                                        MainTab.VIRTUAL -> {
-                                            val ou = selectedVirtualCourseId
-                                            if (ou != null) repo.loadVirtualCourse(ou, force = true)
-                                            else repo.loadVirtualOverviewIfNeeded(force = true)
-                                        }
-                                        MainTab.COURSE -> repo.loadAcademicIfNeeded(force = true)
-                                        MainTab.CALENDAR -> repo.loadCalendarContextIfNeeded(force = true)
-                                        MainTab.CENTRAL -> repo.loadFinanceAndServicesIfNeeded(force = true)
-                                        MainTab.SEMESTER -> {
-                                            repo.refreshDashboard()
-                                            repo.preloadHomeContextIfNeeded(force = true)
-                                        }
-                                    }
-                                }
-                            },
+                            onRefresh = { refreshCurrentTab() },
                             state = pullState,
                             modifier = Modifier.fillMaxSize()
                         ) {
@@ -973,7 +1044,44 @@ fun App(initialTab: Int = 0) {
                     if (isDesktop) {
                         Row(modifier = Modifier.fillMaxSize()) {
                             NavigationRail(containerColor = colors.surface, contentColor = colors.textPrimary) {
-                                Spacer(Modifier.height(16.dp))
+                                Spacer(Modifier.height(14.dp))
+                                IconButton(
+                                    onClick = {
+                                        navHaptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        showGlobalSearchModal = true
+                                    },
+                                    modifier = Modifier.pointerHoverIcon(PointerIcon.Hand)
+                                ) {
+                                    Icon(
+                                        imageVector = PortalIcons.Search,
+                                        contentDescription = "Busca global (Ctrl+K)",
+                                        tint = colors.accent
+                                    )
+                                }
+                                IconButton(
+                                    onClick = {
+                                        navHaptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        refreshCurrentTab()
+                                    },
+                                    modifier = Modifier.pointerHoverIcon(PointerIcon.Hand)
+                                ) {
+                                    if (refreshing) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(18.dp),
+                                            strokeWidth = 2.dp,
+                                            color = colors.accent
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = PortalIcons.Refresh,
+                                            contentDescription = "Atualizar",
+                                            tint = colors.textPrimary
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.height(6.dp))
+                                PortalDivider(Modifier.width(40.dp))
+                                Spacer(Modifier.height(8.dp))
                                 MainTab.entries.forEach { tab ->
                                     val selected = tab == currentTab
                                     NavigationRailItem(
@@ -1323,7 +1431,7 @@ fun App(initialTab: Int = 0) {
                     showCalendarEditor
 
                 BoxWithConstraints(modifier = Modifier.fillMaxSize().background(colors.background)) {
-                    val isDesktop = maxWidth >= 640.dp
+                    val isDesktop = maxWidth >= 840.dp
                     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
                     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
                     val appleInsets = PaddingValues(
@@ -1588,24 +1696,7 @@ fun App(initialTab: Int = 0) {
                                             }
                                             PullToRefreshBox(
                                                 isRefreshing = refreshing,
-                                                onRefresh = {
-                                                    scope.launch {
-                                                        when (currentTab) {
-                                                            MainTab.VIRTUAL -> {
-                                                                val ou = selectedVirtualCourseId
-                                                                if (ou != null) repo.loadVirtualCourse(ou, force = true)
-                                                                else repo.loadVirtualOverviewIfNeeded(force = true)
-                                                            }
-                                                            MainTab.COURSE -> repo.loadAcademicIfNeeded(force = true)
-                                                            MainTab.CALENDAR -> repo.loadCalendarContextIfNeeded(force = true)
-                                                            MainTab.CENTRAL -> repo.loadFinanceAndServicesIfNeeded(force = true)
-                                                            MainTab.SEMESTER -> {
-                                                                repo.refreshDashboard()
-                                                                repo.preloadHomeContextIfNeeded(force = true)
-                                                            }
-                                                        }
-                                                    }
-                                                },
+                                                onRefresh = { refreshCurrentTab() },
                                                 state = pullState,
                                                 indicator = {
                                                     val fraction = pullState.distanceFraction.coerceIn(0f, 1f)
@@ -1659,24 +1750,7 @@ fun App(initialTab: Int = 0) {
                                             (currentTab == MainTab.VIRTUAL && state.virtualLoading) ||
                                             (currentTab == MainTab.CALENDAR && state.calendarLoading),
                                         onOpenNotifications = { navigateToTab(MainTab.CENTRAL) },
-                                        onRefresh = {
-                                            scope.launch {
-                                                when (currentTab) {
-                                                    MainTab.VIRTUAL -> {
-                                                        val ou = selectedVirtualCourseId
-                                                        if (ou != null) repo.loadVirtualCourse(ou, force = true)
-                                                        else repo.loadVirtualOverviewIfNeeded(force = true)
-                                                    }
-                                                    MainTab.COURSE -> repo.loadAcademicIfNeeded(force = true)
-                                                    MainTab.CALENDAR -> repo.loadCalendarContextIfNeeded(force = true)
-                                                    MainTab.CENTRAL -> repo.loadFinanceAndServicesIfNeeded(force = true)
-                                                    MainTab.SEMESTER -> {
-                                                        repo.refreshDashboard()
-                                                        repo.preloadHomeContextIfNeeded(force = true)
-                                                    }
-                                                }
-                                            }
-                                        }
+                                        onRefresh = { refreshCurrentTab() }
                                     )
                                 }
 
@@ -1738,6 +1812,7 @@ fun App(initialTab: Int = 0) {
                                         studentRa = state.dashboard?.student?.ra,
                                         unreadCount = unreadCount,
                                         onSelect = { navigateToTab(it) },
+                                        onOpenSearch = { showGlobalSearchModal = true },
                                         modifier = Modifier.align(Alignment.CenterStart)
                                     )
                                 } else {
@@ -2254,6 +2329,7 @@ private fun AppleDesktopSidebar(
     studentRa: String?,
     unreadCount: Int,
     onSelect: (MainTab) -> Unit,
+    onOpenSearch: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val colors = LocalPortalColors.current
@@ -2302,6 +2378,65 @@ private fun AppleDesktopSidebar(
                         style = appleType.headline,
                         maxLines = 1
                     )
+                }
+
+                val searchInteraction = remember { MutableInteractionSource() }
+                val searchHovered by searchInteraction.collectIsHoveredAsState()
+                val searchPressed by searchInteraction.collectIsPressedAsState()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(36.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(
+                            when {
+                                searchPressed -> colors.systemFill
+                                searchHovered -> colors.tertiaryFill.copy(alpha = 0.9f)
+                                else -> colors.tertiaryFill
+                            }
+                        )
+                        .pointerHoverIcon(PointerIcon.Hand)
+                        .hoverable(searchInteraction)
+                        .clickable(
+                            interactionSource = searchInteraction,
+                            indication = null,
+                            onClick = onOpenSearch
+                        )
+                        .padding(horizontal = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = PortalIcons.Search,
+                            contentDescription = "Busca global",
+                            tint = colors.textSecondary,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Text(
+                            text = "Buscar...",
+                            color = colors.textSecondary,
+                            style = appleType.footnote
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(colors.systemFill)
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Ctrl K",
+                            color = colors.textSecondary,
+                            style = appleType.caption2,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
 
                 Spacer(Modifier.height(6.dp))
@@ -2355,10 +2490,20 @@ private fun AppleDesktopSidebar(
                         if (tab == MainTab.CENTRAL && unreadCount > 0) {
                             Box(
                                 modifier = Modifier
-                                    .size(8.dp)
+                                    .widthIn(min = 20.dp)
                                     .clip(CircleShape)
                                     .background(colors.red)
-                            )
+                                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = if (unreadCount > 9) "9+" else unreadCount.toString(),
+                                    color = Color.White,
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1
+                                )
+                            }
                         }
                     }
                 }

@@ -832,4 +832,29 @@ object PortalIcons {
             }
         }
     }
+
+    val Copy: ImageVector by lazy {
+        strokeIcon("Copy") {
+            strokePath {
+                moveTo(9f, 10.5f)
+                curveTo(9f, 9.67f, 9.67f, 9f, 10.5f, 9f)
+                horizontalLineTo(18.5f)
+                curveTo(19.33f, 9f, 20f, 9.67f, 20f, 10.5f)
+                verticalLineTo(18.5f)
+                curveTo(20f, 19.33f, 19.33f, 20f, 18.5f, 20f)
+                horizontalLineTo(10.5f)
+                curveTo(9.67f, 20f, 9f, 19.33f, 9f, 18.5f)
+                close()
+
+                moveTo(6.5f, 15f)
+                horizontalLineTo(5.5f)
+                curveTo(4.67f, 15f, 4f, 14.33f, 4f, 13.5f)
+                verticalLineTo(5.5f)
+                curveTo(4f, 4.67f, 4.67f, 4f, 5.5f, 4f)
+                horizontalLineTo(13.5f)
+                curveTo(14.33f, 4f, 15f, 4.67f, 15f, 5.5f)
+                verticalLineTo(6.5f)
+            }
+        }
+    }
 }

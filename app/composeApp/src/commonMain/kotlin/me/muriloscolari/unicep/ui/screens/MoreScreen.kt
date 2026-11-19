@@ -7,9 +7,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -25,6 +28,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -33,6 +37,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -59,12 +65,14 @@ import me.muriloscolari.unicep.platform.AppUpdateInfo
 import me.muriloscolari.unicep.platform.DesignStyle
 import me.muriloscolari.unicep.platform.DesignStylePreference
 import me.muriloscolari.unicep.platform.PlatformBridge
+import me.muriloscolari.unicep.platform.PlatformVerticalScrollbar
 import me.muriloscolari.unicep.platform.PortalHapticType
 import me.muriloscolari.unicep.ui.designsystem.AppleActivityIndicator
 import me.muriloscolari.unicep.ui.designsystem.AppleAlert
 import me.muriloscolari.unicep.ui.designsystem.AppleProgressBar
 import me.muriloscolari.unicep.ui.designsystem.AppleSheet
 import me.muriloscolari.unicep.ui.designsystem.CardStyle
+import me.muriloscolari.unicep.ui.designsystem.CopyTextButton
 import me.muriloscolari.unicep.ui.designsystem.LocalAppleContentInsets
 import me.muriloscolari.unicep.ui.designsystem.LocalAppleTypography
 import me.muriloscolari.unicep.ui.designsystem.LocalDesignStyle
@@ -148,11 +156,12 @@ fun CentralScreen(
         val topPad = if (isApple) appleInsets.calculateTopPadding() else 12.dp
         val bottomPad = if (isApple) appleInsets.calculateBottomPadding() else 24.dp
 
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Box(modifier = Modifier.fillMaxSize()) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier
-                    .widthIn(max = 720.dp)
+                    .align(Alignment.TopCenter)
+                    .widthIn(max = 880.dp)
                     .fillMaxSize()
                     .appleScrollBoundaryHaptics(listState),
                 contentPadding = PaddingValues(
@@ -203,24 +212,43 @@ fun CentralScreen(
                                     )
                                 }
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = displayName,
-                                        color = colors.textPrimary,
-                                        style = appleType.headline,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Spacer(Modifier.height(2.dp))
-                                    Text(
-                                        text = listOfNotNull(
-                                            "RA ${student.ra}",
-                                            student.campus.takeIf { it.isNotBlank() },
-                                            student.semester.takeIf { it.isNotBlank() }
-                                        ).joinToString(" · "),
-                                        color = colors.textSecondary,
-                                        style = appleType.footnote,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
+                                    SelectionContainer {
+                                        Column {
+                                            Text(
+                                                text = displayName,
+                                                color = colors.textPrimary,
+                                                style = appleType.headline,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Spacer(Modifier.height(2.dp))
+                                            Text(
+                                                text = listOfNotNull(
+                                                    "RA ${student.ra}",
+                                                    student.campus.takeIf { it.isNotBlank() },
+                                                    student.semester.takeIf { it.isNotBlank() }
+                                                ).joinToString(" · "),
+                                                color = colors.textSecondary,
+                                                style = appleType.footnote,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                    if (!isWide && student.ra.isNotBlank()) {
+                                        Spacer(Modifier.height(8.dp))
+                                        CopyTextButton(
+                                            textToCopy = student.ra,
+                                            label = "Copiar RA",
+                                            copiedLabel = "RA copiado"
+                                        )
+                                    }
+                                }
+                                if (isWide && student.ra.isNotBlank()) {
+                                    CopyTextButton(
+                                        textToCopy = student.ra,
+                                        label = "Copiar RA",
+                                        copiedLabel = "RA copiado"
                                     )
                                 }
                             }
@@ -358,17 +386,19 @@ fun CentralScreen(
                                         overdue -> colors.red
                                         else -> colors.orange
                                     }
-                                    PortalListRow(
-                                        title = "${item.installment} · vence ${item.dueDate}",
-                                        subtitle = "Bruto ${item.grossAmount} · Desc. ${item.discountAmount}",
-                                        trailing = {
-                                            PortalStatusDot(
-                                                text = item.status,
-                                                color = statusColor,
-                                                tintText = true
-                                            )
-                                        }
-                                    )
+                                    SelectionContainer {
+                                        PortalListRow(
+                                            title = "${item.installment} · vence ${item.dueDate}",
+                                            subtitle = "Bruto ${item.grossAmount} · Desc. ${item.discountAmount}",
+                                            trailing = {
+                                                PortalStatusDot(
+                                                    text = item.status,
+                                                    color = statusColor,
+                                                    tintText = true
+                                                )
+                                            }
+                                        )
+                                    }
                                 }
                                 financeLinks.forEachIndexed { idx, link ->
                                     if (installments.isNotEmpty() || idx > 0) PortalDivider(Modifier.padding(start = 58.dp))
@@ -519,6 +549,13 @@ fun CentralScreen(
                     }
                 }
             }
+            PlatformVerticalScrollbar(
+                listState = listState,
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight()
+                    .padding(vertical = 8.dp, horizontal = 3.dp)
+            )
         }
 
         if (renderSheetsInPlace && showAllNotifications) {
@@ -591,46 +628,49 @@ private fun NotificationAlertRow(n: NotificationItem) {
     }
     val relativeTime = remember(n.createdAt) { formatRelativeTime(n.createdAt) }
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        if (n.readAt == null) {
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(colors.accent)
-            )
-            Spacer(Modifier.width(12.dp))
-        }
-        Column(modifier = Modifier.weight(1f)) {
+    SelectionContainer {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (n.readAt == null) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(colors.accent)
+                )
+                Spacer(Modifier.width(12.dp))
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = n.disciplineName.toDisplayTitle(),
+                    color = colors.textPrimary,
+                    style = appleType.headline,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = detailText,
+                    color = changeColor,
+                    style = appleType.subheadline,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+            Spacer(Modifier.width(10.dp))
             Text(
-                text = n.disciplineName.toDisplayTitle(),
-                color = colors.textPrimary,
-                style = appleType.headline,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = detailText,
-                color = changeColor,
-                style = appleType.subheadline,
-                fontWeight = FontWeight.Medium
+                text = relativeTime,
+                color = colors.textSecondary,
+                style = appleType.footnote
             )
         }
-        Spacer(Modifier.width(10.dp))
-        Text(
-            text = relativeTime,
-            color = colors.textSecondary,
-            style = appleType.footnote
-        )
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun FrequencyThresholdRow(
     selectedThreshold: Int,
@@ -670,11 +710,10 @@ private fun FrequencyThresholdRow(
             style = appleType.footnote
         )
         Spacer(Modifier.height(10.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             options.forEach { (value, label) ->
                 val selected = selectedThreshold == value
@@ -682,6 +721,7 @@ private fun FrequencyThresholdRow(
                     modifier = Modifier
                         .clip(RoundedCornerShape(10.dp))
                         .background(if (selected) colors.accent else colors.surfaceSecondary)
+                        .pointerHoverIcon(PointerIcon.Hand)
                         .clickable {
                             PlatformBridge.performHaptic(PortalHapticType.SELECTION)
                             onSelect(value)
@@ -701,6 +741,7 @@ private fun FrequencyThresholdRow(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun VirtualAlertsSettingsRow(
     notifyNewAssignment: Boolean,
@@ -777,11 +818,10 @@ private fun VirtualAlertsSettingsRow(
                 style = appleType.footnote
             )
             Spacer(Modifier.height(10.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 allHourOptions.forEach { hours ->
                     val selected = selectedLeadHours.contains(hours)
@@ -789,6 +829,7 @@ private fun VirtualAlertsSettingsRow(
                         modifier = Modifier
                             .clip(RoundedCornerShape(10.dp))
                             .background(if (selected) colors.accent else colors.surfaceSecondary)
+                            .pointerHoverIcon(PointerIcon.Hand)
                             .clickable {
                                 PlatformBridge.performHaptic(PortalHapticType.SELECTION)
                                 onToggleLeadHour(hours)
@@ -808,6 +849,7 @@ private fun VirtualAlertsSettingsRow(
                     modifier = Modifier
                         .clip(RoundedCornerShape(10.dp))
                         .background(colors.surfaceSecondary)
+                        .pointerHoverIcon(PointerIcon.Hand)
                         .clickable {
                             customHoursInput = ""
                             showCustomDialog = true

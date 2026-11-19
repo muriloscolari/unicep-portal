@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -30,6 +32,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
@@ -53,6 +56,7 @@ import androidx.compose.ui.unit.sp
 import me.muriloscolari.unicep.data.api.CurriculumResponse
 import me.muriloscolari.unicep.data.api.ScheduleResponse
 import me.muriloscolari.unicep.platform.DesignStyle
+import me.muriloscolari.unicep.platform.PlatformVerticalScrollbar
 import me.muriloscolari.unicep.ui.designsystem.AppleEmptyState
 import me.muriloscolari.unicep.ui.designsystem.AppleSkeletonBox
 import me.muriloscolari.unicep.ui.designsystem.LocalAppleContentInsets
@@ -131,15 +135,17 @@ fun AcademicScreen(
     val isApple = style == DesignStyle.APPLE
     BoxWithConstraints(modifier = Modifier.fillMaxSize().background(colors.background)) {
         val isWide = maxWidth >= 640.dp
+        val isWideGrid = maxWidth >= 880.dp
         val horizontalPad = if (isWide) 24.dp else 16.dp
         val topPad = if (isApple) appleInsets.calculateTopPadding() else 12.dp
         val bottomPad = if (isApple) appleInsets.calculateBottomPadding() else 24.dp
 
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Box(modifier = Modifier.fillMaxSize()) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier
-                    .widthIn(max = 720.dp)
+                    .align(Alignment.TopCenter)
+                    .widthIn(max = 980.dp)
                     .fillMaxSize()
                     .appleScrollBoundaryHaptics(listState),
                 contentPadding = PaddingValues(
@@ -288,7 +294,8 @@ fun AcademicScreen(
                                 onSelect = {
                                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     statusFilter = it
-                                }
+                                },
+                                isWide = isWide
                             )
                         }
                     }
@@ -414,60 +421,64 @@ fun AcademicScreen(
                                             modifier = Modifier.fillMaxWidth(),
                                             contentPadding = PaddingValues(0.dp)
                                         ) {
-                                            rows.forEachIndexed { idx, row ->
-                                                if (idx > 0) PortalDivider(Modifier.padding(start = 16.dp))
-                                                val hasPrereq = row.prerequisite.isNotBlank() && row.prerequisite != "-"
-                                                Column(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(horizontal = 16.dp, vertical = 12.dp)
-                                                ) {
-                                                    Row(
-                                                        modifier = Modifier.fillMaxWidth(),
-                                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                                        verticalAlignment = Alignment.CenterVertically
-                                                    ) {
-                                                        Text(
-                                                            text = row.name.toDisplayTitle(),
-                                                            color = colors.textPrimary,
-                                                            style = appleType.body,
-                                                            modifier = Modifier.weight(1f).padding(end = 10.dp)
-                                                        )
-                                                        if (row.hours.isNotBlank()) {
-                                                            Text(
-                                                                text = "${row.hours}h",
-                                                                color = colors.textSecondary,
-                                                                style = tabularNumberStyle(appleType.subheadline)
-                                                            )
-                                                        }
-                                                    }
-                                                    if (row.code.isNotBlank()) {
-                                                        Spacer(Modifier.height(2.dp))
-                                                        Text(
-                                                            text = row.code,
-                                                            color = colors.textSecondary,
-                                                            style = appleType.footnote
-                                                        )
-                                                    }
-                                                    if (hasPrereq) {
-                                                        Spacer(Modifier.height(4.dp))
-                                                        Row(
-                                                            verticalAlignment = Alignment.CenterVertically,
-                                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                            SelectionContainer {
+                                                Column(modifier = Modifier.fillMaxWidth()) {
+                                                    rows.forEachIndexed { idx, row ->
+                                                        if (idx > 0) PortalDivider(Modifier.padding(start = 16.dp))
+                                                        val hasPrereq = row.prerequisite.isNotBlank() && row.prerequisite != "-"
+                                                        Column(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .padding(horizontal = 16.dp, vertical = 12.dp)
                                                         ) {
-                                                            Icon(
-                                                                imageVector = PortalIcons.Lock,
-                                                                contentDescription = null,
-                                                                tint = colors.tertiaryLabel,
-                                                                modifier = Modifier.size(12.dp)
-                                                            )
-                                                            Text(
-                                                                text = "Pré-req: ${row.prerequisite.toDisplayTitle()}",
-                                                                color = colors.textSecondary,
-                                                                style = appleType.caption1,
-                                                                maxLines = 2,
-                                                                overflow = TextOverflow.Ellipsis
-                                                            )
+                                                            Row(
+                                                                modifier = Modifier.fillMaxWidth(),
+                                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                                verticalAlignment = Alignment.CenterVertically
+                                                            ) {
+                                                                Text(
+                                                                    text = row.name.toDisplayTitle(),
+                                                                    color = colors.textPrimary,
+                                                                    style = appleType.body,
+                                                                    modifier = Modifier.weight(1f).padding(end = 10.dp)
+                                                                )
+                                                                if (row.hours.isNotBlank()) {
+                                                                    Text(
+                                                                        text = "${row.hours}h",
+                                                                        color = colors.textSecondary,
+                                                                        style = tabularNumberStyle(appleType.subheadline)
+                                                                    )
+                                                                }
+                                                            }
+                                                            if (row.code.isNotBlank()) {
+                                                                Spacer(Modifier.height(2.dp))
+                                                                Text(
+                                                                    text = row.code,
+                                                                    color = colors.textSecondary,
+                                                                    style = appleType.footnote
+                                                                )
+                                                            }
+                                                            if (hasPrereq) {
+                                                                Spacer(Modifier.height(4.dp))
+                                                                Row(
+                                                                    verticalAlignment = Alignment.CenterVertically,
+                                                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                                                ) {
+                                                                    Icon(
+                                                                        imageVector = PortalIcons.Lock,
+                                                                        contentDescription = null,
+                                                                        tint = colors.tertiaryLabel,
+                                                                        modifier = Modifier.size(12.dp)
+                                                                    )
+                                                                    Text(
+                                                                        text = "Pré-req: ${row.prerequisite.toDisplayTitle()}",
+                                                                        color = colors.textSecondary,
+                                                                        style = appleType.caption1,
+                                                                        maxLines = 2,
+                                                                        overflow = TextOverflow.Ellipsis
+                                                                    )
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -491,41 +502,79 @@ fun AcademicScreen(
                                 }
                             } else if (parsedEntries.isNotEmpty() && parsedEntries.any { it.dayOfWeekIso > 0 }) {
                                 val groupedByDay = parsedEntries.groupBy { it.dayLabel.ifBlank { "Horário" } }
-                                groupedByDay.forEach { (dayTitle, dayClasses) ->
-                                    item(key = "sched_day_$dayTitle") {
-                                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            PortalSectionHeader(title = dayTitle)
-                                            PortalCard(
+                                if (isWideGrid) {
+                                    val dayPairs = groupedByDay.entries.toList().chunked(2)
+                                    dayPairs.forEachIndexed { rowIdx, pair ->
+                                        item(key = "sched_row_$rowIdx") {
+                                            Row(
                                                 modifier = Modifier.fillMaxWidth(),
-                                                contentPadding = PaddingValues(0.dp)
+                                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                                verticalAlignment = Alignment.Top
                                             ) {
-                                                dayClasses.forEachIndexed { idx, entry ->
+                                                Box(modifier = Modifier.weight(1f)) {
+                                                    ScheduleDayCard(
+                                                        dayTitle = pair[0].key,
+                                                        dayClasses = pair[0].value
+                                                    )
+                                                }
+                                                if (pair.size > 1) {
+                                                    Box(modifier = Modifier.weight(1f)) {
+                                                        ScheduleDayCard(
+                                                            dayTitle = pair[1].key,
+                                                            dayClasses = pair[1].value
+                                                        )
+                                                    }
+                                                } else {
+                                                    Spacer(modifier = Modifier.weight(1f))
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    groupedByDay.forEach { (dayTitle, dayClasses) ->
+                                        item(key = "sched_day_$dayTitle") {
+                                            ScheduleDayCard(dayTitle = dayTitle, dayClasses = dayClasses)
+                                        }
+                                    }
+                                }
+                            } else {
+                                item(key = "schedule_card") {
+                                    PortalCard(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        contentPadding = PaddingValues(0.dp)
+                                    ) {
+                                        SelectionContainer {
+                                            Column(modifier = Modifier.fillMaxWidth()) {
+                                                rows.forEachIndexed { idx, cols ->
                                                     if (idx > 0) PortalDivider(Modifier.padding(start = 16.dp))
+                                                    val leftCol = cols.firstOrNull().orEmpty()
+                                                    val rightMain = cols.getOrNull(1)?.takeIf { it.isNotBlank() }?.toDisplayTitle()
+                                                    val rightMeta = cols.drop(2).filter { it.isNotBlank() }.joinToString(" · ")
+
                                                     Row(
                                                         modifier = Modifier
                                                             .fillMaxWidth()
-                                                            .defaultMinSize(minHeight = 50.dp)
-                                                            .padding(horizontal = 16.dp, vertical = 11.dp),
+                                                            .defaultMinSize(minHeight = 52.dp)
+                                                            .padding(horizontal = 16.dp, vertical = 12.dp),
                                                         verticalAlignment = Alignment.CenterVertically
                                                     ) {
                                                         Text(
-                                                            text = entry.timeLabel.ifBlank { "Horário" },
+                                                            text = leftCol,
                                                             color = colors.textSecondary,
                                                             style = tabularNumberStyle(appleType.subheadline),
-                                                            maxLines = 1,
-                                                            modifier = Modifier.width(110.dp)
+                                                            modifier = Modifier.width(84.dp)
                                                         )
                                                         Spacer(Modifier.width(10.dp))
                                                         Column(modifier = Modifier.weight(1f)) {
                                                             Text(
-                                                                text = entry.subjectName,
+                                                                text = rightMain ?: leftCol,
                                                                 color = colors.textPrimary,
                                                                 style = appleType.body
                                                             )
-                                                            if (entry.roomOrMeta.isNotBlank()) {
+                                                            if (rightMeta.isNotBlank()) {
                                                                 Spacer(Modifier.height(2.dp))
                                                                 Text(
-                                                                    text = entry.roomOrMeta,
+                                                                    text = rightMeta,
                                                                     color = colors.textSecondary,
                                                                     style = appleType.footnote
                                                                 )
@@ -537,56 +586,18 @@ fun AcademicScreen(
                                         }
                                     }
                                 }
-                            } else {
-                                item(key = "schedule_card") {
-                                    PortalCard(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        contentPadding = PaddingValues(0.dp)
-                                    ) {
-                                        rows.forEachIndexed { idx, cols ->
-                                            if (idx > 0) PortalDivider(Modifier.padding(start = 16.dp))
-                                            val leftCol = cols.firstOrNull().orEmpty()
-                                            val rightMain = cols.getOrNull(1)?.takeIf { it.isNotBlank() }?.toDisplayTitle()
-                                            val rightMeta = cols.drop(2).filter { it.isNotBlank() }.joinToString(" · ")
-
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .defaultMinSize(minHeight = 52.dp)
-                                                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(
-                                                    text = leftCol,
-                                                    color = colors.textSecondary,
-                                                    style = tabularNumberStyle(appleType.subheadline),
-                                                    modifier = Modifier.width(84.dp)
-                                                )
-                                                Spacer(Modifier.width(10.dp))
-                                                Column(modifier = Modifier.weight(1f)) {
-                                                    Text(
-                                                        text = rightMain ?: leftCol,
-                                                        color = colors.textPrimary,
-                                                        style = appleType.body
-                                                    )
-                                                    if (rightMeta.isNotBlank()) {
-                                                        Spacer(Modifier.height(2.dp))
-                                                        Text(
-                                                            text = rightMeta,
-                                                            color = colors.textSecondary,
-                                                            style = appleType.footnote
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
                             }
                         }
                     }
                 }
             }
+            PlatformVerticalScrollbar(
+                listState = listState,
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight()
+                    .padding(vertical = 8.dp, horizontal = 3.dp)
+            )
         }
         if (showExportScheduleSheet && schedule != null) {
             ExportActionModal(
@@ -599,18 +610,70 @@ fun AcademicScreen(
 }
 
 @Composable
-private fun CourseFilterChipsRow(
-    selected: CourseStatusFilter,
-    onSelect: (CourseStatusFilter) -> Unit
+private fun ScheduleDayCard(
+    dayTitle: String,
+    dayClasses: List<me.muriloscolari.unicep.data.repo.ScheduleClassEntry>
 ) {
     val colors = LocalPortalColors.current
     val appleType = LocalAppleTypography.current
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        PortalSectionHeader(title = dayTitle)
+        PortalCard(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(0.dp)
+        ) {
+            SelectionContainer {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    dayClasses.forEachIndexed { idx, entry ->
+                        if (idx > 0) PortalDivider(Modifier.padding(start = 16.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .defaultMinSize(minHeight = 50.dp)
+                                .padding(horizontal = 16.dp, vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = entry.timeLabel.ifBlank { "Horário" },
+                                color = colors.textSecondary,
+                                style = tabularNumberStyle(appleType.subheadline),
+                                maxLines = 1,
+                                modifier = Modifier.width(110.dp)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = entry.subjectName,
+                                    color = colors.textPrimary,
+                                    style = appleType.body
+                                )
+                                if (entry.roomOrMeta.isNotBlank()) {
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(
+                                        text = entry.roomOrMeta,
+                                        color = colors.textSecondary,
+                                        style = appleType.footnote
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CourseFilterChipsRow(
+    selected: CourseStatusFilter,
+    onSelect: (CourseStatusFilter) -> Unit,
+    isWide: Boolean
+) {
+    val colors = LocalPortalColors.current
+    val appleType = LocalAppleTypography.current
+    val chipItems: @Composable () -> Unit = {
         CourseStatusFilter.entries.forEach { option ->
             val isSelected = option == selected
             Surface(
@@ -630,6 +693,24 @@ private fun CourseFilterChipsRow(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                 )
             }
+        }
+    }
+    if (isWide) {
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            chipItems()
+        }
+    } else {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            chipItems()
         }
     }
 }

@@ -31,6 +31,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -74,6 +75,7 @@ import me.muriloscolari.unicep.data.api.VirtualOverviewResponse
 import me.muriloscolari.unicep.data.repo.buildTodaySummary
 import me.muriloscolari.unicep.platform.DesignStyle
 import me.muriloscolari.unicep.platform.PlatformBridge
+import me.muriloscolari.unicep.platform.PlatformVerticalScrollbar
 import me.muriloscolari.unicep.platform.PortalHapticType
 import me.muriloscolari.unicep.platform.buildGradesExportData
 import me.muriloscolari.unicep.ui.designsystem.ExportActionModal
@@ -82,6 +84,7 @@ import me.muriloscolari.unicep.ui.designsystem.AppleProgressBar
 import me.muriloscolari.unicep.ui.designsystem.AppleSheet
 import me.muriloscolari.unicep.ui.designsystem.AppleSkeletonBox
 import me.muriloscolari.unicep.ui.designsystem.CardStyle
+import me.muriloscolari.unicep.ui.designsystem.CopyTextButton
 import me.muriloscolari.unicep.ui.designsystem.GlassMenu
 import me.muriloscolari.unicep.ui.designsystem.GlassMenuItem
 import me.muriloscolari.unicep.ui.designsystem.GlassSurface
@@ -97,7 +100,9 @@ import me.muriloscolari.unicep.ui.designsystem.PortalListRow
 import me.muriloscolari.unicep.ui.designsystem.PortalSectionHeader
 import me.muriloscolari.unicep.ui.designsystem.PortalSegmentedControl
 import me.muriloscolari.unicep.ui.designsystem.PortalStatusDot
+import me.muriloscolari.unicep.ui.designsystem.PortalTextButton
 import me.muriloscolari.unicep.ui.designsystem.ProgressRing
+import me.muriloscolari.unicep.ui.designsystem.SelectableRichText
 import me.muriloscolari.unicep.ui.designsystem.appleScrollBoundaryHaptics
 import me.muriloscolari.unicep.ui.designsystem.predictiveBackScrimAlpha
 import me.muriloscolari.unicep.ui.designsystem.predictiveBackSurfaceTransform
@@ -222,15 +227,17 @@ fun SemesterScreen(
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize().background(colors.background)) {
         val isWide = maxWidth >= 640.dp
+        val isWideGrid = maxWidth >= 880.dp
         val horizontalPad = if (isWide) 24.dp else 16.dp
         val topPad = if (isApple) appleInsets.calculateTopPadding() else 12.dp
         val bottomPad = if (isApple) appleInsets.calculateBottomPadding() else 24.dp
 
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Box(modifier = Modifier.fillMaxSize()) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier
-                    .widthIn(max = 720.dp)
+                    .align(Alignment.TopCenter)
+                    .widthIn(max = 1040.dp)
                     .fillMaxSize()
                     .appleScrollBoundaryHaptics(listState),
                 contentPadding = PaddingValues(
@@ -440,14 +447,16 @@ fun SemesterScreen(
                         )
                         if (dashboard != null) {
                             Spacer(Modifier.height(2.dp))
-                            Text(
-                                text = listOfNotNull(
-                                    "RA ${dashboard.student.ra}",
-                                    dashboard.student.campus.takeIf { it.isNotBlank() }
-                                ).joinToString(" · "),
-                                color = colors.textSecondary,
-                                style = appleType.footnote
-                            )
+                            SelectionContainer {
+                                Text(
+                                    text = listOfNotNull(
+                                        "RA ${dashboard.student.ra}",
+                                        dashboard.student.campus.takeIf { it.isNotBlank() }
+                                    ).joinToString(" · "),
+                                    color = colors.textSecondary,
+                                    style = appleType.footnote
+                                )
+                            }
                         }
                     }
                 }
@@ -635,6 +644,32 @@ fun SemesterScreen(
                             subtitle = "Não encontramos matérias lançadas para o período selecionado."
                         )
                     }
+                } else if (isWideGrid) {
+                    val subjectPairs = orderedSubjects.chunked(2)
+                    items(subjectPairs, key = { pair -> pair.joinToString("-") { it.code } }) { pair ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Box(modifier = Modifier.weight(1f)) {
+                                AppleSubjectCard(
+                                    subject = pair[0],
+                                    onClick = { onOpenSubject(pair[0].code) }
+                                )
+                            }
+                            if (pair.size > 1) {
+                                Box(modifier = Modifier.weight(1f)) {
+                                    AppleSubjectCard(
+                                        subject = pair[1],
+                                        onClick = { onOpenSubject(pair[1].code) }
+                                    )
+                                }
+                            } else {
+                                Spacer(modifier = Modifier.weight(1f))
+                            }
+                        }
+                    }
                 } else {
                     items(orderedSubjects, key = { it.code }) { subject ->
                         AppleSubjectCard(
@@ -653,16 +688,18 @@ fun SemesterScreen(
                             modifier = Modifier.fillMaxWidth(),
                             contentPadding = PaddingValues(0.dp)
                         ) {
-                            PortalListRow(
-                                title = "Horas complementares",
-                                subtitle = listOfNotNull(
-                                    report.semesterComplementaryHours.takeIf { it.isNotBlank() },
-                                    report.totalComplementaryHours.takeIf { it.isNotBlank() }
-                                ).joinToString("\n"),
-                                leadingIcon = PortalIcons.Sparkles,
-                                leadingTint = colors.purple,
-                                showChevron = false
-                            )
+                            SelectionContainer {
+                                PortalListRow(
+                                    title = "Horas complementares",
+                                    subtitle = listOfNotNull(
+                                        report.semesterComplementaryHours.takeIf { it.isNotBlank() },
+                                        report.totalComplementaryHours.takeIf { it.isNotBlank() }
+                                    ).joinToString("\n"),
+                                    leadingIcon = PortalIcons.Sparkles,
+                                    leadingTint = colors.purple,
+                                    showChevron = false
+                                )
+                            }
                         }
                     }
                 }
@@ -679,6 +716,13 @@ fun SemesterScreen(
                     }
                 }
             }
+            PlatformVerticalScrollbar(
+                listState = listState,
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight()
+                    .padding(vertical = 8.dp, horizontal = 3.dp)
+            )
         }
 
         val activeSubject = mergedSubjects.firstOrNull { it.code == selectedSubjectCode }
@@ -956,10 +1000,9 @@ private fun ExpandableNoticeCard(notice: String) {
     var overflow by remember { mutableStateOf(false) }
 
     PortalCard(
-        modifier = Modifier.fillMaxWidth().animateContentSize(),
-        onClick = if (overflow || expanded) ({ expanded = !expanded }) else null
+        modifier = Modifier.fillMaxWidth().animateContentSize()
     ) {
-        Text(
+        SelectableRichText(
             text = notice,
             color = colors.textPrimary,
             style = appleType.subheadline,
@@ -971,14 +1014,21 @@ private fun ExpandableNoticeCard(notice: String) {
                 }
             }
         )
-        if (overflow || expanded) {
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = if (expanded) "Mostrar menos" else "Mais",
-                color = colors.accent,
-                style = appleType.footnote,
-                fontWeight = FontWeight.Medium
-            )
+        Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (overflow || expanded) {
+                PortalTextButton(
+                    text = if (expanded) "Mostrar menos" else "Mais",
+                    onClick = { expanded = !expanded }
+                )
+            } else {
+                Spacer(Modifier.width(1.dp))
+            }
+            CopyTextButton(textToCopy = notice)
         }
     }
 }
@@ -1101,7 +1151,8 @@ fun AppleSubjectDetailSheet(
             subject.code,
             report?.classGroup?.takeIf { it.isNotBlank() }
         ).joinToString(" · "),
-        onDismiss = onDismiss
+        onDismiss = onDismiss,
+        desktopMaxWidth = 640.dp
     ) {
         // Hero com ProgressRing 88dp
         Row(
@@ -1165,34 +1216,38 @@ fun AppleSubjectDetailSheet(
                 cardStyle = CardStyle.Plain,
                 contentPadding = PaddingValues(0.dp)
             ) {
-                slots.forEachIndexed { idx, slot ->
-                    if (idx > 0) PortalDivider(Modifier.padding(start = 16.dp))
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(
-                                text = slot.label,
-                                color = colors.textPrimary,
-                                style = appleType.body
-                            )
-                            if (slot.weightDisplay.isNotBlank()) {
+                SelectionContainer {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        slots.forEachIndexed { idx, slot ->
+                            if (idx > 0) PortalDivider(Modifier.padding(start = 16.dp))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(
+                                        text = slot.label,
+                                        color = colors.textPrimary,
+                                        style = appleType.body
+                                    )
+                                    if (slot.weightDisplay.isNotBlank()) {
+                                        Text(
+                                            text = "Peso ${slot.weightDisplay}%",
+                                            color = colors.textSecondary,
+                                            style = appleType.footnote
+                                        )
+                                    }
+                                }
                                 Text(
-                                    text = "Peso ${slot.weightDisplay}%",
-                                    color = colors.textSecondary,
-                                    style = appleType.footnote
+                                    text = slot.gradeDisplay.ifBlank { "—" },
+                                    color = if (slot.gradeDisplay.isBlank()) colors.tertiaryLabel else colors.textPrimary,
+                                    style = tabularNumberStyle(appleType.headline)
                                 )
                             }
                         }
-                        Text(
-                            text = slot.gradeDisplay.ifBlank { "—" },
-                            color = if (slot.gradeDisplay.isBlank()) colors.tertiaryLabel else colors.textPrimary,
-                            style = tabularNumberStyle(appleType.headline)
-                        )
                     }
                 }
             }
@@ -1230,11 +1285,13 @@ fun AppleSubjectDetailSheet(
                     }
                 }
                 Spacer(Modifier.height(6.dp))
-                Text(
-                    text = sim,
-                    color = colors.textPrimary,
-                    style = appleType.subheadline
-                )
+                SelectionContainer {
+                    Text(
+                        text = sim,
+                        color = colors.textPrimary,
+                        style = appleType.subheadline
+                    )
+                }
                 Spacer(Modifier.height(6.dp))
                 val sliderHaptics = LocalHapticFeedback.current
                 Slider(
@@ -1266,44 +1323,48 @@ fun AppleSubjectDetailSheet(
                 cardStyle = CardStyle.Plain,
                 contentPadding = PaddingValues(16.dp)
             ) {
-                if (report.maxAbsences > 0) {
-                    AppleAttendanceBlock(report = report)
-                    Spacer(Modifier.height(14.dp))
-                    PortalDivider()
-                    Spacer(Modifier.height(14.dp))
-                }
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    AppleDetailMetric(
-                        label = "Faltas",
-                        value = "${report.absences}/${if (report.maxAbsences > 0) report.maxAbsences else "—"}",
-                        modifier = Modifier.weight(1f)
-                    )
-                    AppleDetailMetric(
-                        label = "Restam",
-                        value = if (report.maxAbsences > 0) "${report.remainingAbsences.coerceAtLeast(0)}" else "—",
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                Spacer(Modifier.height(12.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    AppleDetailMetric(
-                        label = "Frequência",
-                        value = report.freqPercent?.let { "${it.toInt()}%" } ?: "—",
-                        modifier = Modifier.weight(1f)
-                    )
-                    AppleDetailMetric(
-                        label = "Carga horária",
-                        value = "${report.hours}h",
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                if (report.updatedAt.isNotBlank()) {
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        text = "Faltas atualizadas em ${report.updatedAt}",
-                        color = colors.tertiaryLabel,
-                        style = appleType.caption1
-                    )
+                SelectionContainer {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        if (report.maxAbsences > 0) {
+                            AppleAttendanceBlock(report = report)
+                            Spacer(Modifier.height(14.dp))
+                            PortalDivider()
+                            Spacer(Modifier.height(14.dp))
+                        }
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            AppleDetailMetric(
+                                label = "Faltas",
+                                value = "${report.absences}/${if (report.maxAbsences > 0) report.maxAbsences else "—"}",
+                                modifier = Modifier.weight(1f)
+                            )
+                            AppleDetailMetric(
+                                label = "Restam",
+                                value = if (report.maxAbsences > 0) "${report.remainingAbsences.coerceAtLeast(0)}" else "—",
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            AppleDetailMetric(
+                                label = "Frequência",
+                                value = report.freqPercent?.let { "${it.toInt()}%" } ?: "—",
+                                modifier = Modifier.weight(1f)
+                            )
+                            AppleDetailMetric(
+                                label = "Carga horária",
+                                value = "${report.hours}h",
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        if (report.updatedAt.isNotBlank()) {
+                            Spacer(Modifier.height(10.dp))
+                            Text(
+                                text = "Faltas atualizadas em ${report.updatedAt}",
+                                color = colors.tertiaryLabel,
+                                style = appleType.caption1
+                            )
+                        }
+                    }
                 }
             }
             if (report.hours > 0) {
@@ -1484,7 +1545,7 @@ internal fun PortalOverlayModal(
 ) {
     val colors = LocalPortalColors.current
     val readBack = LocalPredictiveBackProgress.current
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .predictiveBackScrimAlpha(readBack)
@@ -1497,11 +1558,13 @@ internal fun PortalOverlayModal(
             .padding(16.dp),
         contentAlignment = Alignment.Center
     ) {
+        val maxModalHeight = (maxHeight - 48.dp).coerceIn(360.dp, 760.dp)
+        val scrollState = rememberScrollState()
         Surface(
             modifier = Modifier
-                .widthIn(max = 520.dp)
+                .widthIn(max = 640.dp)
                 .fillMaxWidth()
-                .heightIn(max = 640.dp)
+                .heightIn(max = maxModalHeight)
                 .predictiveBackSurfaceTransform(
                     readBack = readBack,
                     slideDp = 0f,
@@ -1519,31 +1582,50 @@ internal fun PortalOverlayModal(
             border = BorderStroke(0.5.dp, colors.divider),
             tonalElevation = 6.dp
         ) {
-            Column(
-                modifier = Modifier
-                    .verticalScroll(rememberScrollState())
-                    .padding(20.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.Top
+            Box(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(scrollState)
+                        .padding(20.dp)
                 ) {
-                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                        Text(title, color = colors.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                        if (!subtitle.isNullOrBlank()) {
-                            Spacer(Modifier.height(2.dp))
-                            Text(subtitle, color = colors.textSecondary, fontSize = 12.sp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        SelectionContainer(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                            Column {
+                                Text(title, color = colors.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                if (!subtitle.isNullOrBlank()) {
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(subtitle, color = colors.textSecondary, fontSize = 12.sp)
+                                }
+                            }
+                        }
+                        IconButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.size(32.dp).pointerHoverIcon(PointerIcon.Hand)
+                        ) {
+                            Icon(PortalIcons.Close, contentDescription = "Fechar", tint = colors.textSecondary)
                         }
                     }
-                    IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
-                        Icon(PortalIcons.Close, contentDescription = "Fechar", tint = colors.textSecondary)
-                    }
+                    Spacer(Modifier.height(14.dp))
+                    PortalDivider()
+                    Spacer(Modifier.height(14.dp))
+                    content()
                 }
-                Spacer(Modifier.height(14.dp))
-                PortalDivider()
-                Spacer(Modifier.height(14.dp))
-                content()
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .padding(vertical = 8.dp, horizontal = 3.dp),
+                    contentAlignment = Alignment.CenterEnd
+                ) {
+                    PlatformVerticalScrollbar(
+                        scrollState = scrollState,
+                        modifier = Modifier.fillMaxHeight()
+                    )
+                }
             }
         }
     }
@@ -1645,32 +1727,34 @@ private fun MaterialSubjectDetailModal(
         if (slots.isEmpty()) {
             Text("Aguardando lançamento de notas ou pesos nesta disciplina.", color = colors.textSecondary, fontSize = 13.sp)
         } else {
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                slots.forEach { slot ->
-                    Column(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(colors.surfaceSecondary.copy(alpha = 0.72f))
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = if (slot.weightDisplay.isNotBlank()) "${slot.label} (${slot.weightDisplay}%)" else slot.label,
-                            color = colors.textSecondary,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            text = slot.gradeDisplay.ifBlank { "—" },
-                            color = if (slot.gradeDisplay.isBlank()) colors.textSecondary else colors.textPrimary,
-                            fontSize = 17.sp,
-                            fontWeight = FontWeight.Bold,
-                            style = tabularNumberStyle(MaterialTheme.typography.titleMedium)
-                        )
+            SelectionContainer {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    slots.forEach { slot ->
+                        Column(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(colors.surfaceSecondary.copy(alpha = 0.72f))
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = if (slot.weightDisplay.isNotBlank()) "${slot.label} (${slot.weightDisplay}%)" else slot.label,
+                                color = colors.textSecondary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = slot.gradeDisplay.ifBlank { "—" },
+                                color = if (slot.gradeDisplay.isBlank()) colors.textSecondary else colors.textPrimary,
+                                fontSize = 17.sp,
+                                fontWeight = FontWeight.Bold,
+                                style = tabularNumberStyle(MaterialTheme.typography.titleMedium)
+                            )
+                        }
                     }
                 }
             }
@@ -1685,10 +1769,12 @@ private fun MaterialSubjectDetailModal(
                     .background(colors.accentSoft)
                     .padding(12.dp)
             ) {
-                Column {
-                    Text("Simulador Automático (Meta 6,0)", color = colors.accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(3.dp))
-                    Text(sim, color = colors.textPrimary, fontSize = 13.sp)
+                SelectionContainer {
+                    Column {
+                        Text("Simulador Automático (Meta 6,0)", color = colors.accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(3.dp))
+                        Text(sim, color = colors.textPrimary, fontSize = 13.sp)
+                    }
                 }
             }
         }
@@ -1697,15 +1783,19 @@ private fun MaterialSubjectDetailModal(
             Spacer(Modifier.height(16.dp))
             Text("Frequência e Boletim", color = colors.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(8.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                DetailMetric("Média Final", report.finalAverage.ifBlank { "—" })
-                DetailMetric("Carga Horária", "${report.hours}h")
-                DetailMetric("Faltas", "${report.absences}/${if (report.maxAbsences > 0) report.maxAbsences else "—"}")
-                DetailMetric("Frequência", report.freqPercent?.let { "${it.toInt()}%" } ?: "—")
-            }
-            if (report.updatedAt.isNotBlank()) {
-                Spacer(Modifier.height(8.dp))
-                Text("Faltas atualizadas em: ${report.updatedAt}", color = colors.textSecondary, fontSize = 12.sp)
+            SelectionContainer {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        DetailMetric("Média Final", report.finalAverage.ifBlank { "—" })
+                        DetailMetric("Carga Horária", "${report.hours}h")
+                        DetailMetric("Faltas", "${report.absences}/${if (report.maxAbsences > 0) report.maxAbsences else "—"}")
+                        DetailMetric("Frequência", report.freqPercent?.let { "${it.toInt()}%" } ?: "—")
+                    }
+                    if (report.updatedAt.isNotBlank()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("Faltas atualizadas em: ${report.updatedAt}", color = colors.textSecondary, fontSize = 12.sp)
+                    }
+                }
             }
             if (report.hours > 0) {
                 Spacer(Modifier.height(14.dp))

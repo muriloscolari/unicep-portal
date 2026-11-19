@@ -432,3 +432,12 @@ func TestOptionalTools403And404KeepCompleteTrueAndPickSemesterIgnoresEmptyFuture
 		t.Fatalf("expected 10/2026 > 2/2026")
 	}
 }
+
+func TestRichTextPlainTextNormalizesCarriageReturns(t *testing.T) {
+	rt := richText{Text: "Linha 1\r\nLinha 2\rLinha 3\n"}
+	got := rt.PlainText()
+	want := "Linha 1\nLinha 2\nLinha 3"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}

@@ -8,9 +8,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -25,6 +28,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -79,11 +83,13 @@ import me.muriloscolari.unicep.data.repo.previousMonth
 import me.muriloscolari.unicep.data.repo.upcomingCalendarItems
 import me.muriloscolari.unicep.platform.DesignStyle
 import me.muriloscolari.unicep.platform.PlatformBridge
+import me.muriloscolari.unicep.platform.PlatformVerticalScrollbar
 import me.muriloscolari.unicep.platform.PortalHapticType
 import me.muriloscolari.unicep.ui.designsystem.AppleActivityIndicator
 import me.muriloscolari.unicep.ui.designsystem.AppleSheet
 import me.muriloscolari.unicep.ui.designsystem.AppleSheetDetent
 import me.muriloscolari.unicep.ui.designsystem.CardStyle
+import me.muriloscolari.unicep.ui.designsystem.CopyTextButton
 import me.muriloscolari.unicep.ui.designsystem.LocalAppleContentInsets
 import me.muriloscolari.unicep.ui.designsystem.LocalAppleTypography
 import me.muriloscolari.unicep.ui.designsystem.LocalDesignStyle
@@ -207,15 +213,17 @@ fun CalendarScreen(
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize().background(colors.background)) {
         val isWide = maxWidth >= 640.dp
+        val isWideSplit = maxWidth >= 920.dp
         val horizontalPad = if (isWide) 24.dp else 16.dp
         val topPad = if (isApple) appleInsets.calculateTopPadding() else 12.dp
         val bottomPad = if (isApple) appleInsets.calculateBottomPadding() else 24.dp
 
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Box(modifier = Modifier.fillMaxSize()) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier
-                    .widthIn(max = 720.dp)
+                    .align(Alignment.TopCenter)
+                    .widthIn(max = 1080.dp)
                     .fillMaxSize()
                     .appleScrollBoundaryHaptics(listState),
                 contentPadding = PaddingValues(
@@ -319,332 +327,498 @@ fun CalendarScreen(
 
                 // Filter pills
                 item(key = "calendar_filters") {
+                    CalendarFilterChipsRow(
+                        activeFilter = activeFilter,
+                        monthAllCount = monthAllCount,
+                        monthVirtualCount = monthVirtualCount,
+                        monthPersonalCount = monthPersonalCount,
+                        isWide = isWide,
+                        onSelect = { activeFilter = it }
+                    )
+                }
+
+                if (isWideSplit) {
+                    item(key = "calendar_desktop_split") {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(20.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Box(modifier = Modifier.weight(1.05f)) {
+                                CalendarMonthGridCard(
+                                    displayedYear = displayedYear,
+                                    displayedMonth = displayedMonth,
+                                    selectedDate = selectedDate,
+                                    today = today,
+                                    monthGrid = monthGrid,
+                                    itemsByDate = itemsByDate,
+                                    onPreviousMonth = {
+                                        displayedYearMonth = previousMonth(displayedYear, displayedMonth)
+                                    },
+                                    onNextMonth = {
+                                        displayedYearMonth = nextMonth(displayedYear, displayedMonth)
+                                    },
+                                    onSelectDate = onSelectDate
+                                )
+                            }
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(14.dp)
+                            ) {
+                                SelectedDayAgendaSection(
+                                    selectedDate = selectedDate,
+                                    selectedDayItems = selectedDayItems,
+                                    onAddEvent = onAddEvent,
+                                    onEditEvent = onEditEvent,
+                                    onRequestDeleteEvent = onRequestDeleteEvent,
+                                    onOpenVirtualAssignment = onOpenVirtualAssignment,
+                                    onOpenWeb = onOpenWeb
+                                )
+                                Upcoming14DaysSection(
+                                    today = today,
+                                    upcomingItems = upcomingItems,
+                                    onSelectDate = onSelectDate,
+                                    onOpenVirtualAssignment = onOpenVirtualAssignment,
+                                    onOpenWeb = onOpenWeb,
+                                    onEditEvent = onEditEvent
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    item(key = "calendar_month_grid") {
+                        CalendarMonthGridCard(
+                            displayedYear = displayedYear,
+                            displayedMonth = displayedMonth,
+                            selectedDate = selectedDate,
+                            today = today,
+                            monthGrid = monthGrid,
+                            itemsByDate = itemsByDate,
+                            onPreviousMonth = {
+                                displayedYearMonth = previousMonth(displayedYear, displayedMonth)
+                            },
+                            onNextMonth = {
+                                displayedYearMonth = nextMonth(displayedYear, displayedMonth)
+                            },
+                            onSelectDate = onSelectDate
+                        )
+                    }
+
+                    item(key = "selected_day_section") {
+                        SelectedDayAgendaSection(
+                            selectedDate = selectedDate,
+                            selectedDayItems = selectedDayItems,
+                            onAddEvent = onAddEvent,
+                            onEditEvent = onEditEvent,
+                            onRequestDeleteEvent = onRequestDeleteEvent,
+                            onOpenVirtualAssignment = onOpenVirtualAssignment,
+                            onOpenWeb = onOpenWeb
+                        )
+                    }
+
+                    item(key = "upcoming_14_days") {
+                        Upcoming14DaysSection(
+                            today = today,
+                            upcomingItems = upcomingItems,
+                            onSelectDate = onSelectDate,
+                            onOpenVirtualAssignment = onOpenVirtualAssignment,
+                            onOpenWeb = onOpenWeb,
+                            onEditEvent = onEditEvent
+                        )
+                    }
+                }
+            }
+
+            PlatformVerticalScrollbar(
+                listState = listState,
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight()
+                    .padding(vertical = 8.dp, horizontal = 3.dp)
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CalendarFilterChipsRow(
+    activeFilter: CalendarFilter,
+    monthAllCount: Int,
+    monthVirtualCount: Int,
+    monthPersonalCount: Int,
+    isWide: Boolean,
+    onSelect: (CalendarFilter) -> Unit
+) {
+    val colors = LocalPortalColors.current
+    val style = LocalDesignStyle.current
+    val appleType = LocalAppleTypography.current
+    val isApple = style == DesignStyle.APPLE
+    val options = listOf(
+        Triple(CalendarFilter.ALL, "Tudo", monthAllCount),
+        Triple(CalendarFilter.VIRTUAL, "Prazos Virtual", monthVirtualCount),
+        Triple(CalendarFilter.PERSONAL, "Meus eventos", monthPersonalCount)
+    )
+    val chipsContent: @Composable () -> Unit = {
+        options.forEach { (filter, label, count) ->
+            val selected = activeFilter == filter
+            Box(
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(if (selected) colors.accent else colors.surface)
+                    .then(
+                        if (!selected && !isApple) {
+                            Modifier.border(1.dp, colors.divider.copy(alpha = 0.45f), CircleShape)
+                        } else Modifier
+                    )
+                    .pointerHoverIcon(PointerIcon.Hand)
+                    .clickable {
+                        PlatformBridge.performHaptic(PortalHapticType.SELECTION)
+                        onSelect(filter)
+                    }
+                    .padding(horizontal = 13.dp, vertical = 7.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "$label ($count)",
+                    color = if (selected) Color.White else colors.textPrimary,
+                    style = tabularNumberStyle(appleType.footnote),
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
+                )
+            }
+        }
+    }
+    if (isWide) {
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            chipsContent()
+        }
+    } else {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            chipsContent()
+        }
+    }
+}
+
+@Composable
+private fun CalendarMonthGridCard(
+    displayedYear: Int,
+    displayedMonth: Int,
+    selectedDate: CalendarDate,
+    today: CalendarDate,
+    monthGrid: List<CalendarDate?>,
+    itemsByDate: Map<CalendarDate, List<CalendarAgendaItem>>,
+    onPreviousMonth: () -> Unit,
+    onNextMonth: () -> Unit,
+    onSelectDate: (CalendarDate) -> Unit
+) {
+    val colors = LocalPortalColors.current
+    val appleType = LocalAppleTypography.current
+    PortalCard(
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(14.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(colors.surfaceSecondary)
+                    .pointerHoverIcon(PointerIcon.Hand)
+                    .clickable {
+                        PlatformBridge.performHaptic(PortalHapticType.SELECTION)
+                        onPreviousMonth()
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = PortalIcons.ChevronLeft,
+                    contentDescription = "Mês anterior",
+                    tint = colors.textPrimary,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+            Text(
+                text = "${monthNamePt(displayedMonth)} $displayedYear",
+                color = colors.textPrimary,
+                style = appleType.headline,
+                fontWeight = FontWeight.SemiBold
+            )
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(colors.surfaceSecondary)
+                    .pointerHoverIcon(PointerIcon.Hand)
+                    .clickable {
+                        PlatformBridge.performHaptic(PortalHapticType.SELECTION)
+                        onNextMonth()
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = PortalIcons.ChevronRight,
+                    contentDescription = "Próximo mês",
+                    tint = colors.textPrimary,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        val weekHeaders = listOf("D", "S", "T", "Q", "Q", "S", "S")
+        Row(modifier = Modifier.fillMaxWidth()) {
+            weekHeaders.forEach { d ->
+                Text(
+                    text = d,
+                    color = colors.textSecondary,
+                    style = appleType.caption2,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+
+        Spacer(Modifier.height(6.dp))
+
+        val weeks = monthGrid.chunked(7)
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            weeks.forEach { week ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    week.forEach { day ->
+                        if (day == null) {
+                            Spacer(Modifier.weight(1f).height(46.dp))
+                        } else {
+                            val isSelected = day == selectedDate
+                            val isToday = day == today
+                            val dayEvents = itemsByDate[day].orEmpty()
+                            val dotColors = dayEvents
+                                .map { resolveCalendarColor(colors, it.colorKey) }
+                                .distinct()
+                                .take(3)
+
+                            val cellBg = when {
+                                isSelected -> colors.accent
+                                isToday -> colors.accentSoft
+                                else -> Color.Transparent
+                            }
+                            val borderMod = if (isToday && !isSelected) {
+                                Modifier.border(1.2.dp, colors.accent, RoundedCornerShape(12.dp))
+                            } else Modifier
+
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(46.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(cellBg)
+                                    .then(borderMod)
+                                    .pointerHoverIcon(PointerIcon.Hand)
+                                    .clickable {
+                                        PlatformBridge.performHaptic(PortalHapticType.SELECTION)
+                                        onSelectDate(day)
+                                    },
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Text(
+                                    text = day.day.toString(),
+                                    color = when {
+                                        isSelected -> Color.White
+                                        isToday -> colors.accent
+                                        else -> colors.textPrimary
+                                    },
+                                    style = tabularNumberStyle(appleType.subheadline),
+                                    fontWeight = if (isSelected || isToday) FontWeight.Bold else FontWeight.Medium
+                                )
+                                Spacer(Modifier.height(3.dp))
+                                if (dotColors.isNotEmpty()) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        dotColors.forEach { dotColor ->
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(5.dp)
+                                                    .clip(CircleShape)
+                                                    .background(if (isSelected) Color.White.copy(alpha = 0.92f) else dotColor)
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    Spacer(Modifier.height(5.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SelectedDayAgendaSection(
+    selectedDate: CalendarDate,
+    selectedDayItems: List<CalendarAgendaItem>,
+    onAddEvent: (CalendarDate) -> Unit,
+    onEditEvent: (UserCalendarEvent) -> Unit,
+    onRequestDeleteEvent: (UserCalendarEvent) -> Unit,
+    onOpenVirtualAssignment: (VirtualAssignmentItem) -> Unit,
+    onOpenWeb: (String) -> Unit
+) {
+    val colors = LocalPortalColors.current
+    val appleType = LocalAppleTypography.current
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        PortalSectionHeader(
+            title = fullDateLabelPt(selectedDate),
+            trailing = {
+                PortalTextButton(
+                    text = "+ Adicionar",
+                    onClick = { onAddEvent(selectedDate) }
+                )
+            }
+        )
+        if (selectedDayItems.isEmpty()) {
+            PortalCard(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(18.dp)
+            ) {
+                Text(
+                    text = "Nenhum prazo ou evento neste dia.",
+                    color = colors.textPrimary,
+                    style = appleType.headline
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Adicione provas, trabalhos, revisões ou lembretes para ser notificado no horário.",
+                    color = colors.textSecondary,
+                    style = appleType.footnote
+                )
+                Spacer(Modifier.height(12.dp))
+                PortalSecondaryButton(
+                    text = "Criar evento em ${formatBrDate(selectedDate)}",
+                    onClick = { onAddEvent(selectedDate) }
+                )
+            }
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                selectedDayItems.forEach { item ->
+                    CalendarAgendaCard(
+                        item = item,
+                        onEditEvent = onEditEvent,
+                        onRequestDeleteEvent = onRequestDeleteEvent,
+                        onOpenVirtualAssignment = onOpenVirtualAssignment,
+                        onOpenWeb = onOpenWeb
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Upcoming14DaysSection(
+    today: CalendarDate,
+    upcomingItems: List<CalendarAgendaItem>,
+    onSelectDate: (CalendarDate) -> Unit,
+    onOpenVirtualAssignment: (VirtualAssignmentItem) -> Unit,
+    onOpenWeb: (String) -> Unit,
+    onEditEvent: (UserCalendarEvent) -> Unit
+) {
+    val colors = LocalPortalColors.current
+    val appleType = LocalAppleTypography.current
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        PortalSectionHeader("Próximos 14 dias")
+        if (upcomingItems.isEmpty()) {
+            PortalCard(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(16.dp)
+            ) {
+                Text(
+                    text = "Nenhum prazo ou compromisso nos próximos 14 dias.",
+                    color = colors.textSecondary,
+                    style = appleType.footnote
+                )
+            }
+        } else {
+            PortalCard(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(0.dp)
+            ) {
+                upcomingItems.forEachIndexed { idx, item ->
+                    if (idx > 0) PortalDivider(Modifier.padding(start = 16.dp))
+                    val dayBadge = when (item.date) {
+                        today -> "Hoje"
+                        addDays(today, 1) -> "Amanhã"
+                        else -> "${item.date.day.toString().padStart(2, '0')}/${item.date.month.toString().padStart(2, '0')}"
+                    }
+                    val itemColor = resolveCalendarColor(colors, item.colorKey)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            .pointerHoverIcon(PointerIcon.Hand)
+                            .clickable {
+                                onSelectDate(item.date)
+                                when {
+                                    item.assignment != null -> onOpenVirtualAssignment(item.assignment)
+                                    item.webUrl.isNotBlank() -> onOpenWeb(item.webUrl)
+                                    item.userEvent != null -> onEditEvent(item.userEvent)
+                                }
+                            }
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        val options = listOf(
-                            Triple(CalendarFilter.ALL, "Tudo", monthAllCount),
-                            Triple(CalendarFilter.VIRTUAL, "Prazos Virtual", monthVirtualCount),
-                            Triple(CalendarFilter.PERSONAL, "Meus eventos", monthPersonalCount)
+                        Box(
+                            modifier = Modifier
+                                .width(4.dp)
+                                .height(32.dp)
+                                .clip(CircleShape)
+                                .background(itemColor)
                         )
-                        options.forEach { (filter, label, count) ->
-                            val selected = activeFilter == filter
-                            Box(
-                                modifier = Modifier
-                                    .clip(CircleShape)
-                                    .background(if (selected) colors.accent else colors.surface)
-                                    .then(
-                                        if (!selected && !isApple) {
-                                            Modifier.border(1.dp, colors.divider.copy(alpha = 0.45f), CircleShape)
-                                        } else Modifier
-                                    )
-                                    .pointerHoverIcon(PointerIcon.Hand)
-                                    .clickable {
-                                        PlatformBridge.performHaptic(PortalHapticType.SELECTION)
-                                        activeFilter = filter
-                                    }
-                                    .padding(horizontal = 13.dp, vertical = 7.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "$label ($count)",
-                                    color = if (selected) Color.White else colors.textPrimary,
-                                    style = tabularNumberStyle(appleType.footnote),
-                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Month grid card
-                item(key = "calendar_month_grid") {
-                    PortalCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(14.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(34.dp)
-                                    .clip(CircleShape)
-                                    .background(colors.surfaceSecondary)
-                                    .pointerHoverIcon(PointerIcon.Hand)
-                                    .clickable {
-                                        PlatformBridge.performHaptic(PortalHapticType.SELECTION)
-                                        displayedYearMonth = previousMonth(displayedYear, displayedMonth)
-                                    },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = PortalIcons.ChevronLeft,
-                                    contentDescription = "Mês anterior",
-                                    tint = colors.textPrimary,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "${monthNamePt(displayedMonth)} $displayedYear",
+                                text = item.title,
                                 color = colors.textPrimary,
-                                style = appleType.headline,
-                                fontWeight = FontWeight.SemiBold
+                                style = appleType.subheadline,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
-                            Box(
-                                modifier = Modifier
-                                    .size(34.dp)
-                                    .clip(CircleShape)
-                                    .background(colors.surfaceSecondary)
-                                    .pointerHoverIcon(PointerIcon.Hand)
-                                    .clickable {
-                                        PlatformBridge.performHaptic(PortalHapticType.SELECTION)
-                                        displayedYearMonth = nextMonth(displayedYear, displayedMonth)
-                                    },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = PortalIcons.ChevronRight,
-                                    contentDescription = "Próximo mês",
-                                    tint = colors.textPrimary,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
+                            val meta = listOfNotNull(
+                                dayBadge,
+                                item.timeLabel.takeIf { it.isNotBlank() },
+                                item.subtitle.takeIf { it.isNotBlank() }
+                            ).joinToString(" · ")
+                            Text(
+                                text = meta,
+                                color = colors.textSecondary,
+                                style = tabularNumberStyle(appleType.caption1),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
-
-                        Spacer(Modifier.height(12.dp))
-
-                        // Weekday headers (Dom..Sab)
-                        val weekHeaders = listOf("D", "S", "T", "Q", "Q", "S", "S")
-                        Row(modifier = Modifier.fillMaxWidth()) {
-                            weekHeaders.forEach { d ->
-                                Text(
-                                    text = d,
-                                    color = colors.textSecondary,
-                                    style = appleType.caption2,
-                                    fontWeight = FontWeight.SemiBold,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
-
-                        Spacer(Modifier.height(6.dp))
-
-                        val weeks = monthGrid.chunked(7)
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            weeks.forEach { week ->
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    week.forEach { day ->
-                                        if (day == null) {
-                                            Spacer(Modifier.weight(1f).height(46.dp))
-                                        } else {
-                                            val isSelected = day == selectedDate
-                                            val isToday = day == today
-                                            val dayEvents = itemsByDate[day].orEmpty()
-                                            val dotColors = dayEvents
-                                                .map { resolveCalendarColor(colors, it.colorKey) }
-                                                .distinct()
-                                                .take(3)
-
-                                            val cellBg = when {
-                                                isSelected -> colors.accent
-                                                isToday -> colors.accentSoft
-                                                else -> Color.Transparent
-                                            }
-                                            val borderMod = if (isToday && !isSelected) {
-                                                Modifier.border(1.2.dp, colors.accent, RoundedCornerShape(12.dp))
-                                            } else Modifier
-
-                                            Column(
-                                                modifier = Modifier
-                                                    .weight(1f)
-                                                    .height(46.dp)
-                                                    .clip(RoundedCornerShape(12.dp))
-                                                    .background(cellBg)
-                                                    .then(borderMod)
-                                                    .pointerHoverIcon(PointerIcon.Hand)
-                                                    .clickable {
-                                                        PlatformBridge.performHaptic(PortalHapticType.SELECTION)
-                                                        onSelectDate(day)
-                                                    },
-                                                horizontalAlignment = Alignment.CenterHorizontally,
-                                                verticalArrangement = Arrangement.Center
-                                            ) {
-                                                Text(
-                                                    text = day.day.toString(),
-                                                    color = when {
-                                                        isSelected -> Color.White
-                                                        isToday -> colors.accent
-                                                        else -> colors.textPrimary
-                                                    },
-                                                    style = tabularNumberStyle(appleType.subheadline),
-                                                    fontWeight = if (isSelected || isToday) FontWeight.Bold else FontWeight.Medium
-                                                )
-                                                Spacer(Modifier.height(3.dp))
-                                                if (dotColors.isNotEmpty()) {
-                                                    Row(
-                                                        horizontalArrangement = Arrangement.spacedBy(3.dp),
-                                                        verticalAlignment = Alignment.CenterVertically
-                                                    ) {
-                                                        dotColors.forEach { dotColor ->
-                                                            Box(
-                                                                modifier = Modifier
-                                                                    .size(5.dp)
-                                                                    .clip(CircleShape)
-                                                                    .background(if (isSelected) Color.White.copy(alpha = 0.92f) else dotColor)
-                                                            )
-                                                        }
-                                                    }
-                                                } else {
-                                                    Spacer(Modifier.height(5.dp))
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Selected day agenda
-                item(key = "selected_day_section") {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        PortalSectionHeader(
-                            title = fullDateLabelPt(selectedDate),
-                            trailing = {
-                                PortalTextButton(
-                                    text = "+ Adicionar",
-                                    onClick = { onAddEvent(selectedDate) }
-                                )
-                            }
-                        )
-                        if (selectedDayItems.isEmpty()) {
-                            PortalCard(
-                                modifier = Modifier.fillMaxWidth(),
-                                contentPadding = PaddingValues(18.dp)
-                            ) {
-                                Text(
-                                    text = "Nenhum prazo ou evento neste dia.",
-                                    color = colors.textPrimary,
-                                    style = appleType.headline
-                                )
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    text = "Adicione provas, trabalhos, revisões ou lembretes para ser notificado no horário.",
-                                    color = colors.textSecondary,
-                                    style = appleType.footnote
-                                )
-                                Spacer(Modifier.height(12.dp))
-                                PortalSecondaryButton(
-                                    text = "Criar evento em ${formatBrDate(selectedDate)}",
-                                    onClick = { onAddEvent(selectedDate) }
-                                )
-                            }
-                        } else {
-                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                selectedDayItems.forEach { item ->
-                                    CalendarAgendaCard(
-                                        item = item,
-                                        onEditEvent = onEditEvent,
-                                        onRequestDeleteEvent = onRequestDeleteEvent,
-                                        onOpenVirtualAssignment = onOpenVirtualAssignment,
-                                        onOpenWeb = onOpenWeb
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Upcoming 14 days
-                item(key = "upcoming_14_days") {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        PortalSectionHeader("Próximos 14 dias")
-                        if (upcomingItems.isEmpty()) {
-                            PortalCard(
-                                modifier = Modifier.fillMaxWidth(),
-                                contentPadding = PaddingValues(16.dp)
-                            ) {
-                                Text(
-                                    text = "Nenhum prazo ou compromisso nos próximos 14 dias.",
-                                    color = colors.textSecondary,
-                                    style = appleType.footnote
-                                )
-                            }
-                        } else {
-                            PortalCard(
-                                modifier = Modifier.fillMaxWidth(),
-                                contentPadding = PaddingValues(0.dp)
-                            ) {
-                                upcomingItems.forEachIndexed { idx, item ->
-                                    if (idx > 0) PortalDivider(Modifier.padding(start = 16.dp))
-                                    val dayBadge = when (item.date) {
-                                        today -> "Hoje"
-                                        addDays(today, 1) -> "Amanhã"
-                                        else -> "${item.date.day.toString().padStart(2, '0')}/${item.date.month.toString().padStart(2, '0')}"
-                                    }
-                                    val itemColor = resolveCalendarColor(colors, item.colorKey)
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .pointerHoverIcon(PointerIcon.Hand)
-                                            .clickable {
-                                                onSelectDate(item.date)
-                                                when {
-                                                    item.assignment != null -> onOpenVirtualAssignment(item.assignment)
-                                                    item.webUrl.isNotBlank() -> onOpenWeb(item.webUrl)
-                                                    item.userEvent != null -> onEditEvent(item.userEvent)
-                                                }
-                                            }
-                                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .width(4.dp)
-                                                .height(32.dp)
-                                                .clip(CircleShape)
-                                                .background(itemColor)
-                                        )
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = item.title,
-                                                color = colors.textPrimary,
-                                                style = appleType.subheadline,
-                                                fontWeight = FontWeight.SemiBold,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            val meta = listOfNotNull(
-                                                dayBadge,
-                                                item.timeLabel.takeIf { it.isNotBlank() },
-                                                item.subtitle.takeIf { it.isNotBlank() }
-                                            ).joinToString(" · ")
-                                            Text(
-                                                text = meta,
-                                                color = colors.textSecondary,
-                                                style = tabularNumberStyle(appleType.caption1),
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
-                                        if (item.statusBadge.isNotBlank()) {
-                                            PortalBadge(text = item.statusBadge, color = itemColor)
-                                        }
-                                    }
-                                }
-                            }
+                        if (item.statusBadge.isNotBlank()) {
+                            PortalBadge(text = item.statusBadge, color = itemColor)
                         }
                     }
                 }
@@ -761,31 +935,50 @@ private fun CalendarAgendaCard(
                     }
                 }
 
-                Text(
-                    text = item.title,
-                    color = colors.textPrimary,
-                    style = appleType.headline,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
+                val infoContent: @Composable () -> Unit = {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = item.title,
+                            color = colors.textPrimary,
+                            style = appleType.headline,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
 
-                if (item.subtitle.isNotBlank()) {
-                    Text(
-                        text = item.subtitle,
-                        color = colors.textSecondary,
-                        style = appleType.footnote,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                        if (item.subtitle.isNotBlank()) {
+                            Text(
+                                text = item.subtitle,
+                                color = colors.textSecondary,
+                                style = appleType.footnote,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        if (item.description.isNotBlank()) {
+                            Text(
+                                text = item.description,
+                                color = colors.textSecondary,
+                                style = appleType.caption1,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+
+                if (cardClick == null) {
+                    SelectionContainer { infoContent() }
+                } else {
+                    infoContent()
                 }
 
                 if (item.description.isNotBlank()) {
-                    Text(
-                        text = item.description,
-                        color = colors.textSecondary,
-                        style = appleType.caption1,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis
+                    CopyTextButton(
+                        textToCopy = item.description,
+                        label = "Copiar obs.",
+                        copiedLabel = "Copiado",
+                        modifier = Modifier.padding(top = 2.dp)
                     )
                 }
 
@@ -816,6 +1009,7 @@ private fun CalendarAgendaCard(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CalendarEventEditorSheet(
     existing: UserCalendarEvent?,
@@ -870,7 +1064,8 @@ fun CalendarEventEditorSheet(
         title = if (existing == null) "Novo evento" else "Editar evento",
         subtitle = parsedDate?.let { fullDateLabelPt(it) } ?: "Defina data e lembretes",
         onDismiss = onDismiss,
-        initialDetent = AppleSheetDetent.Large
+        initialDetent = AppleSheetDetent.Large,
+        desktopMaxWidth = 620.dp
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
@@ -895,12 +1090,10 @@ fun CalendarEventEditorSheet(
                     style = appleType.subheadline,
                     fontWeight = FontWeight.SemiBold
                 )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     listOf(
                         today to "Hoje",
@@ -1009,11 +1202,10 @@ fun CalendarEventEditorSheet(
 
                 if (!allDay) {
                     Spacer(Modifier.height(10.dp))
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         listOf("08:00", "14:00", "19:00", "21:00", "23:59").forEach { preset ->
                             val selected = timeText == preset
@@ -1069,11 +1261,10 @@ fun CalendarEventEditorSheet(
                     modifier = Modifier.fillMaxWidth()
                 )
                 if (subjectSuggestions.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         subjectSuggestions.forEach { subj ->
                             val selected = disciplineName.equals(subj, ignoreCase = true)
@@ -1108,11 +1299,10 @@ fun CalendarEventEditorSheet(
                     style = appleType.subheadline,
                     fontWeight = FontWeight.SemiBold
                 )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     CALENDAR_COLOR_OPTIONS.forEach { opt ->
                         val c = resolveCalendarColor(colors, opt.key)
@@ -1169,11 +1359,10 @@ fun CalendarEventEditorSheet(
                         style = tabularNumberStyle(appleType.caption1)
                     )
                 }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     PRESET_CALENDAR_REMINDER_MINUTES.forEach { mins ->
                         val selected = selectedReminders.contains(mins)

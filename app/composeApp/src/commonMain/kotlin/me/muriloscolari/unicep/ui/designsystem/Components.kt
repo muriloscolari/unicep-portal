@@ -43,6 +43,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -54,8 +55,11 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -78,16 +82,25 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import me.muriloscolari.unicep.platform.DesignStyle
 import me.muriloscolari.unicep.platform.PlatformBridge
+import me.muriloscolari.unicep.platform.PortalHapticType
+import me.muriloscolari.unicep.ui.util.extractTextLinks
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -718,6 +731,119 @@ fun PortalTextButton(
 }
 
 @Composable
+fun CopyTextButton(
+    textToCopy: String,
+    modifier: Modifier = Modifier,
+    label: String = "Copiar",
+    copiedLabel: String = "Copiado",
+    onCopied: (() -> Unit)? = null
+) {
+    val cleanText = textToCopy.trim()
+    if (cleanText.isEmpty()) return
+    val colors = LocalPortalColors.current
+    val appleType = LocalAppleTypography.current
+    var copied by remember(cleanText) { mutableStateOf(false) }
+    val interactionSource = remember { MutableInteractionSource() }
+    val hovered by interactionSource.collectIsHoveredAsState()
+
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(2000L)
+            copied = false
+        }
+    }
+
+    val fg = if (copied) colors.green else colors.accent
+    val bg = when {
+        copied -> colors.green.copy(alpha = 0.14f)
+        hovered -> colors.accentSoft.copy(alpha = 0.85f)
+        else -> colors.surfaceSecondary
+    }
+
+    Row(
+        modifier = modifier
+            .clip(CircleShape)
+            .background(bg)
+            .pointerHoverIcon(PointerIcon.Hand)
+            .hoverable(interactionSource)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                role = Role.Button
+            ) {
+                if (PlatformBridge.copyText(cleanText)) {
+                    PlatformBridge.performHaptic(PortalHapticType.SELECTION)
+                    copied = true
+                    onCopied?.invoke()
+                }
+            }
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        Icon(
+            imageVector = if (copied) PortalIcons.Check else PortalIcons.Copy,
+            contentDescription = if (copied) copiedLabel else label,
+            tint = fg,
+            modifier = Modifier.size(13.dp)
+        )
+        Text(
+            text = if (copied) copiedLabel else label,
+            color = fg,
+            style = appleType.caption1,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
+fun SelectableRichText(
+    text: String,
+    color: Color,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+    maxLines: Int = Int.MAX_VALUE,
+    overflow: TextOverflow = TextOverflow.Clip,
+    onTextLayout: (androidx.compose.ui.text.TextLayoutResult) -> Unit = {},
+    onOpenUrl: (String) -> Unit = { PlatformBridge.openExternalUrl(it) }
+) {
+    val colors = LocalPortalColors.current
+    val linkSpans = remember(text) { extractTextLinks(text) }
+    val annotated = remember(text, linkSpans, colors.accent) {
+        buildAnnotatedString {
+            append(text)
+            linkSpans.forEach { span ->
+                addLink(
+                    clickable = LinkAnnotation.Clickable(
+                        tag = "URL",
+                        styles = TextLinkStyles(
+                            style = SpanStyle(
+                                color = colors.accent,
+                                textDecoration = TextDecoration.Underline
+                            )
+                        ),
+                        linkInteractionListener = { onOpenUrl(span.url) }
+                    ),
+                    start = span.start,
+                    end = span.end
+                )
+            }
+        }
+    }
+    SelectionContainer(modifier = modifier) {
+        Text(
+            text = annotated,
+            color = color,
+            style = style,
+            maxLines = maxLines,
+            overflow = overflow,
+            onTextLayout = onTextLayout
+        )
+    }
+}
+
+@Composable
 fun PortalTextField(
     value: String,
     onValueChange: (String) -> Unit,
@@ -779,7 +905,7 @@ fun PortalTextField(
                     BasicTextField(
                         value = value,
                         onValueChange = onValueChange,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().pointerHoverIcon(PointerIcon.Text),
                         singleLine = singleLine,
                         textStyle = appleType.body.copy(color = colors.textPrimary),
                         cursorBrush = SolidColor(colors.accent),
@@ -873,7 +999,7 @@ fun PortalSearchField(
                 BasicTextField(
                     value = value,
                     onValueChange = onValueChange,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().pointerHoverIcon(PointerIcon.Text),
                     singleLine = true,
                     textStyle = TextStyle(
                         color = colors.textPrimary,
@@ -927,7 +1053,7 @@ fun PortalSearchField(
             BasicTextField(
                 value = value,
                 onValueChange = onValueChange,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().pointerHoverIcon(PointerIcon.Text),
                 singleLine = true,
                 textStyle = appleType.subheadline.copy(color = colors.textPrimary),
                 cursorBrush = SolidColor(colors.accent)

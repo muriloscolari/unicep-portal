@@ -15,10 +15,14 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -29,10 +33,13 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -80,11 +87,13 @@ import me.muriloscolari.unicep.data.api.VirtualQuizItem
 import me.muriloscolari.unicep.data.repo.VirtualDownloadRequest
 import me.muriloscolari.unicep.platform.DesignStyle
 import me.muriloscolari.unicep.platform.PlatformBridge
+import me.muriloscolari.unicep.platform.PlatformVerticalScrollbar
 import me.muriloscolari.unicep.platform.PortalHapticType
 import me.muriloscolari.unicep.ui.designsystem.AppleEmptyState
 import me.muriloscolari.unicep.ui.designsystem.AppleSheet
 import me.muriloscolari.unicep.ui.designsystem.AppleSheetDetent
 import me.muriloscolari.unicep.ui.designsystem.AppleSkeletonBox
+import me.muriloscolari.unicep.ui.designsystem.CopyTextButton
 import me.muriloscolari.unicep.ui.designsystem.LocalAppleContentInsets
 import me.muriloscolari.unicep.ui.designsystem.LocalAppleTypography
 import me.muriloscolari.unicep.ui.designsystem.LocalDesignStyle
@@ -99,8 +108,10 @@ import me.muriloscolari.unicep.ui.designsystem.PortalSearchField
 import me.muriloscolari.unicep.ui.designsystem.PortalSecondaryButton
 import me.muriloscolari.unicep.ui.designsystem.PortalSectionHeader
 import me.muriloscolari.unicep.ui.designsystem.PortalSegmentedControl
+import me.muriloscolari.unicep.ui.designsystem.SelectableRichText
 import me.muriloscolari.unicep.ui.designsystem.appleScrollBoundaryHaptics
 import me.muriloscolari.unicep.ui.designsystem.tabularNumberStyle
+import me.muriloscolari.unicep.ui.util.shouldDirectDownloadOnWeb
 import me.muriloscolari.unicep.ui.util.toDisplayTitle
 
 private enum class VirtualOverviewSubTab(val label: String) {
@@ -164,99 +175,115 @@ fun VirtualScreen(
     val style = LocalDesignStyle.current
     val colors = LocalPortalColors.current
     val appleInsets = LocalAppleContentInsets.current
-    val contentPadding = if (style == DesignStyle.APPLE) {
-        PaddingValues(
-            start = 16.dp,
-            end = 16.dp,
-            top = appleInsets.calculateTopPadding() + 8.dp,
-            bottom = appleInsets.calculateBottomPadding() + 24.dp
-        )
-    } else {
-        PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp)
-    }
 
-    Box(modifier = Modifier.fillMaxSize().background(colors.background), contentAlignment = Alignment.TopCenter) {
-        Box(modifier = Modifier.widthIn(max = 720.dp).fillMaxSize()) {
-        if (selectedCourseId != null) {
-            val detail = courseDetails[selectedCourseId]
-            val fallbackCourse = overview?.courses?.firstOrNull { it.orgUnitId == selectedCourseId }
-            VirtualCourseDetailBody(
-                courseId = selectedCourseId,
-                fallbackCourse = fallbackCourse,
-                detail = detail,
-                overviewBaseUrl = overview?.baseUrl.orEmpty(),
-                courseSubTab = courseSubTab,
-                loading = loading,
-                error = error,
-                contentPadding = contentPadding,
-                listState = listState,
-                downloadingFileKey = downloadingFileKey,
-                batchDownloadDone = batchDownloadDone,
-                batchDownloadTotal = batchDownloadTotal,
-                downloadFolderLabel = downloadFolderLabel,
-                onPickDownloadFolder = onPickDownloadFolder,
-                onBack = onBackToOverview,
-                onSelectSubTab = onSelectCourseSubTab,
-                onRefreshCourse = { onRefreshCourse(selectedCourseId) },
-                onSelectAssignment = onSelectAssignment,
-                onSelectAnnouncement = onSelectAnnouncement,
-                onViewD2LFile = onViewD2LFile,
-                onDownloadD2LFile = onDownloadD2LFile,
-                onDownloadBatch = onDownloadBatch,
-                onOpenWeb = onOpenWeb
+    BoxWithConstraints(modifier = Modifier.fillMaxSize().background(colors.background)) {
+        val isWide = maxWidth >= 640.dp
+        val isWideGrid = maxWidth >= 880.dp
+        val horizontalPad = if (isWide) 24.dp else 16.dp
+        val contentPadding = if (style == DesignStyle.APPLE) {
+            PaddingValues(
+                start = horizontalPad,
+                end = horizontalPad,
+                top = appleInsets.calculateTopPadding() + 8.dp,
+                bottom = appleInsets.calculateBottomPadding() + 24.dp
             )
         } else {
-            VirtualOverviewBody(
-                overview = overview,
-                activeTab = overviewTab,
-                onSelectTab = onSelectOverviewTab,
-                searchQuery = searchQuery,
-                onSearchQueryChange = onSearchQueryChange,
-                selectedSemester = selectedSemester,
-                onSelectSemester = onSelectSemester,
-                assignmentFilterIndex = assignmentFilterIndex,
-                onSelectAssignmentFilter = onSelectAssignmentFilter,
-                loading = loading,
-                error = error,
-                contentPadding = contentPadding,
-                listState = listState,
-                downloadFolderLabel = downloadFolderLabel,
-                onPickDownloadFolder = onPickDownloadFolder,
-                onRefresh = onRefreshOverview,
-                onSelectCourse = onSelectCourse,
-                onSelectAssignment = onSelectAssignment,
-                onSelectAnnouncement = onSelectAnnouncement,
-                onOpenWeb = onOpenWeb
-            )
-        }
+            PaddingValues(start = horizontalPad, end = horizontalPad, top = 12.dp, bottom = 24.dp)
         }
 
-        if (renderSheetsInPlace) {
-            selectedAssignment?.let { assignment ->
-                VirtualAssignmentSheet(
-                    assignment = assignment,
-                    onViewD2LFile = onViewD2LFile,
-                    onDownloadD2LFile = onDownloadD2LFile,
-                    onDownloadBatch = onDownloadBatch,
-                    downloadingFileKey = downloadingFileKey,
-                    onOpenWeb = onOpenWeb,
-                    onDismiss = onDismissAssignment
-                )
+        Box(modifier = Modifier.fillMaxSize()) {
+            Box(modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 1040.dp).fillMaxSize()) {
+                if (selectedCourseId != null) {
+                    val detail = courseDetails[selectedCourseId]
+                    val fallbackCourse = overview?.courses?.firstOrNull { it.orgUnitId == selectedCourseId }
+                    VirtualCourseDetailBody(
+                        courseId = selectedCourseId,
+                        fallbackCourse = fallbackCourse,
+                        detail = detail,
+                        overviewBaseUrl = overview?.baseUrl.orEmpty(),
+                        courseSubTab = courseSubTab,
+                        loading = loading,
+                        error = error,
+                        contentPadding = contentPadding,
+                        listState = listState,
+                        downloadingFileKey = downloadingFileKey,
+                        batchDownloadDone = batchDownloadDone,
+                        batchDownloadTotal = batchDownloadTotal,
+                        downloadFolderLabel = downloadFolderLabel,
+                        onPickDownloadFolder = onPickDownloadFolder,
+                        onBack = onBackToOverview,
+                        onSelectSubTab = onSelectCourseSubTab,
+                        onRefreshCourse = { onRefreshCourse(selectedCourseId) },
+                        onSelectAssignment = onSelectAssignment,
+                        onSelectAnnouncement = onSelectAnnouncement,
+                        onViewD2LFile = onViewD2LFile,
+                        onDownloadD2LFile = onDownloadD2LFile,
+                        onDownloadBatch = onDownloadBatch,
+                        onOpenWeb = onOpenWeb
+                    )
+                } else {
+                    VirtualOverviewBody(
+                        overview = overview,
+                        activeTab = overviewTab,
+                        onSelectTab = onSelectOverviewTab,
+                        searchQuery = searchQuery,
+                        onSearchQueryChange = onSearchQueryChange,
+                        selectedSemester = selectedSemester,
+                        onSelectSemester = onSelectSemester,
+                        assignmentFilterIndex = assignmentFilterIndex,
+                        onSelectAssignmentFilter = onSelectAssignmentFilter,
+                        loading = loading,
+                        error = error,
+                        contentPadding = contentPadding,
+                        listState = listState,
+                        isWideGrid = isWideGrid,
+                        downloadFolderLabel = downloadFolderLabel,
+                        onPickDownloadFolder = onPickDownloadFolder,
+                        onRefresh = onRefreshOverview,
+                        onSelectCourse = onSelectCourse,
+                        onSelectAssignment = onSelectAssignment,
+                        onSelectAnnouncement = onSelectAnnouncement,
+                        onOpenWeb = onOpenWeb
+                    )
+                }
             }
-            selectedAnnouncement?.let { announcement ->
-                VirtualAnnouncementSheet(
-                    announcement = announcement,
-                    onViewD2LFile = onViewD2LFile,
-                    onDownloadD2LFile = onDownloadD2LFile,
-                    onDownloadBatch = onDownloadBatch,
-                    downloadingFileKey = downloadingFileKey,
-                    onDismiss = onDismissAnnouncement
-                )
+
+            PlatformVerticalScrollbar(
+                listState = listState,
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight()
+                    .padding(vertical = 8.dp, horizontal = 3.dp)
+            )
+
+            if (renderSheetsInPlace) {
+                selectedAssignment?.let { assignment ->
+                    VirtualAssignmentSheet(
+                        assignment = assignment,
+                        onViewD2LFile = onViewD2LFile,
+                        onDownloadD2LFile = onDownloadD2LFile,
+                        onDownloadBatch = onDownloadBatch,
+                        downloadingFileKey = downloadingFileKey,
+                        onOpenWeb = onOpenWeb,
+                        onDismiss = onDismissAssignment
+                    )
+                }
+                selectedAnnouncement?.let { announcement ->
+                    VirtualAnnouncementSheet(
+                        announcement = announcement,
+                        onViewD2LFile = onViewD2LFile,
+                        onDownloadD2LFile = onDownloadD2LFile,
+                        onDownloadBatch = onDownloadBatch,
+                        downloadingFileKey = downloadingFileKey,
+                        onDismiss = onDismissAnnouncement
+                    )
+                }
             }
         }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun VirtualOverviewBody(
     overview: VirtualOverviewResponse?,
@@ -272,6 +299,7 @@ private fun VirtualOverviewBody(
     error: String?,
     contentPadding: PaddingValues,
     listState: LazyListState,
+    isWideGrid: Boolean,
     downloadFolderLabel: String,
     onPickDownloadFolder: () -> Unit,
     onRefresh: () -> Unit,
@@ -515,12 +543,7 @@ private fun VirtualOverviewBody(
                                 placeholder = "Buscar disciplina na Sala Virtual..."
                             )
                             if (semesters.size > 1) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
+                                val semChips: @Composable () -> Unit = {
                                     FilterChipPill(
                                         label = "Todos",
                                         selected = selectedSemester.isBlank(),
@@ -532,6 +555,24 @@ private fun VirtualOverviewBody(
                                             selected = selectedSemester == sem,
                                             onClick = { onSelectSemester(sem) }
                                         )
+                                    }
+                                }
+                                if (isWideGrid) {
+                                    FlowRow(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        semChips()
+                                    }
+                                } else {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        semChips()
                                     }
                                 }
                             }
@@ -546,6 +587,35 @@ private fun VirtualOverviewBody(
                                 subtitle = "Tente limpar o filtro de busca ou semestre."
                             )
                         }
+                    } else if (isWideGrid) {
+                        val coursePairs = filteredCourses.chunked(2)
+                        itemsIndexed(
+                            items = coursePairs,
+                            key = { _, pair -> pair.joinToString("-") { it.orgUnitId.toString() } }
+                        ) { _, pair ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Box(modifier = Modifier.weight(1f)) {
+                                    VirtualCourseCard(
+                                        course = pair[0],
+                                        onClick = { onSelectCourse(pair[0].orgUnitId) }
+                                    )
+                                }
+                                if (pair.size > 1) {
+                                    Box(modifier = Modifier.weight(1f)) {
+                                        VirtualCourseCard(
+                                            course = pair[1],
+                                            onClick = { onSelectCourse(pair[1].orgUnitId) }
+                                        )
+                                    }
+                                } else {
+                                    Spacer(modifier = Modifier.weight(1f))
+                                }
+                            }
+                        }
                     } else {
                         items(filteredCourses, key = { it.orgUnitId }) { course ->
                             VirtualCourseCard(
@@ -558,16 +628,29 @@ private fun VirtualOverviewBody(
 
                 VirtualOverviewSubTab.ASSIGNMENTS -> {
                     item {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
+                        val assignmentFilterChips: @Composable () -> Unit = {
                             AssignmentFilter.entries.forEach { f ->
                                 FilterChipPill(
                                     label = f.label,
                                     selected = assignmentFilter == f,
                                     onClick = { onSelectAssignmentFilter(f.ordinal) }
                                 )
+                            }
+                        }
+                        if (isWideGrid) {
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                assignmentFilterChips()
+                            }
+                        } else {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                assignmentFilterChips()
                             }
                         }
                     }
@@ -579,6 +662,37 @@ private fun VirtualOverviewBody(
                                 title = "Nenhuma atividade por aqui",
                                 subtitle = "As tarefas das disciplinas ativas aparecerão aqui em modo somente leitura."
                             )
+                        }
+                    } else if (isWideGrid) {
+                        val assignmentPairs = filteredAssignments.chunked(2)
+                        itemsIndexed(
+                            items = assignmentPairs,
+                            key = { _, pair -> pair.joinToString(",") { "${it.orgUnitId}-${it.id}" } }
+                        ) { _, pair ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Box(modifier = Modifier.weight(1f)) {
+                                    VirtualAssignmentCard(
+                                        assignment = pair[0],
+                                        showCourseName = true,
+                                        onClick = { onSelectAssignment(pair[0]) }
+                                    )
+                                }
+                                if (pair.size > 1) {
+                                    Box(modifier = Modifier.weight(1f)) {
+                                        VirtualAssignmentCard(
+                                            assignment = pair[1],
+                                            showCourseName = true,
+                                            onClick = { onSelectAssignment(pair[1]) }
+                                        )
+                                    }
+                                } else {
+                                    Spacer(modifier = Modifier.weight(1f))
+                                }
+                            }
                         }
                     } else {
                         items(filteredAssignments, key = { "${it.orgUnitId}-${it.id}" }) { assignment ->
@@ -911,16 +1025,18 @@ private fun VirtualCourseDetailBody(
                     } else {
                         if (allDownloadables.isNotEmpty()) {
                             item(key = "content_toolbar") {
+                                val isWeb = remember { PlatformBridge.capabilities().isWeb }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = if (selectionMode) {
-                                            "Toque nos arquivos para marcar"
-                                        } else {
-                                            "Segure um arquivo para selecionar vários"
+                                        text = when {
+                                            selectionMode && isWeb -> "Clique nos arquivos para marcar"
+                                            selectionMode -> "Toque nos arquivos para marcar"
+                                            isWeb -> "Use 'Selecionar' para baixar vários arquivos"
+                                            else -> "Segure um arquivo para selecionar vários"
                                         },
                                         color = colors.textSecondary,
                                         fontSize = 11.5.sp,
@@ -1232,10 +1348,8 @@ private fun VirtualCourseCard(
 ) {
     val colors = LocalPortalColors.current
     PortalCard(
-        modifier = Modifier
-            .fillMaxWidth()
-            .pointerHoverIcon(PointerIcon.Hand)
-            .clickable(onClick = onClick)
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onClick
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1307,10 +1421,8 @@ private fun VirtualAssignmentCard(
     val colors = LocalPortalColors.current
     val badgeColor = assignmentStatusColor(assignment.status)
     PortalCard(
-        modifier = Modifier
-            .fillMaxWidth()
-            .pointerHoverIcon(PointerIcon.Hand)
-            .clickable(onClick = onClick)
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onClick
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1376,10 +1488,8 @@ private fun VirtualAnnouncementCard(
 ) {
     val colors = LocalPortalColors.current
     PortalCard(
-        modifier = Modifier
-            .fillMaxWidth()
-            .pointerHoverIcon(PointerIcon.Hand)
-            .clickable(onClick = onClick)
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onClick
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1500,6 +1610,7 @@ private fun VirtualModuleCard(
     depth: Int = 0
 ) {
     val colors = LocalPortalColors.current
+    val appleType = LocalAppleTypography.current
     var expanded by remember { mutableStateOf(depth == 0) }
     val itemCount = module.topics.size + module.modules.size
 
@@ -1541,10 +1652,10 @@ private fun VirtualModuleCard(
         if (expanded) {
             if (module.description.isNotBlank()) {
                 Spacer(Modifier.height(6.dp))
-                Text(
+                SelectableRichText(
                     text = module.description,
                     color = colors.textSecondary,
-                    fontSize = 12.sp
+                    style = appleType.caption1
                 )
             }
             if (module.topics.isNotEmpty()) {
@@ -1604,6 +1715,7 @@ private fun VirtualTopicRow(
     onOpenWeb: (String) -> Unit
 ) {
     val colors = LocalPortalColors.current
+    val isWeb = remember { PlatformBridge.capabilities().isWeb }
     val hasDownload = topic.downloadPath.isNotBlank()
     val inferredName = remember(topic) { inferTopicFileName(topic) }
     val request = remember(topic, courseName, inferredName) {
@@ -1637,6 +1749,13 @@ private fun VirtualTopicRow(
         "quiz" -> "Questionário"
         "discussion" -> "Fórum"
         else -> topic.typeIdentifier.ifBlank { "Recurso" }
+    }
+    val actionHint = when {
+        hasDownload && isWeb -> if (shouldDirectDownloadOnWeb(inferredName)) "clique para baixar" else "clique para abrir"
+        hasDownload -> "toque para abrir"
+        topic.externalUrl.isNotBlank() && isWeb -> "clique para abrir"
+        topic.externalUrl.isNotBlank() -> "toque para abrir"
+        else -> null
     }
 
     Row(
@@ -1703,7 +1822,7 @@ private fun VirtualTopicRow(
                 )
             }
             Text(
-                text = if (hasDownload) "$typeLabel · toque para abrir" else typeLabel,
+                text = if (actionHint != null) "$typeLabel · $actionHint" else typeLabel,
                 color = colors.textSecondary,
                 fontSize = 11.sp
             )
@@ -1757,18 +1876,20 @@ private fun VirtualGradeRow(item: VirtualGradeItem) {
         item.pointsNumerator != null -> formatScore(item.pointsNumerator)
         else -> "—"
     }
-    PortalListRow(
-        title = item.name,
-        subtitle = item.comments.takeIf { it.isNotBlank() },
-        trailing = {
-            Text(
-                text = scoreText,
-                color = colors.textPrimary,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 14.sp
-            )
-        }
-    )
+    SelectionContainer {
+        PortalListRow(
+            title = item.name,
+            subtitle = item.comments.takeIf { it.isNotBlank() },
+            trailing = {
+                Text(
+                    text = scoreText,
+                    color = colors.textPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp
+                )
+            }
+        )
+    }
 }
 
 @Composable
@@ -1778,10 +1899,8 @@ private fun VirtualQuizCard(
 ) {
     val colors = LocalPortalColors.current
     PortalCard(
-        modifier = Modifier
-            .fillMaxWidth()
-            .pointerHoverIcon(PointerIcon.Hand)
-            .clickable { onOpenWeb(quiz.webUrl) }
+        modifier = Modifier.fillMaxWidth(),
+        onClick = { onOpenWeb(quiz.webUrl) }
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1835,10 +1954,8 @@ private fun VirtualForumCard(
 ) {
     val colors = LocalPortalColors.current
     PortalCard(
-        modifier = Modifier
-            .fillMaxWidth()
-            .pointerHoverIcon(PointerIcon.Hand)
-            .clickable { onOpenWeb(forum.webUrl) }
+        modifier = Modifier.fillMaxWidth(),
+        onClick = { onOpenWeb(forum.webUrl) }
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1890,7 +2007,8 @@ fun VirtualAssignmentSheet(
             title = assignment.name,
             subtitle = subtitle,
             onDismiss = onDismiss,
-            initialDetent = AppleSheetDetent.Large
+            initialDetent = AppleSheetDetent.Large,
+            desktopMaxWidth = 720.dp
         ) {
             VirtualAssignmentSheetContent(
                 assignment = assignment,
@@ -1902,35 +2020,54 @@ fun VirtualAssignmentSheet(
             )
         }
     } else {
+        val scrollState = rememberScrollState()
         ModalBottomSheet(onDismissRequest = onDismiss) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 8.dp)
-            ) {
-                Text(
-                    text = assignment.name,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-                if (!subtitle.isNullOrBlank()) {
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        text = subtitle,
-                        color = LocalPortalColors.current.textSecondary,
-                        fontSize = 13.sp
+            Box(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(scrollState)
+                        .padding(horizontal = 20.dp, vertical = 8.dp)
+                ) {
+                    SelectionContainer {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = assignment.name,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (!subtitle.isNullOrBlank()) {
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    text = subtitle,
+                                    color = LocalPortalColors.current.textSecondary,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    VirtualAssignmentSheetContent(
+                        assignment = assignment,
+                        onViewD2LFile = onViewD2LFile,
+                        onDownloadD2LFile = onDownloadD2LFile,
+                        onDownloadBatch = onDownloadBatch,
+                        downloadingFileKey = downloadingFileKey,
+                        onOpenWeb = onOpenWeb
+                    )
+                    Spacer(Modifier.height(24.dp))
+                }
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .padding(vertical = 8.dp, horizontal = 3.dp),
+                    contentAlignment = Alignment.CenterEnd
+                ) {
+                    PlatformVerticalScrollbar(
+                        scrollState = scrollState,
+                        modifier = Modifier.fillMaxHeight()
                     )
                 }
-                Spacer(Modifier.height(12.dp))
-                VirtualAssignmentSheetContent(
-                    assignment = assignment,
-                    onViewD2LFile = onViewD2LFile,
-                    onDownloadD2LFile = onDownloadD2LFile,
-                    onDownloadBatch = onDownloadBatch,
-                    downloadingFileKey = downloadingFileKey,
-                    onOpenWeb = onOpenWeb
-                )
-                Spacer(Modifier.height(24.dp))
             }
         }
     }
@@ -1946,6 +2083,7 @@ private fun VirtualAssignmentSheetContent(
     onOpenWeb: (String) -> Unit
 ) {
     val colors = LocalPortalColors.current
+    val appleType = LocalAppleTypography.current
     val badgeColor = assignmentStatusColor(assignment.status)
     val courseName = assignment.orgUnitName.ifBlank { "Sala Virtual" }.toDisplayTitle()
 
@@ -1972,53 +2110,57 @@ private fun VirtualAssignmentSheetContent(
     val dueText = formatIsoDateTime(assignment.dueDate.ifBlank { assignment.endDate }, assignment.dueAtMillis)
     if (dueText.isNotBlank()) {
         Spacer(Modifier.height(10.dp))
-        Text(
-            text = "Prazo de entrega: $dueText",
-            color = colors.textSecondary,
-            fontSize = 13.sp
-        )
+        SelectionContainer {
+            Text(
+                text = "Prazo de entrega: $dueText",
+                color = colors.textSecondary,
+                fontSize = 13.sp
+            )
+        }
     }
 
     if (assignment.instructions.isNotBlank()) {
         Spacer(Modifier.height(12.dp))
-        PortalSectionHeader(title = "Instruções")
+        PortalSectionHeader(
+            title = "Instruções",
+            trailing = { CopyTextButton(textToCopy = assignment.instructions) }
+        )
         Spacer(Modifier.height(4.dp))
         PortalCard {
-            Text(
+            SelectableRichText(
                 text = assignment.instructions,
                 color = colors.textPrimary,
-                fontSize = 13.sp
+                style = appleType.subheadline.copy(fontSize = 13.5.sp, lineHeight = 20.sp)
             )
         }
     }
 
     if (assignment.attachments.isNotEmpty()) {
         Spacer(Modifier.height(12.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            PortalSectionHeader(title = "Anexos da Atividade")
-            val downloadable = assignment.attachments.filter { it.downloadPath.isNotBlank() }
-            if (downloadable.size > 1) {
-                TextButton(
-                    onClick = {
-                        onDownloadBatch(
-                            downloadable.map {
-                                VirtualDownloadRequest(
-                                    path = it.downloadPath,
-                                    fileName = it.fileName,
-                                    courseName = courseName
-                                )
-                            }
-                        )
+        val downloadable = assignment.attachments.filter { it.downloadPath.isNotBlank() }
+        PortalSectionHeader(
+            title = "Anexos da Atividade",
+            trailing = if (downloadable.size > 1) {
+                {
+                    TextButton(
+                        modifier = Modifier.pointerHoverIcon(PointerIcon.Hand),
+                        onClick = {
+                            onDownloadBatch(
+                                downloadable.map {
+                                    VirtualDownloadRequest(
+                                        path = it.downloadPath,
+                                        fileName = it.fileName,
+                                        courseName = courseName
+                                    )
+                                }
+                            )
+                        }
+                    ) {
+                        Text("Baixar todos (${downloadable.size})", color = colors.accent, fontSize = 12.sp)
                     }
-                ) {
-                    Text("Baixar todos (${downloadable.size})", color = colors.accent, fontSize = 12.sp)
                 }
-            }
-        }
+            } else null
+        )
         Spacer(Modifier.height(4.dp))
         PortalCard(contentPadding = PaddingValues(0.dp)) {
             assignment.attachments.forEachIndexed { idx, att ->
@@ -2046,34 +2188,41 @@ private fun VirtualAssignmentSheetContent(
         PortalSectionHeader(title = "Seu Envio")
         Spacer(Modifier.height(4.dp))
         PortalCard {
-            if (assignment.submissionDate.isNotBlank()) {
-                Text(
-                    text = "Enviado em ${formatIsoDateTime(assignment.submissionDate)}",
-                    color = colors.textSecondary,
-                    fontSize = 12.sp
-                )
-            }
-            assignment.submittedFiles.forEach { sf ->
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = "• ${sf.fileName}",
-                    color = colors.textPrimary,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium
-                )
+            SelectionContainer {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    if (assignment.submissionDate.isNotBlank()) {
+                        Text(
+                            text = "Enviado em ${formatIsoDateTime(assignment.submissionDate)}",
+                            color = colors.textSecondary,
+                            fontSize = 12.sp
+                        )
+                    }
+                    assignment.submittedFiles.forEach { sf ->
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "• ${sf.fileName}",
+                            color = colors.textPrimary,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
             }
         }
     }
 
     if (assignment.feedbackText.isNotBlank()) {
         Spacer(Modifier.height(12.dp))
-        PortalSectionHeader(title = "Feedback do Professor")
+        PortalSectionHeader(
+            title = "Feedback do Professor",
+            trailing = { CopyTextButton(textToCopy = assignment.feedbackText) }
+        )
         Spacer(Modifier.height(4.dp))
         PortalCard {
-            Text(
+            SelectableRichText(
                 text = assignment.feedbackText,
                 color = colors.textPrimary,
-                fontSize = 13.sp
+                style = appleType.subheadline.copy(fontSize = 13.5.sp, lineHeight = 20.sp)
             )
         }
     }
@@ -2107,7 +2256,8 @@ fun VirtualAnnouncementSheet(
             title = announcement.title,
             subtitle = subtitle,
             onDismiss = onDismiss,
-            initialDetent = AppleSheetDetent.Medium
+            initialDetent = AppleSheetDetent.Medium,
+            desktopMaxWidth = 720.dp
         ) {
             VirtualAnnouncementSheetContent(
                 announcement = announcement,
@@ -2118,34 +2268,53 @@ fun VirtualAnnouncementSheet(
             )
         }
     } else {
+        val scrollState = rememberScrollState()
         ModalBottomSheet(onDismissRequest = onDismiss) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 8.dp)
-            ) {
-                Text(
-                    text = announcement.title,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-                if (!subtitle.isNullOrBlank()) {
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        text = subtitle,
-                        color = LocalPortalColors.current.textSecondary,
-                        fontSize = 13.sp
+            Box(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(scrollState)
+                        .padding(horizontal = 20.dp, vertical = 8.dp)
+                ) {
+                    SelectionContainer {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = announcement.title,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (!subtitle.isNullOrBlank()) {
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    text = subtitle,
+                                    color = LocalPortalColors.current.textSecondary,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    VirtualAnnouncementSheetContent(
+                        announcement = announcement,
+                        onViewD2LFile = onViewD2LFile,
+                        onDownloadD2LFile = onDownloadD2LFile,
+                        onDownloadBatch = onDownloadBatch,
+                        downloadingFileKey = downloadingFileKey
+                    )
+                    Spacer(Modifier.height(24.dp))
+                }
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .padding(vertical = 8.dp, horizontal = 3.dp),
+                    contentAlignment = Alignment.CenterEnd
+                ) {
+                    PlatformVerticalScrollbar(
+                        scrollState = scrollState,
+                        modifier = Modifier.fillMaxHeight()
                     )
                 }
-                Spacer(Modifier.height(12.dp))
-                VirtualAnnouncementSheetContent(
-                    announcement = announcement,
-                    onViewD2LFile = onViewD2LFile,
-                    onDownloadD2LFile = onDownloadD2LFile,
-                    onDownloadBatch = onDownloadBatch,
-                    downloadingFileKey = downloadingFileKey
-                )
-                Spacer(Modifier.height(24.dp))
             }
         }
     }
@@ -2160,43 +2329,48 @@ private fun VirtualAnnouncementSheetContent(
     downloadingFileKey: String?
 ) {
     val colors = LocalPortalColors.current
+    val appleType = LocalAppleTypography.current
     val courseName = announcement.orgUnitName.ifBlank { "Avisos Sala Virtual" }.toDisplayTitle()
     if (announcement.body.isNotBlank()) {
+        PortalSectionHeader(
+            title = "Comunicado",
+            trailing = { CopyTextButton(textToCopy = announcement.body) }
+        )
+        Spacer(Modifier.height(4.dp))
         PortalCard {
-            Text(
+            SelectableRichText(
                 text = announcement.body,
                 color = colors.textPrimary,
-                fontSize = 14.sp
+                style = appleType.subheadline.copy(lineHeight = 21.sp)
             )
         }
     }
     if (announcement.attachments.isNotEmpty()) {
         Spacer(Modifier.height(12.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            PortalSectionHeader(title = "Anexos")
-            val downloadable = announcement.attachments.filter { it.downloadPath.isNotBlank() }
-            if (downloadable.size > 1) {
-                TextButton(
-                    onClick = {
-                        onDownloadBatch(
-                            downloadable.map {
-                                VirtualDownloadRequest(
-                                    path = it.downloadPath,
-                                    fileName = it.fileName,
-                                    courseName = courseName
-                                )
-                            }
-                        )
+        val downloadable = announcement.attachments.filter { it.downloadPath.isNotBlank() }
+        PortalSectionHeader(
+            title = "Anexos",
+            trailing = if (downloadable.size > 1) {
+                {
+                    TextButton(
+                        modifier = Modifier.pointerHoverIcon(PointerIcon.Hand),
+                        onClick = {
+                            onDownloadBatch(
+                                downloadable.map {
+                                    VirtualDownloadRequest(
+                                        path = it.downloadPath,
+                                        fileName = it.fileName,
+                                        courseName = courseName
+                                    )
+                                }
+                            )
+                        }
+                    ) {
+                        Text("Baixar todos (${downloadable.size})", color = colors.accent, fontSize = 12.sp)
                     }
-                ) {
-                    Text("Baixar todos (${downloadable.size})", color = colors.accent, fontSize = 12.sp)
                 }
-            }
-        }
+            } else null
+        )
         Spacer(Modifier.height(4.dp))
         PortalCard(contentPadding = PaddingValues(0.dp)) {
             announcement.attachments.forEachIndexed { idx, att ->
@@ -2228,8 +2402,14 @@ private fun AttachmentRow(
     onDownload: () -> Unit
 ) {
     val colors = LocalPortalColors.current
+    val isWeb = remember { PlatformBridge.capabilities().isWeb }
     val sizeLabel = formatBytes(attachment.size)
-    val subtitle = if (sizeLabel.isNotBlank()) "$sizeLabel · Toque para abrir" else "Toque para abrir"
+    val actionHint = if (isWeb) {
+        if (shouldDirectDownloadOnWeb(attachment.fileName)) "Clique para baixar" else "Clique para abrir"
+    } else {
+        "Toque para abrir"
+    }
+    val subtitle = if (sizeLabel.isNotBlank()) "$sizeLabel · $actionHint" else actionHint
     PortalListRow(
         title = attachment.fileName,
         subtitle = subtitle,

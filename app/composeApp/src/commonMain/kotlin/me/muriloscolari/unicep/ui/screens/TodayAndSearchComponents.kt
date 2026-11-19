@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -34,6 +36,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -53,6 +60,8 @@ import me.muriloscolari.unicep.data.repo.ScheduleClassEntry
 import me.muriloscolari.unicep.data.repo.TodaySummary
 import me.muriloscolari.unicep.data.repo.searchPortalData
 import me.muriloscolari.unicep.platform.DesignStyle
+import me.muriloscolari.unicep.platform.PlatformBridge
+import me.muriloscolari.unicep.platform.PlatformVerticalScrollbar
 import me.muriloscolari.unicep.ui.designsystem.AppleSheet
 import me.muriloscolari.unicep.ui.designsystem.AppleSheetDetent
 import me.muriloscolari.unicep.ui.designsystem.CardStyle
@@ -492,6 +501,8 @@ fun GlobalSearchSheet(
     var query by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf(GlobalSearchFilter.ALL) }
     val focusRequester = remember { FocusRequester() }
+    val resultsListState = rememberLazyListState()
+    val isWeb = remember { PlatformBridge.capabilities().isWeb }
 
     LaunchedEffect(Unit) {
         runCatching { focusRequester.requestFocus() }
@@ -521,9 +532,10 @@ fun GlobalSearchSheet(
 
     AppleSheet(
         title = "Busca Global",
-        subtitle = "Notas, horários, matriz e Sala Virtual",
+        subtitle = if (isWeb) "Notas, horários, matriz e Sala Virtual · Esc para fechar" else "Notas, horários, matriz e Sala Virtual",
         onDismiss = onDismiss,
-        initialDetent = AppleSheetDetent.Large
+        initialDetent = AppleSheetDetent.Large,
+        desktopMaxWidth = 680.dp
     ) {
         // Campo de busca
         Row(
@@ -557,7 +569,25 @@ fun GlobalSearchSheet(
                     cursorBrush = SolidColor(colors.accent),
                     modifier = Modifier
                         .fillMaxWidth()
+                        .pointerHoverIcon(PointerIcon.Text)
                         .focusRequester(focusRequester)
+                        .onPreviewKeyEvent { ev ->
+                            if (ev.type == KeyEventType.KeyDown &&
+                                (ev.key == Key.Enter || ev.key == Key.NumPadEnter) &&
+                                results.isNotEmpty()
+                            ) {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onSelectResult(results.first())
+                                true
+                            } else false
+                        }
+                )
+            }
+            if (isWeb && results.isNotEmpty()) {
+                Text(
+                    text = "Enter abre",
+                    color = colors.tertiaryLabel,
+                    style = appleType.caption2
                 )
             }
             if (query.isNotEmpty()) {
@@ -646,76 +676,92 @@ fun GlobalSearchSheet(
                     cardStyle = CardStyle.Grouped,
                     contentPadding = PaddingValues(0.dp)
                 ) {
-                    LazyColumn(
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 420.dp)
+                            .heightIn(max = 440.dp)
                     ) {
-                        itemsIndexed(results, key = { _, item -> item.id }) { idx, item ->
-                            if (idx > 0) PortalDivider(Modifier.padding(start = 16.dp))
-                            val badgeColor = when (item.kind) {
-                                GlobalSearchResultKind.SUBJECT -> colors.accent
-                                GlobalSearchResultKind.SCHEDULE -> colors.indigo
-                                GlobalSearchResultKind.CURRICULUM -> colors.teal
-                                GlobalSearchResultKind.VIRTUAL_COURSE -> colors.accent
-                                GlobalSearchResultKind.VIRTUAL_ASSIGNMENT -> colors.orange
-                                GlobalSearchResultKind.VIRTUAL_ANNOUNCEMENT -> colors.indigo
-                                GlobalSearchResultKind.VIRTUAL_MATERIAL -> colors.green
-                                GlobalSearchResultKind.CALENDAR_EVENT -> colors.accent
-                            }
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .pointerHoverIcon(PointerIcon.Hand)
-                                    .clickable {
-                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        onSelectResult(item)
-                                    }
-                                    .padding(horizontal = 16.dp, vertical = 11.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        PortalBadge(text = item.badge, color = badgeColor)
-                                        if (item.isAlert) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(6.dp)
-                                                    .clip(CircleShape)
-                                                    .background(colors.orange)
+                        LazyColumn(
+                            state = resultsListState,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            itemsIndexed(results, key = { _, item -> item.id }) { idx, item ->
+                                if (idx > 0) PortalDivider(Modifier.padding(start = 16.dp))
+                                val badgeColor = when (item.kind) {
+                                    GlobalSearchResultKind.SUBJECT -> colors.accent
+                                    GlobalSearchResultKind.SCHEDULE -> colors.indigo
+                                    GlobalSearchResultKind.CURRICULUM -> colors.teal
+                                    GlobalSearchResultKind.VIRTUAL_COURSE -> colors.accent
+                                    GlobalSearchResultKind.VIRTUAL_ASSIGNMENT -> colors.orange
+                                    GlobalSearchResultKind.VIRTUAL_ANNOUNCEMENT -> colors.indigo
+                                    GlobalSearchResultKind.VIRTUAL_MATERIAL -> colors.green
+                                    GlobalSearchResultKind.CALENDAR_EVENT -> colors.accent
+                                }
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .pointerHoverIcon(PointerIcon.Hand)
+                                        .clickable {
+                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            onSelectResult(item)
+                                        }
+                                        .padding(horizontal = 16.dp, vertical = 11.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            PortalBadge(text = item.badge, color = badgeColor)
+                                            if (item.isAlert) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(6.dp)
+                                                        .clip(CircleShape)
+                                                        .background(colors.orange)
+                                                )
+                                            }
+                                        }
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(
+                                            text = item.title,
+                                            color = colors.textPrimary,
+                                            style = appleType.subheadline,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        if (item.subtitle.isNotBlank()) {
+                                            Text(
+                                                text = item.subtitle,
+                                                color = colors.textSecondary,
+                                                style = appleType.caption1,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
                                             )
                                         }
                                     }
-                                    Spacer(Modifier.height(4.dp))
-                                    Text(
-                                        text = item.title,
-                                        color = colors.textPrimary,
-                                        style = appleType.subheadline,
-                                        fontWeight = FontWeight.Medium,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
+                                    Icon(
+                                        imageVector = PortalIcons.ChevronRight,
+                                        contentDescription = null,
+                                        tint = colors.tertiaryLabel,
+                                        modifier = Modifier.size(15.dp)
                                     )
-                                    if (item.subtitle.isNotBlank()) {
-                                        Text(
-                                            text = item.subtitle,
-                                            color = colors.textSecondary,
-                                            style = appleType.caption1,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
                                 }
-                                Icon(
-                                    imageVector = PortalIcons.ChevronRight,
-                                    contentDescription = null,
-                                    tint = colors.tertiaryLabel,
-                                    modifier = Modifier.size(15.dp)
-                                )
                             }
+                        }
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .padding(vertical = 6.dp, horizontal = 3.dp),
+                            contentAlignment = Alignment.CenterEnd
+                        ) {
+                            PlatformVerticalScrollbar(
+                                listState = resultsListState,
+                                modifier = Modifier.fillMaxHeight()
+                            )
                         }
                     }
                 }

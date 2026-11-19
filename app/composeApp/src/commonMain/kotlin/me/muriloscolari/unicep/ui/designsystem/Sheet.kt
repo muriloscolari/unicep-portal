@@ -15,6 +15,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -26,6 +27,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -40,6 +42,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -60,10 +63,12 @@ import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import me.muriloscolari.unicep.platform.PlatformBridge
+import me.muriloscolari.unicep.platform.PlatformVerticalScrollbar
 import kotlin.math.roundToInt
 
 enum class AppleSheetDetent { Medium, Large }
@@ -79,6 +84,7 @@ fun AppleSheet(
     subtitle: String? = null,
     onDismiss: () -> Unit,
     initialDetent: AppleSheetDetent = AppleSheetDetent.Medium,
+    desktopMaxWidth: Dp = 640.dp,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val colors = LocalPortalColors.current
@@ -134,7 +140,7 @@ fun AppleSheet(
             ) {
                 GlassSurface(
                     modifier = Modifier
-                        .widthIn(max = 560.dp)
+                        .widthIn(max = desktopMaxWidth)
                         .fillMaxWidth()
                         .heightIn(max = (maxH - 48.dp).coerceAtLeast(320.dp))
                         .predictiveBackSurfaceTransform(
@@ -202,6 +208,30 @@ fun AppleSheet(
                     dragOffsetY.snapTo(next)
                 }
             }
+            val headerDragModifier = Modifier.draggable(
+                orientation = Orientation.Vertical,
+                state = draggableState,
+                onDragStopped = { velocity ->
+                    val offset = dragOffsetY.value
+                    when {
+                        offset < -expandThresholdPx || velocity < -velocityThresholdPx -> {
+                            detent = AppleSheetDetent.Large
+                            scope.launch { dragOffsetY.animateTo(0f, AppleMotion.sheet) }
+                        }
+                        offset > dismissThresholdPx || velocity > velocityThresholdPx -> {
+                            if (detent == AppleSheetDetent.Large && velocity < velocityThresholdPx * 1.4f && offset < dismissThresholdPx * 1.5f) {
+                                detent = AppleSheetDetent.Medium
+                                scope.launch { dragOffsetY.animateTo(0f, AppleMotion.sheet) }
+                            } else {
+                                onDismiss()
+                            }
+                        }
+                        else -> {
+                            scope.launch { dragOffsetY.animateTo(0f, AppleMotion.sheet) }
+                        }
+                    }
+                }
+            )
 
             AnimatedVisibility(
                 visible = visible,
@@ -232,30 +262,6 @@ fun AppleSheet(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
                             onClick = {}
-                        )
-                        .draggable(
-                            orientation = Orientation.Vertical,
-                            state = draggableState,
-                            onDragStopped = { velocity ->
-                                val offset = dragOffsetY.value
-                                when {
-                                    offset < -expandThresholdPx || velocity < -velocityThresholdPx -> {
-                                        detent = AppleSheetDetent.Large
-                                        scope.launch { dragOffsetY.animateTo(0f, AppleMotion.sheet) }
-                                    }
-                                    offset > dismissThresholdPx || velocity > velocityThresholdPx -> {
-                                        if (detent == AppleSheetDetent.Large && velocity < velocityThresholdPx * 1.4f && offset < dismissThresholdPx * 1.5f) {
-                                            detent = AppleSheetDetent.Medium
-                                            scope.launch { dragOffsetY.animateTo(0f, AppleMotion.sheet) }
-                                        } else {
-                                            onDismiss()
-                                        }
-                                    }
-                                    else -> {
-                                        scope.launch { dragOffsetY.animateTo(0f, AppleMotion.sheet) }
-                                    }
-                                }
-                            }
                         ),
                     shape = shape,
                     tint = colors.surface.copy(
@@ -276,6 +282,7 @@ fun AppleSheet(
                         onToggleDetent = {
                             detent = if (detent == AppleSheetDetent.Medium) AppleSheetDetent.Large else AppleSheetDetent.Medium
                         },
+                        headerDragModifier = headerDragModifier,
                         bottomPadding = if (isLarge) (20.dp + navBottom) else 20.dp,
                         content = content
                     )
@@ -292,90 +299,109 @@ private fun SheetInnerContent(
     onDismiss: () -> Unit,
     showGrabber: Boolean,
     onToggleDetent: (() -> Unit)? = null,
-    bottomPadding: androidx.compose.ui.unit.Dp,
+    headerDragModifier: Modifier = Modifier,
+    bottomPadding: Dp,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val colors = LocalPortalColors.current
     val appleType = LocalAppleTypography.current
+    val bodyScrollState = rememberScrollState()
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        if (showGrabber) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = { onToggleDetent?.invoke() }
-                    )
-                    .padding(top = 8.dp, bottom = 4.dp),
-                contentAlignment = Alignment.Center
-            ) {
+        Column(modifier = Modifier.fillMaxWidth().then(headerDragModifier)) {
+            if (showGrabber) {
                 Box(
                     modifier = Modifier
-                        .size(width = 36.dp, height = 5.dp)
-                        .clip(CircleShape)
-                        .background(colors.tertiaryLabel)
-                )
-            }
-        } else {
-            Spacer(Modifier.height(10.dp))
-        }
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Top
-        ) {
-            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                Text(
-                    text = title,
-                    color = colors.textPrimary,
-                    style = appleType.title3
-                )
-                if (!subtitle.isNullOrBlank()) {
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        text = subtitle,
-                        color = colors.textSecondary,
-                        style = appleType.footnote
-                    )
-                }
-            }
-            GlassButton(
-                onClick = onDismiss,
-                size = 32.dp,
-                insideGlassBar = true,
-                contentDescription = "Fechar"
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .background(colors.secondaryFill),
+                        .fillMaxWidth()
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = { onToggleDetent?.invoke() }
+                        )
+                        .padding(top = 8.dp, bottom = 4.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = PortalIcons.Close,
-                        contentDescription = "Fechar",
-                        tint = colors.textSecondary,
-                        modifier = Modifier.size(16.dp)
+                    Box(
+                        modifier = Modifier
+                            .size(width = 36.dp, height = 5.dp)
+                            .clip(CircleShape)
+                            .background(colors.tertiaryLabel)
                     )
                 }
+            } else {
+                Spacer(Modifier.height(10.dp))
             }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                SelectionContainer(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                    Column {
+                        Text(
+                            text = title,
+                            color = colors.textPrimary,
+                            style = appleType.title3
+                        )
+                        if (!subtitle.isNullOrBlank()) {
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = subtitle,
+                                color = colors.textSecondary,
+                                style = appleType.footnote
+                            )
+                        }
+                    }
+                }
+                GlassButton(
+                    onClick = onDismiss,
+                    size = 32.dp,
+                    insideGlassBar = true,
+                    contentDescription = "Fechar"
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(colors.secondaryFill),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = PortalIcons.Close,
+                            contentDescription = "Fechar",
+                            tint = colors.textSecondary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+
+            PortalDivider(Modifier.padding(horizontal = 20.dp))
         }
 
-        PortalDivider(Modifier.padding(horizontal = 20.dp))
-
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = bottomPadding),
-            content = content
-        )
+        Box(modifier = Modifier.fillMaxWidth().weight(1f, fill = false)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(bodyScrollState)
+                    .padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = bottomPadding),
+                content = content
+            )
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .padding(top = 6.dp, bottom = 6.dp, end = 3.dp),
+                contentAlignment = Alignment.CenterEnd
+            ) {
+                PlatformVerticalScrollbar(
+                    scrollState = bodyScrollState,
+                    modifier = Modifier.fillMaxHeight()
+                )
+            }
+        }
     }
 }
 
@@ -439,20 +465,24 @@ fun AppleAlert(
                     .padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(
-                    text = title,
-                    color = colors.textPrimary,
-                    style = appleType.headline,
-                    textAlign = TextAlign.Center
-                )
-                if (!message.isNullOrBlank()) {
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = message,
-                        color = colors.textSecondary,
-                        style = appleType.footnote,
-                        textAlign = TextAlign.Center
-                    )
+                SelectionContainer {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = title,
+                            color = colors.textPrimary,
+                            style = appleType.headline,
+                            textAlign = TextAlign.Center
+                        )
+                        if (!message.isNullOrBlank()) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                text = message,
+                                color = colors.textSecondary,
+                                style = appleType.footnote,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
                 }
                 if (extraContent != null) {
                     Spacer(Modifier.height(12.dp))

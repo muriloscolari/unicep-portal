@@ -63,4 +63,35 @@ class TextAndTimeUtilTest {
         assertTrue(merged[0].report!!.isFrequencyAtLimit())
         assertFalse(merged[1].report!!.isFrequencyAtLimit())
     }
+
+    @Test
+    fun extractTextLinksFindsAndCleansUrls() {
+        val sample = "Leia https://exemplo.com/a. Veja também http://portal.unicep.edu.br/guia, (https://exemplo.com/b_(1)) e www.unicep.edu.br/ava!"
+        val links = extractTextLinks(sample)
+        assertEquals(4, links.size)
+        assertEquals("https://exemplo.com/a", links[0].url)
+        assertEquals("http://portal.unicep.edu.br/guia", links[1].url)
+        assertEquals("https://exemplo.com/b_(1)", links[2].url)
+        assertEquals("www.unicep.edu.br/ava", links[3].displayText)
+        assertEquals("https://www.unicep.edu.br/ava", links[3].url)
+        links.forEach { span ->
+            assertEquals(span.displayText, sample.substring(span.start, span.end))
+        }
+        assertTrue(extractTextLinks("Sem links aqui apenas texto normal.").isEmpty())
+    }
+
+    @Test
+    fun shouldDirectDownloadOnWebDetectsOfficeAndArchiveFiles() {
+        assertTrue(shouldDirectDownloadOnWeb("roteiro_2026.doc"))
+        assertTrue(shouldDirectDownloadOnWeb("Trabalho_Modelagem.DOCX"))
+        assertTrue(shouldDirectDownloadOnWeb("planilha.xlsx"))
+        assertTrue(shouldDirectDownloadOnWeb("slides.pptx"))
+        assertTrue(shouldDirectDownloadOnWeb("material.zip?dl=1"))
+
+        assertFalse(shouldDirectDownloadOnWeb("aula1.pdf"))
+        assertFalse(shouldDirectDownloadOnWeb("diagrama.png"))
+        assertFalse(shouldDirectDownloadOnWeb("foto.jpg"))
+        assertFalse(shouldDirectDownloadOnWeb("pagina.html"))
+        assertFalse(shouldDirectDownloadOnWeb("sem_extensao"))
+    }
 }

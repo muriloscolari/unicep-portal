@@ -34,6 +34,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -50,11 +51,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.text.font.FontWeight
@@ -270,6 +278,12 @@ fun LoginScreen(
     val perfilValues = listOf("alunograd", "alunopos")
     val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
+    val passwordFocusRequester = remember { FocusRequester() }
+    val submitLogin: () -> Unit = {
+        if (ra.isNotBlank() && password.isNotBlank() && !loading) {
+            onLogin(serverUrl, ra, password, perfilValues[perfilIndex])
+        }
+    }
 
     if (style != DesignStyle.APPLE) {
         val reduceMotion = remember { PlatformBridge.isReduceMotionEnabled() }
@@ -345,7 +359,14 @@ fun LoginScreen(
                         onValueChange = { if (it.length <= 11) ra = it },
                         label = "RA (usuário)",
                         leadingIcon = PortalIcons.Person,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next)
+                        modifier = Modifier.onPreviewKeyEvent { ev ->
+                            if (ev.type == KeyEventType.KeyDown && (ev.key == Key.Enter || ev.key == Key.NumPadEnter)) {
+                                passwordFocusRequester.requestFocus()
+                                true
+                            } else false
+                        },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next),
+                        keyboardActions = KeyboardActions(onNext = { passwordFocusRequester.requestFocus() })
                     )
                     Spacer(Modifier.height(12.dp))
                     PortalTextField(
@@ -353,13 +374,17 @@ fun LoginScreen(
                         onValueChange = { if (it.length <= 8) password = it },
                         label = "Senha do portal",
                         leadingIcon = PortalIcons.Lock,
+                        modifier = Modifier
+                            .focusRequester(passwordFocusRequester)
+                            .onPreviewKeyEvent { ev ->
+                                if (ev.type == KeyEventType.KeyDown && (ev.key == Key.Enter || ev.key == Key.NumPadEnter)) {
+                                    submitLogin()
+                                    true
+                                } else false
+                            },
                         visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = {
-                            if (ra.isNotBlank() && password.isNotBlank() && !loading) {
-                                onLogin(serverUrl, ra, password, perfilValues[perfilIndex])
-                            }
-                        }),
+                        keyboardActions = KeyboardActions(onDone = { submitLogin() }),
                         trailing = {
                             Icon(
                                 imageVector = if (passwordVisible) PortalIcons.EyeOff else PortalIcons.Eye,
@@ -390,18 +415,20 @@ fun LoginScreen(
                                 tint = colors.red,
                                 modifier = Modifier.size(16.dp)
                             )
-                            Text(
-                                text = error,
-                                color = colors.red,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium
-                            )
+                            SelectionContainer {
+                                Text(
+                                    text = error,
+                                    color = colors.red,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
                         }
                     }
                     Spacer(Modifier.height(18.dp))
                     PortalPrimaryButton(
                         text = "Entrar",
-                        onClick = { onLogin(serverUrl, ra, password, perfilValues[perfilIndex]) },
+                        onClick = submitLogin,
                         enabled = ra.isNotBlank() && password.isNotBlank(),
                         loading = loading,
                         modifier = Modifier.fillMaxWidth()
@@ -444,11 +471,7 @@ fun LoginScreen(
                                     }
                                 },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
-                                keyboardActions = KeyboardActions(onDone = {
-                                    if (ra.isNotBlank() && password.isNotBlank() && !loading) {
-                                        onLogin(serverUrl, ra, password, perfilValues[perfilIndex])
-                                    }
-                                })
+                                keyboardActions = KeyboardActions(onDone = { submitLogin() })
                             )
                         }
                     }
@@ -549,10 +572,19 @@ fun LoginScreen(
                                     onValueChange = { if (it.length <= 11) ra = it },
                                     placeholder = "RA (usuário)",
                                     icon = PortalIcons.Person,
+                                    inputModifier = Modifier.onPreviewKeyEvent { ev ->
+                                        if (ev.type == KeyEventType.KeyDown && (ev.key == Key.Enter || ev.key == Key.NumPadEnter)) {
+                                            passwordFocusRequester.requestFocus()
+                                            true
+                                        } else false
+                                    },
                                     keyboardOptions = KeyboardOptions(
                                         keyboardType = KeyboardType.Number,
                                         imeAction = ImeAction.Next
-                                    )
+                                    ),
+                                    keyboardActions = KeyboardActions(onNext = {
+                                        passwordFocusRequester.requestFocus()
+                                    })
                                 )
                                 PortalDivider(Modifier.padding(start = 46.dp))
                                 GroupedLoginFieldRow(
@@ -560,16 +592,20 @@ fun LoginScreen(
                                     onValueChange = { if (it.length <= 8) password = it },
                                     placeholder = "Senha do portal",
                                     icon = PortalIcons.Lock,
+                                    inputModifier = Modifier
+                                        .focusRequester(passwordFocusRequester)
+                                        .onPreviewKeyEvent { ev ->
+                                            if (ev.type == KeyEventType.KeyDown && (ev.key == Key.Enter || ev.key == Key.NumPadEnter)) {
+                                                submitLogin()
+                                                true
+                                            } else false
+                                        },
                                     visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                                     keyboardOptions = KeyboardOptions(
                                         keyboardType = KeyboardType.Password,
                                         imeAction = ImeAction.Done
                                     ),
-                                    keyboardActions = KeyboardActions(onDone = {
-                                        if (ra.isNotBlank() && password.isNotBlank() && !loading) {
-                                            onLogin(serverUrl, ra, password, perfilValues[perfilIndex])
-                                        }
-                                    }),
+                                    keyboardActions = KeyboardActions(onDone = { submitLogin() }),
                                     trailing = {
                                         Icon(
                                             imageVector = if (passwordVisible) PortalIcons.EyeOff else PortalIcons.Eye,
@@ -597,19 +633,21 @@ fun LoginScreen(
                                         tint = colors.red,
                                         modifier = Modifier.size(16.dp)
                                     )
-                                    Text(
-                                        text = error,
-                                        color = colors.red,
-                                        style = appleType.footnote,
-                                        fontWeight = FontWeight.Medium
-                                    )
+                                    SelectionContainer {
+                                        Text(
+                                            text = error,
+                                            color = colors.red,
+                                            style = appleType.footnote,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
                                 }
                             }
 
                             Spacer(Modifier.height(18.dp))
                             GlassProminentButton(
                                 text = "Entrar",
-                                onClick = { onLogin(serverUrl, ra, password, perfilValues[perfilIndex]) },
+                                onClick = submitLogin,
                                 enabled = ra.isNotBlank() && password.isNotBlank(),
                                 loading = loading,
                                 modifier = Modifier.fillMaxWidth()
@@ -657,11 +695,7 @@ fun LoginScreen(
                                             }
                                         },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
-                                        keyboardActions = KeyboardActions(onDone = {
-                                            if (ra.isNotBlank() && password.isNotBlank() && !loading) {
-                                                onLogin(serverUrl, ra, password, perfilValues[perfilIndex])
-                                            }
-                                        })
+                                        keyboardActions = KeyboardActions(onDone = { submitLogin() })
                                     )
                                 }
                             }
@@ -679,6 +713,7 @@ private fun GroupedLoginFieldRow(
     onValueChange: (String) -> Unit,
     placeholder: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
+    inputModifier: Modifier = Modifier,
     visualTransformation: VisualTransformation = VisualTransformation.None,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
@@ -711,7 +746,7 @@ private fun GroupedLoginFieldRow(
             BasicTextField(
                 value = value,
                 onValueChange = onValueChange,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = inputModifier.fillMaxWidth().pointerHoverIcon(PointerIcon.Text),
                 singleLine = true,
                 textStyle = appleType.body.copy(color = colors.textPrimary),
                 cursorBrush = SolidColor(colors.accent),
