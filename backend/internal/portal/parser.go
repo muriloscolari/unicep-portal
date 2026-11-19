@@ -37,7 +37,7 @@ func ParsePeriodOptions(html string, basePath string) ([]PeriodOption, error) {
 	if err != nil {
 		return nil, err
 	}
-	var out []PeriodOption
+	out := []PeriodOption{}
 	doc.Find("#cboPeriodo option, select[name='cboPeriodo'] option").Each(func(_ int, s *goquery.Selection) {
 		val := strings.TrimSpace(s.AttrOr("value", ""))
 		if val == "" || val == "0" {
@@ -73,7 +73,7 @@ func ParseGrades(html string) ([]PartialGradeItem, error) {
 	}
 
 	var headers []string
-	var items []PartialGradeItem
+	items := []PartialGradeItem{}
 
 	table.Find("tr").Each(func(_ int, row *goquery.Selection) {
 		cells := row.ChildrenFiltered("td, th")
@@ -274,7 +274,7 @@ func ParseTranscript(html string) ([]TranscriptItem, error) {
 		return nil, err
 	}
 
-	var items []TranscriptItem
+	items := []TranscriptItem{}
 	seen := make(map[string]struct{})
 
 	doc.Find("table").Each(func(_ int, t *goquery.Selection) {
@@ -335,7 +335,7 @@ func ParseCurriculum(html string) ([]CurriculumItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	var items []CurriculumItem
+	items := []CurriculumItem{}
 	seen := make(map[string]struct{})
 	currentPeriod := ""
 
@@ -546,7 +546,7 @@ func ParseTuition(html string) ([]TuitionItem, error) {
 	if table == nil {
 		return []TuitionItem{}, nil
 	}
-	var items []TuitionItem
+	items := []TuitionItem{}
 	headerSeen := false
 	table.Find("tr").Each(func(_ int, row *goquery.Selection) {
 		cells := row.ChildrenFiltered("td, th")
@@ -579,7 +579,7 @@ func ParseInstitutionalDocs(html string) ([]LinkItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	var items []LinkItem
+	items := []LinkItem{}
 	doc.Find("a").Each(func(_ int, a *goquery.Selection) {
 		href := strings.TrimSpace(a.AttrOr("href", ""))
 		title := cleanText(a.Text())

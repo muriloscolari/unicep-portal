@@ -139,7 +139,10 @@ data class PortalUiState(
 )
 
 class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
-    private val cacheJson = Json { ignoreUnknownKeys = true }
+    private val cacheJson = Json {
+        ignoreUnknownKeys = true
+        coerceInputValues = true
+    }
 
     private val _state = MutableStateFlow(
         PortalUiState(

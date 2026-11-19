@@ -445,10 +445,10 @@ func (m *Manager) fetchOverviewUncached(ctx context.Context, ra string) (Overvie
 
 		var (
 			wg           sync.WaitGroup
-			semesters    []SemesterOption
-			courses      []CourseSummary
+			semesters    = []SemesterOption{}
+			courses      = []CourseSummary{}
 			coursesErr   error
-			globalNews   []Announcement
+			globalNews   = []Announcement{}
 			errMu        sync.Mutex
 		)
 
@@ -491,6 +491,9 @@ func (m *Manager) fetchOverviewUncached(ctx context.Context, ra string) (Overvie
 		}
 
 		res.Semesters = semesters
+		if courses == nil {
+			courses = []CourseSummary{}
+		}
 		res.Courses = courses
 
 		// Identify active courses in the latest semester to enrich assignments, news, quizzes, and calendar.
@@ -508,10 +511,10 @@ func (m *Manager) fetchOverviewUncached(ctx context.Context, ra string) (Overvie
 			enrichWG      sync.WaitGroup
 			mu            sync.Mutex
 			allNews       = append([]Announcement{}, globalNews...)
-			allAssigns    []AssignmentItem
-			allQuizzes    []QuizItem
-			succeededIDs  []int64
-			calendarItems []CalendarEvent
+			allAssigns    = []AssignmentItem{}
+			allQuizzes    = []QuizItem{}
+			succeededIDs  = []int64{}
+			calendarItems = []CalendarEvent{}
 			successCount  int
 			failCount     int
 			firstErr      error
@@ -692,7 +695,7 @@ func (m *Manager) GetCourseDetail(ctx context.Context, ra string, orgUnitID int6
 			defer wg.Done()
 			mods, e := m.fetchContentTOC(ctx, client, orgUnitID)
 			recordSessionErr(e)
-			if e == nil {
+			if e == nil && mods != nil {
 				res.Modules = mods
 			}
 		}()
@@ -700,7 +703,7 @@ func (m *Manager) GetCourseDetail(ctx context.Context, ra string, orgUnitID int6
 			defer wg.Done()
 			assigns, e := m.fetchAssignments(ctx, client, orgUnitID, course.Name)
 			recordSessionErr(e)
-			if e == nil {
+			if e == nil && assigns != nil {
 				res.Assignments = assigns
 			}
 		}()
@@ -708,7 +711,7 @@ func (m *Manager) GetCourseDetail(ctx context.Context, ra string, orgUnitID int6
 			defer wg.Done()
 			grades, e := m.fetchGrades(ctx, client, orgUnitID)
 			recordSessionErr(e)
-			if e == nil {
+			if e == nil && grades != nil {
 				res.Grades = grades
 			}
 		}()
@@ -716,7 +719,7 @@ func (m *Manager) GetCourseDetail(ctx context.Context, ra string, orgUnitID int6
 			defer wg.Done()
 			news, e := m.fetchNews(ctx, client, orgUnitID, course.Name)
 			recordSessionErr(e)
-			if e == nil {
+			if e == nil && news != nil {
 				res.Announcements = news
 			}
 		}()
@@ -724,7 +727,7 @@ func (m *Manager) GetCourseDetail(ctx context.Context, ra string, orgUnitID int6
 			defer wg.Done()
 			quizzes, e := m.fetchQuizzes(ctx, client, orgUnitID, course.Name)
 			recordSessionErr(e)
-			if e == nil {
+			if e == nil && quizzes != nil {
 				res.Quizzes = quizzes
 			}
 		}()
@@ -732,7 +735,7 @@ func (m *Manager) GetCourseDetail(ctx context.Context, ra string, orgUnitID int6
 			defer wg.Done()
 			forums, e := m.fetchDiscussions(ctx, client, orgUnitID)
 			recordSessionErr(e)
-			if e == nil {
+			if e == nil && forums != nil {
 				res.Discussions = forums
 			}
 		}()
@@ -740,7 +743,7 @@ func (m *Manager) GetCourseDetail(ctx context.Context, ra string, orgUnitID int6
 			defer wg.Done()
 			cal, e := m.fetchCourseCalendar(ctx, client, orgUnitID, course.Name)
 			recordSessionErr(e)
-			if e == nil {
+			if e == nil && cal != nil {
 				res.Calendar = cal
 			}
 		}()
@@ -1253,10 +1256,8 @@ func (m *Manager) fetchCourseCalendar(ctx context.Context, client *http.Client, 
 
 // FetchActiveCourseTopics fetches and flattens content topics passively across the student's active courses.
 func (m *Manager) FetchActiveCourseTopics(ctx context.Context, ra string, courses []CourseSummary) ([]ContentTopicSnapshot, []int64, error) {
-	var (
-		topics       []ContentTopicSnapshot
-		succeededIDs []int64
-	)
+	topics := []ContentTopicSnapshot{}
+	succeededIDs := []int64{}
 	err := m.withClient(ctx, ra, func(client *http.Client, _, _ string) error {
 		courseList := courses
 		if len(courseList) == 0 {
@@ -1277,8 +1278,8 @@ func (m *Manager) FetchActiveCourseTopics(ctx context.Context, ra string, course
 			wg           sync.WaitGroup
 			mu           sync.Mutex
 			sem          = make(chan struct{}, 4)
-			allTopics    []ContentTopicSnapshot
-			okIDs        []int64
+			allTopics    = []ContentTopicSnapshot{}
+			okIDs        = []int64{}
 			sessionErr   error
 			firstErr     error
 			successCount int

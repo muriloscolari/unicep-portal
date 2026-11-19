@@ -6,7 +6,10 @@ import me.muriloscolari.unicep.data.api.VirtualAssignmentItem
 import me.muriloscolari.unicep.platform.AppTabIndex
 import me.muriloscolari.unicep.platform.PlatformBridge
 
-private val virtualAlertJson = Json { ignoreUnknownKeys = true }
+private val virtualAlertJson = Json {
+    ignoreUnknownKeys = true
+    coerceInputValues = true
+}
 
 val DEFAULT_VIRTUAL_DEADLINE_LEAD_HOURS = listOf(24, 72)
 val PRESET_VIRTUAL_DEADLINE_HOURS = listOf(6, 12, 24, 48, 72, 120, 168)

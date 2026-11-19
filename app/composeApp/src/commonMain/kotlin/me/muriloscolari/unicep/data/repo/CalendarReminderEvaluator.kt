@@ -6,7 +6,10 @@ import me.muriloscolari.unicep.data.api.UserCalendarEvent
 import me.muriloscolari.unicep.platform.AppTabIndex
 import me.muriloscolari.unicep.platform.PlatformBridge
 
-private val calendarReminderJson = Json { ignoreUnknownKeys = true }
+private val calendarReminderJson = Json {
+    ignoreUnknownKeys = true
+    coerceInputValues = true
+}
 
 data class ScheduledCalendarReminder(
     val eventId: Long,

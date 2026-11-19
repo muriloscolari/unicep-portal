@@ -345,21 +345,37 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	reportSel, _, _, _ := s.portal.FetchHTML(r.Context(), claims.RA, "/ambiente_aluno/relatorios/boletim_geral.asp")
 	reportPeriods, _ := portal.ParsePeriodOptions(reportSel, "/ambiente_aluno/relatorios/boletim_detalhado.asp")
 
-	var currentGrades []portal.PartialGradeItem
+	currentGrades := []portal.PartialGradeItem{}
 	if len(gradePeriods) > 0 {
 		if gHTML, _, _, err := s.portal.FetchHTML(r.Context(), claims.RA, gradePeriods[0].Query); err == nil {
-			currentGrades, _ = portal.ParseGrades(gHTML)
+			if parsed, err := portal.ParseGrades(gHTML); err == nil && parsed != nil {
+				currentGrades = parsed
+			}
 		}
 	}
 
-	var currentReport portal.ReportCardResponse
+	currentReport := portal.ReportCardResponse{Items: []portal.ReportCardItem{}}
 	if len(reportPeriods) > 0 {
 		if rHTML, _, _, err := s.portal.FetchHTML(r.Context(), claims.RA, reportPeriods[0].Query); err == nil {
-			currentReport, _ = portal.ParseReportCard(rHTML, reportPeriods[0].ID)
+			if parsed, err := portal.ParseReportCard(rHTML, reportPeriods[0].ID); err == nil {
+				currentReport = parsed
+			}
 		}
+	}
+	if currentReport.Items == nil {
+		currentReport.Items = []portal.ReportCardItem{}
 	}
 
 	unread, _ := s.store.ListNotifications(claims.RA, true, 50)
+	if gradePeriods == nil {
+		gradePeriods = []portal.PeriodOption{}
+	}
+	if reportPeriods == nil {
+		reportPeriods = []portal.PeriodOption{}
+	}
+	if unread == nil {
+		unread = []storage.Notification{}
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"student":             info,
@@ -548,11 +564,16 @@ func (s *Server) handleCurriculum(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	var matrix []portal.CurriculumItem
+	matrix := []portal.CurriculumItem{}
 	if gradeID != "" {
 		if mHTML, _, _, err := s.portal.FetchHTML(r.Context(), claims.RA, "/modulo_matricula/relatorios/relatorio_matriz_curricular_apartir_2025_unicep.asp?grade="+url.QueryEscape(gradeID)); err == nil {
-			matrix, _ = portal.ParseCurriculum(mHTML)
+			if parsed, err := portal.ParseCurriculum(mHTML); err == nil && parsed != nil {
+				matrix = parsed
+			}
 		}
+	}
+	if transcript == nil {
+		transcript = []portal.TranscriptItem{}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{

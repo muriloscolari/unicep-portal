@@ -2,6 +2,7 @@ package d2l
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -461,5 +462,74 @@ func TestRichTextPlainTextNormalizesCarriageReturns(t *testing.T) {
 	want := "Linha 1\nLinha 2\nLinha 3"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestOverviewResponseMarshalsEmptySlicesAsArraysNotNull(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/d2l/login", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "d2lSameSiteCanaryA", Value: "1", Path: "/"})
+		_, _ = w.Write([]byte("ok"))
+	})
+	mux.HandleFunc("/d2l/lp/auth/login/login.d2l", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "d2lSessionVal", Value: "s", Path: "/"})
+		http.SetCookie(w, &http.Cookie{Name: "d2lSecureSessionVal", Value: "ss", Path: "/"})
+		http.Redirect(w, r, "/d2l/home", http.StatusFound)
+	})
+	mux.HandleFunc("/d2l/home", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("home"))
+	})
+	mux.HandleFunc("/d2l/api/lp/1.0/users/whoami", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Identifier":"10001","FirstName":"ALUNO","LastName":"EXEMPLO"}`))
+	})
+	mux.HandleFunc("/d2l/le/manageCourses/api/mysemesters", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	})
+	mux.HandleFunc("/d2l/le/manageCourses/api/mycourses", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Courses":[{"OrgUnitId":"50001","Name":"CALCULO I","Code":"CALC1","IsActive":true,"CanAccessCourse":true}]}`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/6606/news/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/calendar/events/myEvents/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Objects":[]}`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/50001/dropbox/folders/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/50001/news/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/50001/quizzes/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Objects":[]}`))
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	mgr := NewManager(srv.URL, func(string) (string, error) { return "secret", nil })
+	ov, err := mgr.GetOverviewWithOptions(context.Background(), "1234567", true)
+	if err != nil {
+		t.Fatalf("GetOverviewWithOptions failed: %v", err)
+	}
+
+	raw, err := json.Marshal(ov)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+	payload := string(raw)
+	if strings.Contains(payload, ":null") {
+		t.Fatalf("expected no null slices in serialized overview, got: %s", payload)
+	}
+	for _, want := range []string{
+		`"semesters":[]`,
+		`"upcomingAssignments":[]`,
+		`"upcomingQuizzes":[]`,
+		`"announcements":[]`,
+		`"calendarEvents":[]`,
+	} {
+		if !strings.Contains(payload, want) {
+			t.Fatalf("expected %s in serialized overview, got: %s", want, payload)
+		}
 	}
 }

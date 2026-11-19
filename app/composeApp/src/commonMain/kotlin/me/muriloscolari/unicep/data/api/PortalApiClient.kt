@@ -40,6 +40,7 @@ class PortalApiClient {
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
+        coerceInputValues = true
     }
 
     private val client = HttpClient(PlatformBridge.createHttpEngine()) {

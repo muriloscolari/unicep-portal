@@ -7,7 +7,10 @@ import me.muriloscolari.unicep.platform.AppTabIndex
 import me.muriloscolari.unicep.platform.PlatformBridge
 import kotlin.math.roundToInt
 
-private val alertJson = Json { ignoreUnknownKeys = true }
+private val alertJson = Json {
+    ignoreUnknownKeys = true
+    coerceInputValues = true
+}
 
 fun readFrequencyAlertThreshold(
     storageGet: (String) -> String? = PlatformBridge::getString

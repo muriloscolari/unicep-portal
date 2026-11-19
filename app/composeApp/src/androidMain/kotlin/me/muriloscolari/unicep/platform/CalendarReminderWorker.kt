@@ -12,7 +12,10 @@ class CalendarReminderWorker(
     params: WorkerParameters
 ) : CoroutineWorker(appContext, params) {
 
-    private val json = Json { ignoreUnknownKeys = true }
+    private val json = Json {
+        ignoreUnknownKeys = true
+        coerceInputValues = true
+    }
 
     override suspend fun doWork(): Result {
         PlatformBridge.initContext(appContext)

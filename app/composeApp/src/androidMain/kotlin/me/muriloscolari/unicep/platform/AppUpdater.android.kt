@@ -41,7 +41,10 @@ private data class ForgejoAssetDto(
 )
 
 internal object AppUpdater {
-    private val json = Json { ignoreUnknownKeys = true }
+    private val json = Json {
+        ignoreUnknownKeys = true
+        coerceInputValues = true
+    }
 
     fun currentVersion(context: Context): String {
         return runCatching {
