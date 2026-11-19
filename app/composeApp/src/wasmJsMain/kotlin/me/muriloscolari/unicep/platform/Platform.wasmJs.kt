@@ -6,6 +6,7 @@ import androidx.compose.runtime.Composable
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.js.Js
 import kotlinx.browser.window
+import me.muriloscolari.unicep.data.api.UserCalendarEvent
 
 private fun jsonString(s: String): String = buildString(s.length + 2) {
     append('"')
@@ -316,6 +317,14 @@ private fun jsLocalHour(): Int = js("new Date().getHours()")
 
 private fun jsLocalMinute(): Int = js("new Date().getMinutes()")
 
+private fun jsLocalYear(): Int = js("new Date().getFullYear()")
+
+private fun jsLocalMonth(): Int = js("new Date().getMonth() + 1")
+
+private fun jsLocalDay(): Int = js("new Date().getDate()")
+
+private fun jsLocalUtcOffsetMinutes(): Int = js("-(new Date().getTimezoneOffset())")
+
 private fun jsPrefersReducedMotion(): Boolean = js(
     """(() => {
         try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
@@ -534,6 +543,10 @@ actual object PlatformBridge {
 
     actual fun cancelGradeSync() {}
 
+    actual fun syncCalendarReminders(events: List<UserCalendarEvent>) {}
+
+    actual fun cancelAllCalendarReminders() {}
+
     actual fun requestNotificationPermissionIfNeeded() {
         jsRequestWebNotificationPermission()
     }
@@ -597,7 +610,11 @@ actual object PlatformBridge {
     actual fun currentLocalDateTime(): LocalDateTimeInfo = LocalDateTimeInfo(
         dayOfWeekIso = jsLocalDayOfWeekIso(),
         hour = jsLocalHour(),
-        minute = jsLocalMinute()
+        minute = jsLocalMinute(),
+        year = jsLocalYear(),
+        month = jsLocalMonth(),
+        day = jsLocalDay(),
+        utcOffsetMinutes = jsLocalUtcOffsetMinutes()
     )
 
     actual fun formatEpochMillisLocal(millis: Long): String {

@@ -75,9 +75,7 @@ func (w *Worker) runCycle(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			}
-			userCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-			defer cancel()
-			if _, err := w.syncUserWithRecord(userCtx, u.RA, u.D2LPollingEnabled, false); err != nil {
+			if _, err := w.syncUserWithRecord(ctx, u.RA, u.D2LPollingEnabled, false, false); err != nil {
 				log.Printf("poller: sync user %s error: %v", u.RA, err)
 			}
 		}()
@@ -88,17 +86,27 @@ func (w *Worker) runCycle(ctx context.Context) {
 // SyncUser fetches the latest semester grades and report card for ra, saves the snapshot, and returns new notifications.
 // When seedOnly is true and no prior snapshot exists, no notifications are emitted.
 func (w *Worker) SyncUser(ctx context.Context, ra string, seedOnly bool) (int, error) {
+	return w.SyncUserWithOptions(ctx, ra, seedOnly, false)
+}
+
+// SyncUserWithOptions runs legacy and D2L synchronization for ra, optionally forcing a fresh D2L fetch bypassing cache.
+func (w *Worker) SyncUserWithOptions(ctx context.Context, ra string, seedOnly, forceD2LRefresh bool) (int, error) {
 	d2lEnabled := true
 	if u, err := w.store.GetUser(ra); err == nil && u != nil {
 		d2lEnabled = u.D2LPollingEnabled
 	}
-	return w.syncUserWithRecord(ctx, ra, d2lEnabled, seedOnly)
+	return w.syncUserWithRecord(ctx, ra, d2lEnabled, seedOnly, forceD2LRefresh)
 }
 
-func (w *Worker) syncUserWithRecord(ctx context.Context, ra string, d2lEnabled, seedOnly bool) (int, error) {
-	created, legacyErr := w.syncLegacy(ctx, ra, seedOnly)
-	if !seedOnly && d2lEnabled {
-		d2lCreated, d2lErr := w.syncD2L(ctx, ra, false)
+func (w *Worker) syncUserWithRecord(ctx context.Context, ra string, d2lEnabled, seedOnly, forceD2LRefresh bool) (int, error) {
+	legacyCtx, cancelLegacy := context.WithTimeout(ctx, 45*time.Second)
+	defer cancelLegacy()
+	created, legacyErr := w.syncLegacy(legacyCtx, ra, seedOnly)
+
+	if d2lEnabled && w.d2l != nil {
+		d2lCtx, cancelD2L := context.WithTimeout(ctx, 60*time.Second)
+		defer cancelD2L()
+		d2lCreated, d2lErr := w.syncD2L(d2lCtx, ra, seedOnly, forceD2LRefresh)
 		if d2lErr != nil {
 			log.Printf("poller: sync D2L %s error: %v", ra, d2lErr)
 		} else {
@@ -193,33 +201,39 @@ func (w *Worker) syncLegacy(ctx context.Context, ra string, seedOnly bool) (int,
 	return created, nil
 }
 
-func (w *Worker) syncD2L(ctx context.Context, ra string, seedOnly bool) (int, error) {
+func (w *Worker) syncD2L(ctx context.Context, ra string, seedOnly, forceRefresh bool) (int, error) {
 	if w.d2l == nil {
 		return 0, nil
 	}
-	ov, err := w.d2l.GetOverview(ctx, ra)
+	ov, err := w.d2l.GetOverviewWithOptions(ctx, ra, forceRefresh)
 	if err != nil {
 		return 0, err
 	}
-	if !ov.Complete {
+	if len(ov.Courses) > 0 && len(ov.SucceededCourseIDs) == 0 && !ov.Complete {
 		return 0, fmt.Errorf("d2l overview incomplete for %s", ra)
 	}
 
 	created := 0
 
-	currAssignBytes, _ := json.Marshal(ov.UpcomingAssignments)
+	// 1. Atividades (Dropbox)
 	prevAssignJSON, err := w.store.GetD2LSnapshot(ra)
 	if err != nil {
 		return 0, err
 	}
+	var prevAssigns []d2l.AssignmentItem
+	if prevAssignJSON != "" {
+		_ = json.Unmarshal([]byte(prevAssignJSON), &prevAssigns)
+	}
+	mergedAssigns := mergeByCourse(prevAssigns, ov.UpcomingAssignments, ov.Complete, ov.SucceededCourseIDs, func(a d2l.AssignmentItem) int64 {
+		return a.OrgUnitID
+	})
+	currAssignBytes, _ := json.Marshal(mergedAssigns)
 	if prevAssignJSON == "" {
 		if err := w.store.SaveD2LSnapshot(ra, string(currAssignBytes)); err != nil {
 			return 0, err
 		}
 	} else if !seedOnly {
-		var prev []d2l.AssignmentItem
-		_ = json.Unmarshal([]byte(prevAssignJSON), &prev)
-		for _, ev := range DiffD2LAssignments(ra, prev, ov.UpcomingAssignments) {
+		for _, ev := range DiffD2LAssignments(ra, prevAssigns, mergedAssigns) {
 			if id, err := w.store.InsertNotification(ev); err == nil && id > 0 {
 				created++
 			}
@@ -229,7 +243,12 @@ func (w *Worker) syncD2L(ctx context.Context, ra string, seedOnly bool) (int, er
 		}
 	}
 
-	currAnnBytes, _ := json.Marshal(ov.Announcements)
+	// 2. Avisos (News)
+	currAnns := ov.Announcements
+	if currAnns == nil {
+		currAnns = []d2l.Announcement{}
+	}
+	currAnnBytes, _ := json.Marshal(currAnns)
 	prevAnnJSON, err := w.store.GetD2LAnnouncementsSnapshot(ra)
 	if err != nil {
 		return created, err
@@ -241,7 +260,7 @@ func (w *Worker) syncD2L(ctx context.Context, ra string, seedOnly bool) (int, er
 	} else if !seedOnly {
 		var prevAnns []d2l.Announcement
 		_ = json.Unmarshal([]byte(prevAnnJSON), &prevAnns)
-		for _, ev := range DiffD2LAnnouncements(ra, prevAnns, ov.Announcements) {
+		for _, ev := range DiffD2LAnnouncements(ra, prevAnns, currAnns) {
 			if id, err := w.store.InsertNotification(ev); err == nil && id > 0 {
 				created++
 			}
@@ -251,7 +270,94 @@ func (w *Worker) syncD2L(ctx context.Context, ra string, seedOnly bool) (int, er
 		}
 	}
 
+	// 3. Questionários (Quizzes)
+	prevQuizzesJSON, err := w.store.GetD2LQuizzesSnapshot(ra)
+	if err != nil {
+		return created, err
+	}
+	var prevQuizzes []d2l.QuizItem
+	if prevQuizzesJSON != "" {
+		_ = json.Unmarshal([]byte(prevQuizzesJSON), &prevQuizzes)
+	}
+	mergedQuizzes := mergeByCourse(prevQuizzes, ov.UpcomingQuizzes, ov.Complete, ov.SucceededCourseIDs, func(q d2l.QuizItem) int64 {
+		return q.OrgUnitID
+	})
+	currQuizzesBytes, _ := json.Marshal(mergedQuizzes)
+	if prevQuizzesJSON == "" {
+		if err := w.store.SaveD2LQuizzesSnapshot(ra, string(currQuizzesBytes)); err != nil {
+			return created, err
+		}
+	} else if !seedOnly {
+		for _, ev := range DiffD2LQuizzes(ra, prevQuizzes, mergedQuizzes) {
+			if id, err := w.store.InsertNotification(ev); err == nil && id > 0 {
+				created++
+			}
+		}
+		if err := w.store.SaveD2LQuizzesSnapshot(ra, string(currQuizzesBytes)); err != nil {
+			return created, err
+		}
+	}
+
+	// 4. Materiais / Conteúdo (Content TOC)
+	topics, topicSucceededIDs, topicsErr := w.d2l.FetchActiveCourseTopics(ctx, ra, ov.Courses)
+	if topicsErr != nil {
+		log.Printf("poller: fetch D2L topics %s error: %v", ra, topicsErr)
+		return created, nil
+	}
+	prevContentJSON, err := w.store.GetD2LContentSnapshot(ra)
+	if err != nil {
+		return created, err
+	}
+	var prevTopics []d2l.ContentTopicSnapshot
+	if prevContentJSON != "" {
+		_ = json.Unmarshal([]byte(prevContentJSON), &prevTopics)
+	}
+	topicsComplete := ov.Complete && len(topicSucceededIDs) >= len(ov.SucceededCourseIDs)
+	mergedTopics := mergeByCourse(prevTopics, topics, topicsComplete, topicSucceededIDs, func(t d2l.ContentTopicSnapshot) int64 {
+		return t.OrgUnitID
+	})
+	currContentBytes, _ := json.Marshal(mergedTopics)
+	if prevContentJSON == "" {
+		if err := w.store.SaveD2LContentSnapshot(ra, string(currContentBytes)); err != nil {
+			return created, err
+		}
+	} else if !seedOnly {
+		for _, ev := range DiffD2LContent(ra, prevTopics, mergedTopics) {
+			if id, err := w.store.InsertNotification(ev); err == nil && id > 0 {
+				created++
+			}
+		}
+		if err := w.store.SaveD2LContentSnapshot(ra, string(currContentBytes)); err != nil {
+			return created, err
+		}
+	}
+
 	return created, nil
+}
+
+func mergeByCourse[T any](prev, curr []T, complete bool, succeededIDs []int64, orgID func(T) int64) []T {
+	if complete {
+		if curr == nil {
+			return []T{}
+		}
+		return curr
+	}
+	okSet := make(map[int64]bool, len(succeededIDs))
+	for _, id := range succeededIDs {
+		okSet[id] = true
+	}
+	merged := make([]T, 0, len(prev)+len(curr))
+	for _, item := range prev {
+		if !okSet[orgID(item)] {
+			merged = append(merged, item)
+		}
+	}
+	for _, item := range curr {
+		if okSet[orgID(item)] {
+			merged = append(merged, item)
+		}
+	}
+	return merged
 }
 
 // DiffD2LAssignments compares previous and current D2L assignments and emits notifications for newly posted pending items.
@@ -323,6 +429,98 @@ func DiffD2LAnnouncements(ra string, prev, curr []d2l.Announcement) []storage.No
 			OldValue:       "",
 			NewValue:       preview,
 			Kind:           "d2l_announcement",
+		})
+	}
+	return out
+}
+
+// DiffD2LQuizzes compares previous and current D2L quizzes and emits notifications for newly posted active non-expired quizzes.
+func DiffD2LQuizzes(ra string, prev, curr []d2l.QuizItem) []storage.Notification {
+	seen := make(map[string]struct{}, len(prev))
+	for _, item := range prev {
+		seen[fmt.Sprintf("%d:%d", item.OrgUnitID, item.QuizID)] = struct{}{}
+	}
+	brt := time.FixedZone("BRT", -3*3600)
+	now := time.Now().UTC()
+	var out []storage.Notification
+	for _, item := range curr {
+		if !item.IsActive {
+			continue
+		}
+		key := fmt.Sprintf("%d:%d", item.OrgUnitID, item.QuizID)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		rawDeadline := strings.TrimSpace(item.DueDate)
+		if rawDeadline == "" {
+			rawDeadline = strings.TrimSpace(item.EndDate)
+		}
+		dueLabel := "Novo questionário disponível"
+		if rawDeadline != "" {
+			if deadline, ok := d2l.ParseD2LTime(rawDeadline); ok {
+				if deadline.Before(now) {
+					continue
+				}
+				dueLabel = "Prazo: " + deadline.In(brt).Format("02/01 às 15:04")
+			} else {
+				dueLabel = "Prazo: " + rawDeadline
+			}
+		}
+		title := strings.TrimSpace(item.Name)
+		if title == "" {
+			title = "Novo questionário"
+		}
+		disciplineName := strings.TrimSpace(item.OrgUnitName)
+		if disciplineName == "" {
+			disciplineName = "Sala Virtual"
+		}
+		out = append(out, storage.Notification{
+			RA:             ra,
+			PeriodKey:      fmt.Sprintf("%d", item.OrgUnitID),
+			DisciplineCode: key,
+			DisciplineName: disciplineName,
+			Field:          title,
+			OldValue:       "",
+			NewValue:       dueLabel,
+			Kind:           "d2l_quiz",
+		})
+	}
+	return out
+}
+
+// DiffD2LContent compares previous and current D2L content topics and emits notifications for newly posted course materials.
+func DiffD2LContent(ra string, prev, curr []d2l.ContentTopicSnapshot) []storage.Notification {
+	seen := make(map[string]struct{}, len(prev))
+	for _, item := range prev {
+		seen[fmt.Sprintf("%d:%d", item.OrgUnitID, item.TopicID)] = struct{}{}
+	}
+	var out []storage.Notification
+	for _, item := range curr {
+		title := strings.TrimSpace(item.Title)
+		if item.TopicID <= 0 || title == "" {
+			continue
+		}
+		key := fmt.Sprintf("%d:%d", item.OrgUnitID, item.TopicID)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		modLabel := strings.TrimSpace(item.ModuleTitle)
+		if modLabel == "" {
+			modLabel = "Novo material disponível"
+		}
+		disciplineName := strings.TrimSpace(item.OrgUnitName)
+		if disciplineName == "" {
+			disciplineName = "Sala Virtual"
+		}
+		out = append(out, storage.Notification{
+			RA:             ra,
+			PeriodKey:      fmt.Sprintf("%d", item.OrgUnitID),
+			DisciplineCode: key,
+			DisciplineName: disciplineName,
+			Field:          title,
+			OldValue:       "",
+			NewValue:       modLabel,
+			Kind:           "d2l_content",
 		})
 	}
 	return out

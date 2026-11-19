@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -51,6 +52,23 @@ type Notification struct {
 	Kind           string  `json:"kind"`
 	CreatedAt      string  `json:"createdAt"`
 	ReadAt         *string `json:"readAt"`
+}
+
+// CalendarEvent represents a user-created calendar event with optional local reminders.
+type CalendarEvent struct {
+	ID              int64  `json:"id"`
+	RA              string `json:"ra,omitempty"`
+	Title           string `json:"title"`
+	Description     string `json:"description"`
+	Date            string `json:"date"`
+	Time            string `json:"time"`
+	AllDay          bool   `json:"allDay"`
+	StartAtMillis   int64  `json:"startAtMillis"`
+	DisciplineName  string `json:"disciplineName"`
+	ColorKey        string `json:"colorKey"`
+	ReminderMinutes []int  `json:"reminderMinutes"`
+	CreatedAt       string `json:"createdAt"`
+	UpdatedAt       string `json:"updatedAt"`
 }
 
 // Open initializes the SQLite database inside dataDir and applies schema migrations.
@@ -123,6 +141,24 @@ CREATE TABLE IF NOT EXISTS d2l_snapshots (
 	assignments_json TEXT NOT NULL,
 	updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS calendar_events (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	ra TEXT NOT NULL,
+	title TEXT NOT NULL,
+	description TEXT NOT NULL DEFAULT '',
+	event_date TEXT NOT NULL,
+	event_time TEXT NOT NULL DEFAULT '',
+	all_day INTEGER NOT NULL DEFAULT 0,
+	start_at_millis INTEGER NOT NULL DEFAULT 0,
+	discipline_name TEXT NOT NULL DEFAULT '',
+	color_key TEXT NOT NULL DEFAULT 'accent',
+	reminder_minutes_json TEXT NOT NULL DEFAULT '[]',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_calendar_events_ra_start ON calendar_events(ra, start_at_millis, id);
 `
 	if _, err := db.Exec(schema); err != nil {
 		return err
@@ -134,6 +170,12 @@ CREATE TABLE IF NOT EXISTS d2l_snapshots (
 		return err
 	}
 	if err := ensureColumn(db, "d2l_snapshots", "announcements_json", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "d2l_snapshots", "content_json", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "d2l_snapshots", "quizzes_json", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	_, err := db.Exec(`
@@ -420,4 +462,194 @@ ON CONFLICT(ra) DO UPDATE SET
 	updated_at = excluded.updated_at
 `, ra, announcementsJSON, now)
 	return err
+}
+
+// GetD2LContentSnapshot returns the stored JSON array of D2L content topics for ra (empty if none).
+func (s *Store) GetD2LContentSnapshot(ra string) (string, error) {
+	var raw string
+	err := s.db.QueryRow(`SELECT content_json FROM d2l_snapshots WHERE ra = ?`, ra).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return raw, err
+}
+
+// SaveD2LContentSnapshot stores the latest JSON array of D2L content topics for ra.
+func (s *Store) SaveD2LContentSnapshot(ra, contentJSON string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.Exec(`
+INSERT INTO d2l_snapshots (ra, assignments_json, content_json, updated_at)
+VALUES (?, '[]', ?, ?)
+ON CONFLICT(ra) DO UPDATE SET
+	content_json = excluded.content_json,
+	updated_at = excluded.updated_at
+`, ra, contentJSON, now)
+	return err
+}
+
+// GetD2LQuizzesSnapshot returns the stored JSON array of D2L quizzes for ra (empty if none).
+func (s *Store) GetD2LQuizzesSnapshot(ra string) (string, error) {
+	var raw string
+	err := s.db.QueryRow(`SELECT quizzes_json FROM d2l_snapshots WHERE ra = ?`, ra).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return raw, err
+}
+
+// SaveD2LQuizzesSnapshot stores the latest JSON array of D2L quizzes for ra.
+func (s *Store) SaveD2LQuizzesSnapshot(ra, quizzesJSON string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.Exec(`
+INSERT INTO d2l_snapshots (ra, assignments_json, quizzes_json, updated_at)
+VALUES (?, '[]', ?, ?)
+ON CONFLICT(ra) DO UPDATE SET
+	quizzes_json = excluded.quizzes_json,
+	updated_at = excluded.updated_at
+`, ra, quizzesJSON, now)
+	return err
+}
+
+// ListCalendarEvents returns all personal calendar events owned by ra, ordered chronologically.
+func (s *Store) ListCalendarEvents(ra string) ([]CalendarEvent, error) {
+	rows, err := s.db.Query(`
+SELECT id, title, description, event_date, event_time, all_day, start_at_millis, discipline_name, color_key, reminder_minutes_json, created_at, updated_at
+FROM calendar_events WHERE ra = ? ORDER BY start_at_millis ASC, id ASC`, ra)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	list := make([]CalendarEvent, 0)
+	for rows.Next() {
+		ev, err := scanCalendarEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, ev)
+	}
+	return list, rows.Err()
+}
+
+// CountCalendarEvents returns the number of personal calendar events stored for ra.
+func (s *Store) CountCalendarEvents(ra string) (int, error) {
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM calendar_events WHERE ra = ?`, ra).Scan(&count)
+	return count, err
+}
+
+// CreateCalendarEvent inserts a personal calendar event and returns the persisted record.
+func (s *Store) CreateCalendarEvent(ev CalendarEvent) (CalendarEvent, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	reminders := ev.ReminderMinutes
+	if reminders == nil {
+		reminders = []int{}
+	}
+	remBytes, _ := json.Marshal(reminders)
+	allDayInt := 0
+	if ev.AllDay {
+		allDayInt = 1
+	}
+	res, err := s.db.Exec(`
+INSERT INTO calendar_events (ra, title, description, event_date, event_time, all_day, start_at_millis, discipline_name, color_key, reminder_minutes_json, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		ev.RA, ev.Title, ev.Description, ev.Date, ev.Time, allDayInt, ev.StartAtMillis, ev.DisciplineName, ev.ColorKey, string(remBytes), now, now)
+	if err != nil {
+		return CalendarEvent{}, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return CalendarEvent{}, err
+	}
+	ev.ID = id
+	ev.RA = ""
+	ev.ReminderMinutes = reminders
+	ev.CreatedAt = now
+	ev.UpdatedAt = now
+	return ev, nil
+}
+
+// UpdateCalendarEvent updates an existing personal calendar event owned by ra (returns nil, nil if not found).
+func (s *Store) UpdateCalendarEvent(ra string, ev CalendarEvent) (*CalendarEvent, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	reminders := ev.ReminderMinutes
+	if reminders == nil {
+		reminders = []int{}
+	}
+	remBytes, _ := json.Marshal(reminders)
+	allDayInt := 0
+	if ev.AllDay {
+		allDayInt = 1
+	}
+	res, err := s.db.Exec(`
+UPDATE calendar_events
+SET title = ?, description = ?, event_date = ?, event_time = ?, all_day = ?, start_at_millis = ?, discipline_name = ?, color_key = ?, reminder_minutes_json = ?, updated_at = ?
+WHERE id = ? AND ra = ?`,
+		ev.Title, ev.Description, ev.Date, ev.Time, allDayInt, ev.StartAtMillis, ev.DisciplineName, ev.ColorKey, string(remBytes), now, ev.ID, ra)
+	if err != nil {
+		return nil, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if affected == 0 {
+		return nil, nil
+	}
+	row := s.db.QueryRow(`
+SELECT id, title, description, event_date, event_time, all_day, start_at_millis, discipline_name, color_key, reminder_minutes_json, created_at, updated_at
+FROM calendar_events WHERE id = ? AND ra = ?`, ev.ID, ra)
+	updated, err := scanCalendarEvent(row)
+	if err != nil {
+		return nil, err
+	}
+	return &updated, nil
+}
+
+// DeleteCalendarEvent deletes an event owned by ra and reports whether a row was removed.
+func (s *Store) DeleteCalendarEvent(ra string, id int64) (bool, error) {
+	res, err := s.db.Exec(`DELETE FROM calendar_events WHERE id = ? AND ra = ?`, id, ra)
+	if err != nil {
+		return false, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
+}
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanCalendarEvent(row rowScanner) (CalendarEvent, error) {
+	var ev CalendarEvent
+	var allDayInt int
+	var remJSON string
+	if err := row.Scan(
+		&ev.ID,
+		&ev.Title,
+		&ev.Description,
+		&ev.Date,
+		&ev.Time,
+		&allDayInt,
+		&ev.StartAtMillis,
+		&ev.DisciplineName,
+		&ev.ColorKey,
+		&remJSON,
+		&ev.CreatedAt,
+		&ev.UpdatedAt,
+	); err != nil {
+		return CalendarEvent{}, err
+	}
+	ev.AllDay = allDayInt == 1
+	ev.ReminderMinutes = []int{}
+	if remJSON != "" {
+		var parsed []int
+		if err := json.Unmarshal([]byte(remJSON), &parsed); err == nil && parsed != nil {
+			ev.ReminderMinutes = parsed
+		}
+	}
+	return ev, nil
 }

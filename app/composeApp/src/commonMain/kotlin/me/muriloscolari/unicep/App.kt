@@ -108,11 +108,14 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import me.muriloscolari.unicep.data.api.ReportCardResponse
 import me.muriloscolari.unicep.data.api.StudentInfo
+import me.muriloscolari.unicep.data.api.UserCalendarEvent
 import me.muriloscolari.unicep.data.api.VirtualAnnouncement
 import me.muriloscolari.unicep.data.api.VirtualAssignmentItem
+import me.muriloscolari.unicep.data.repo.CalendarDate
 import me.muriloscolari.unicep.data.repo.GlobalSearchResult
 import me.muriloscolari.unicep.data.repo.GlobalSearchResultKind
 import me.muriloscolari.unicep.data.repo.PortalRepository
+import me.muriloscolari.unicep.data.repo.parseIsoDate
 import me.muriloscolari.unicep.platform.AppUpdateInfo
 import me.muriloscolari.unicep.platform.DesignStyle
 import me.muriloscolari.unicep.platform.PlatformBridge
@@ -142,6 +145,8 @@ import me.muriloscolari.unicep.ui.screens.AcademicScreen
 import me.muriloscolari.unicep.ui.screens.AppleAllNotificationsSheet
 import me.muriloscolari.unicep.ui.screens.AppleAttendanceLimitSheet
 import me.muriloscolari.unicep.ui.screens.AppleSubjectDetailSheet
+import me.muriloscolari.unicep.ui.screens.CalendarEventEditorSheet
+import me.muriloscolari.unicep.ui.screens.CalendarScreen
 import me.muriloscolari.unicep.ui.screens.CentralScreen
 import me.muriloscolari.unicep.ui.screens.GlobalSearchSheet
 import me.muriloscolari.unicep.ui.screens.LoginScreen
@@ -150,6 +155,7 @@ import me.muriloscolari.unicep.ui.screens.SplashLoadingScreen
 import me.muriloscolari.unicep.ui.screens.VirtualAnnouncementSheet
 import me.muriloscolari.unicep.ui.screens.VirtualAssignmentSheet
 import me.muriloscolari.unicep.ui.screens.VirtualScreen
+import me.muriloscolari.unicep.ui.screens.currentLocalCalendarDate
 import me.muriloscolari.unicep.ui.screens.isFrequencyAtLimit
 import me.muriloscolari.unicep.ui.screens.mergeUnifiedSubjects
 import me.muriloscolari.unicep.ui.util.initialsFromName
@@ -164,6 +170,7 @@ private enum class MainTab(
     SEMESTER("semestre", "Semestre", PortalIcons.Grades, PortalIcons.GradesFill),
     COURSE("curso", "Curso", PortalIcons.Academic, PortalIcons.AcademicFill),
     VIRTUAL("virtual", "Virtual", PortalIcons.Virtual, PortalIcons.VirtualFill),
+    CALENDAR("calendario", "Calendário", PortalIcons.Calendar, PortalIcons.CalendarFill),
     CENTRAL("central", "Central", PortalIcons.More, PortalIcons.MoreFill)
 }
 
@@ -185,9 +192,23 @@ fun App(initialTab: Int = 0) {
     var showGlobalSearchModal by remember { mutableStateOf(false) }
     var showAllNotificationsModal by remember { mutableStateOf(false) }
     var confirmLogoutDialog by remember { mutableStateOf(false) }
+    var selectedCalendarDate by remember { mutableStateOf(currentLocalCalendarDate()) }
+    var showCalendarEditor by remember { mutableStateOf(false) }
+    var editingCalendarEvent by remember { mutableStateOf<UserCalendarEvent?>(null) }
+    var calendarDraftDate by remember { mutableStateOf<CalendarDate?>(null) }
+    var confirmDeleteCalendarEvent by remember { mutableStateOf<UserCalendarEvent?>(null) }
     var suppressHistoryPush by remember { mutableStateOf(false) }
     val backOverlayController = remember { BackOverlayController() }
     var predictiveBackState by remember { mutableStateOf(PredictiveBackState()) }
+
+    val calendarSubjectSuggestions = remember(state.grades, state.virtualOverview) {
+        (state.grades?.items.orEmpty().map { it.name.toDisplayTitle() } +
+            state.virtualOverview?.courses.orEmpty().map { it.name.toDisplayTitle() })
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(20)
+    }
 
     var availableUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
     var showUpdateDialog by remember { mutableStateOf(false) }
@@ -199,12 +220,14 @@ fun App(initialTab: Int = 0) {
     val semesterListState = rememberLazyListState()
     val courseListState = rememberLazyListState()
     val virtualListState = rememberLazyListState()
+    val calendarListState = rememberLazyListState()
     val centralListState = rememberLazyListState()
 
     fun activeListStateFor(tab: MainTab): LazyListState = when (tab) {
         MainTab.SEMESTER -> semesterListState
         MainTab.COURSE -> courseListState
         MainTab.VIRTUAL -> virtualListState
+        MainTab.CALENDAR -> calendarListState
         MainTab.CENTRAL -> centralListState
     }
 
@@ -263,6 +286,8 @@ fun App(initialTab: Int = 0) {
             !showRiskyAttendanceModal &&
             !showGlobalSearchModal &&
             !showAllNotificationsModal &&
+            !showCalendarEditor &&
+            confirmDeleteCalendarEvent == null &&
             selectedVirtualCourseId == null &&
             selectedVirtualAssignment == null &&
             selectedVirtualAnnouncement == null
@@ -274,6 +299,9 @@ fun App(initialTab: Int = 0) {
             showRiskyAttendanceModal = false
             showGlobalSearchModal = false
             showAllNotificationsModal = false
+            showCalendarEditor = false
+            editingCalendarEvent = null
+            confirmDeleteCalendarEvent = null
             selectedVirtualCourseId = null
             virtualCourseSubTab = 0
             selectedVirtualAssignment = null
@@ -330,6 +358,10 @@ fun App(initialTab: Int = 0) {
                     }
                 }
             }
+            GlobalSearchResultKind.CALENDAR_EVENT -> {
+                currentTab = MainTab.CALENDAR
+                result.calendarDateIso?.let { parseIsoDate(it) }?.let { selectedCalendarDate = it }
+            }
         }
     }
 
@@ -345,6 +377,7 @@ fun App(initialTab: Int = 0) {
             val ou = selectedVirtualCourseId
             if (ou != null) "virtual/course/$ou/$virtualCourseSubTab" else "virtual"
         }
+        MainTab.CALENDAR -> "calendario"
         MainTab.CENTRAL -> if (showAllNotificationsModal) "central/alertas" else "central"
     }
 
@@ -356,6 +389,8 @@ fun App(initialTab: Int = 0) {
                 selectedSubjectCode = null
                 showRiskyAttendanceModal = false
                 showAllNotificationsModal = false
+                showCalendarEditor = false
+                editingCalendarEvent = null
                 selectedVirtualAssignment = null
                 selectedVirtualAnnouncement = null
                 showGlobalSearchModal = true
@@ -365,6 +400,8 @@ fun App(initialTab: Int = 0) {
                 showRiskyAttendanceModal = false
                 showGlobalSearchModal = false
                 showAllNotificationsModal = false
+                showCalendarEditor = false
+                editingCalendarEvent = null
                 selectedVirtualAssignment = null
                 selectedVirtualAnnouncement = null
                 selectedSubjectCode = route.removePrefix("semestre/subject/").ifBlank { null }
@@ -374,6 +411,8 @@ fun App(initialTab: Int = 0) {
                 selectedSubjectCode = null
                 showGlobalSearchModal = false
                 showAllNotificationsModal = false
+                showCalendarEditor = false
+                editingCalendarEvent = null
                 selectedVirtualAssignment = null
                 selectedVirtualAnnouncement = null
                 showRiskyAttendanceModal = true
@@ -384,6 +423,8 @@ fun App(initialTab: Int = 0) {
                 showRiskyAttendanceModal = false
                 showGlobalSearchModal = false
                 showAllNotificationsModal = false
+                showCalendarEditor = false
+                editingCalendarEvent = null
                 selectedVirtualAssignment = null
                 selectedVirtualAnnouncement = null
             }
@@ -392,6 +433,8 @@ fun App(initialTab: Int = 0) {
                 selectedSubjectCode = null
                 showRiskyAttendanceModal = false
                 showAllNotificationsModal = false
+                showCalendarEditor = false
+                editingCalendarEvent = null
                 selectedVirtualAssignment = null
                 selectedVirtualAnnouncement = null
                 courseSubTab = route.substringAfter('/', "0").toIntOrNull()?.coerceIn(0, 2) ?: 0
@@ -401,6 +444,8 @@ fun App(initialTab: Int = 0) {
                 selectedSubjectCode = null
                 showRiskyAttendanceModal = false
                 showAllNotificationsModal = false
+                showCalendarEditor = false
+                editingCalendarEvent = null
                 selectedVirtualAssignment = null
                 selectedVirtualAnnouncement = null
                 val parts = route.removePrefix("virtual/course/").split('/')
@@ -412,8 +457,21 @@ fun App(initialTab: Int = 0) {
                 selectedSubjectCode = null
                 showRiskyAttendanceModal = false
                 showAllNotificationsModal = false
+                showCalendarEditor = false
+                editingCalendarEvent = null
                 selectedVirtualCourseId = null
                 virtualCourseSubTab = 0
+                selectedVirtualAssignment = null
+                selectedVirtualAnnouncement = null
+            }
+            route == "calendario" -> {
+                currentTab = MainTab.CALENDAR
+                selectedSubjectCode = null
+                showRiskyAttendanceModal = false
+                showGlobalSearchModal = false
+                showAllNotificationsModal = false
+                showCalendarEditor = false
+                editingCalendarEvent = null
                 selectedVirtualAssignment = null
                 selectedVirtualAnnouncement = null
             }
@@ -421,6 +479,8 @@ fun App(initialTab: Int = 0) {
                 currentTab = MainTab.CENTRAL
                 selectedSubjectCode = null
                 showRiskyAttendanceModal = false
+                showCalendarEditor = false
+                editingCalendarEvent = null
                 selectedVirtualAssignment = null
                 selectedVirtualAnnouncement = null
                 showAllNotificationsModal = true
@@ -430,6 +490,8 @@ fun App(initialTab: Int = 0) {
                 selectedSubjectCode = null
                 showRiskyAttendanceModal = false
                 showAllNotificationsModal = false
+                showCalendarEditor = false
+                editingCalendarEvent = null
                 selectedVirtualAssignment = null
                 selectedVirtualAnnouncement = null
             }
@@ -443,6 +505,8 @@ fun App(initialTab: Int = 0) {
     val hasAnyOverlay = state.activeDocumentViewer != null ||
         backOverlayController.hasOverlay ||
         confirmLogoutDialog ||
+        confirmDeleteCalendarEvent != null ||
+        showCalendarEditor ||
         showUpdateDialog ||
         showGlobalSearchModal ||
         showAllNotificationsModal ||
@@ -483,6 +547,15 @@ fun App(initialTab: Int = 0) {
                 }
                 confirmLogoutDialog -> {
                     confirmLogoutDialog = false
+                    true
+                }
+                confirmDeleteCalendarEvent != null -> {
+                    confirmDeleteCalendarEvent = null
+                    true
+                }
+                showCalendarEditor -> {
+                    showCalendarEditor = false
+                    editingCalendarEvent = null
                     true
                 }
                 showGlobalSearchModal -> {
@@ -561,8 +634,18 @@ fun App(initialTab: Int = 0) {
         when (currentTab) {
             MainTab.COURSE -> repo.loadAcademicIfNeeded()
             MainTab.VIRTUAL -> repo.loadVirtualOverviewIfNeeded()
+            MainTab.CALENDAR -> repo.loadCalendarContextIfNeeded()
             MainTab.CENTRAL -> repo.loadFinanceAndServicesIfNeeded()
             MainTab.SEMESTER -> repo.preloadHomeContextIfNeeded()
+        }
+    }
+
+    LaunchedEffect(state.loggedIn) {
+        if (state.loggedIn && PlatformBridge.capabilities().isWeb) {
+            while (true) {
+                repo.evaluateDueCalendarReminders()
+                delay(60_000L)
+            }
         }
     }
 
@@ -673,7 +756,7 @@ fun App(initialTab: Int = 0) {
 
                     val bodyContent: @Composable () -> Unit = {
                         val pullState = rememberPullToRefreshState()
-                        val refreshing = state.loading || state.virtualLoading
+                        val refreshing = state.loading || state.virtualLoading || state.calendarLoading
                         PullToRefreshBox(
                             isRefreshing = refreshing,
                             onRefresh = {
@@ -685,6 +768,7 @@ fun App(initialTab: Int = 0) {
                                             else repo.loadVirtualOverviewIfNeeded(force = true)
                                         }
                                         MainTab.COURSE -> repo.loadAcademicIfNeeded(force = true)
+                                        MainTab.CALENDAR -> repo.loadCalendarContextIfNeeded(force = true)
                                         MainTab.CENTRAL -> repo.loadFinanceAndServicesIfNeeded(force = true)
                                         MainTab.SEMESTER -> {
                                             repo.refreshDashboard()
@@ -803,6 +887,34 @@ fun App(initialTab: Int = 0) {
                                 renderSheetsInPlace = false
                             )
 
+                            MainTab.CALENDAR -> CalendarScreen(
+                                userEvents = state.calendarEvents,
+                                virtualOverview = state.virtualOverview,
+                                virtualCourseDetails = state.virtualCourseDetails,
+                                selectedDate = selectedCalendarDate,
+                                onSelectDate = { selectedCalendarDate = it },
+                                onAddEvent = { date ->
+                                    calendarDraftDate = date
+                                    editingCalendarEvent = null
+                                    showCalendarEditor = true
+                                },
+                                onEditEvent = { ev ->
+                                    editingCalendarEvent = ev
+                                    calendarDraftDate = null
+                                    showCalendarEditor = true
+                                },
+                                onRequestDeleteEvent = { ev -> confirmDeleteCalendarEvent = ev },
+                                onOpenVirtualAssignment = { item ->
+                                    currentTab = MainTab.VIRTUAL
+                                    selectedVirtualCourseId = item.orgUnitId
+                                    virtualCourseSubTab = 1
+                                    selectedVirtualAssignment = item
+                                },
+                                onOpenWeb = { url -> repo.openSalaVirtualWeb(url) },
+                                loading = state.calendarLoading,
+                                listState = calendarListState
+                            )
+
                             MainTab.CENTRAL -> CentralScreen(
                                 dashboard = state.dashboard,
                                 finance = state.finance,
@@ -881,7 +993,15 @@ fun App(initialTab: Int = 0) {
                                                 Icon(if (selected) tab.selectedIcon else tab.icon, contentDescription = tab.label)
                                             }
                                         },
-                                        label = { Text(tab.label, fontSize = 11.5.sp) }
+                                        label = {
+                                            Text(
+                                                tab.label,
+                                                fontSize = 10.5.sp,
+                                                maxLines = 1,
+                                                softWrap = false,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
                                     )
                                 }
                             }
@@ -915,7 +1035,16 @@ fun App(initialTab: Int = 0) {
                                                     Icon(if (selected) tab.selectedIcon else tab.icon, contentDescription = tab.label)
                                                 }
                                             },
-                                            label = { Text(tab.label, fontSize = 11.5.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium) }
+                                            label = {
+                                                Text(
+                                                    tab.label,
+                                                    fontSize = 10.5.sp,
+                                                    maxLines = 1,
+                                                    softWrap = false,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
+                                                )
+                                            }
                                         )
                                     }
                                 }
@@ -987,14 +1116,76 @@ fun App(initialTab: Int = 0) {
                             notifications = state.notifications,
                             onDismiss = { showAllNotificationsModal = false }
                         )
+                        showCalendarEditor -> CalendarEventEditorSheet(
+                            existing = editingCalendarEvent,
+                            initialDate = calendarDraftDate ?: selectedCalendarDate,
+                            subjectSuggestions = calendarSubjectSuggestions,
+                            saving = state.calendarSaving,
+                            onSave = { input ->
+                                scope.launch {
+                                    val editing = editingCalendarEvent
+                                    val ok = if (editing == null) {
+                                        repo.createCalendarEvent(input)
+                                    } else {
+                                        repo.updateCalendarEvent(editing.id, input)
+                                    }
+                                    if (ok) {
+                                        parseIsoDate(input.date)?.let { selectedCalendarDate = it }
+                                        showCalendarEditor = false
+                                        editingCalendarEvent = null
+                                    }
+                                }
+                            },
+                            onRequestDelete = editingCalendarEvent?.let { ev ->
+                                { confirmDeleteCalendarEvent = ev }
+                            },
+                            onDismiss = {
+                                showCalendarEditor = false
+                                editingCalendarEvent = null
+                            }
+                        )
                         showGlobalSearchModal -> GlobalSearchSheet(
                             subjects = mergedSubjects,
                             schedule = state.schedule,
                             curriculum = state.curriculum,
                             virtualOverview = state.virtualOverview,
                             virtualCourseDetails = state.virtualCourseDetails,
+                            calendarEvents = state.calendarEvents,
                             onSelectResult = ::handleGlobalSearchResult,
                             onDismiss = { showGlobalSearchModal = false }
+                        )
+                    }
+
+                    confirmDeleteCalendarEvent?.let { targetEvent ->
+                        AlertDialog(
+                            onDismissRequest = { confirmDeleteCalendarEvent = null },
+                            containerColor = colors.surface,
+                            titleContentColor = colors.textPrimary,
+                            textContentColor = colors.textSecondary,
+                            title = { Text("Excluir evento?", fontWeight = FontWeight.Bold) },
+                            text = { Text("Deseja remover \"${targetEvent.title}\" do seu calendário?") },
+                            confirmButton = {
+                                TextButton(
+                                    onClick = {
+                                        confirmDeleteCalendarEvent = null
+                                        scope.launch {
+                                            if (repo.deleteCalendarEvent(targetEvent.id)) {
+                                                if (editingCalendarEvent?.id == targetEvent.id) {
+                                                    showCalendarEditor = false
+                                                    editingCalendarEvent = null
+                                                }
+                                            }
+                                        }
+                                    }
+                                ) {
+                                    Text("Excluir", color = colors.red, fontWeight = FontWeight.SemiBold)
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { confirmDeleteCalendarEvent = null }) {
+                                    Text("Cancelar", color = colors.textSecondary)
+                                }
+                            }
                         )
                     }
 
@@ -1128,7 +1319,8 @@ fun App(initialTab: Int = 0) {
                 val activeSubject = mergedSubjects.firstOrNull { it.code == selectedSubjectCode }
                 val hasActiveSheet = activeSubject != null ||
                     (showRiskyAttendanceModal && riskySubjects.isNotEmpty()) ||
-                    showAllNotificationsModal
+                    showAllNotificationsModal ||
+                    showCalendarEditor
 
                 BoxWithConstraints(modifier = Modifier.fillMaxSize().background(colors.background)) {
                     val isDesktop = maxWidth >= 640.dp
@@ -1309,6 +1501,34 @@ fun App(initialTab: Int = 0) {
                                                     renderSheetsInPlace = false
                                                 )
 
+                                                MainTab.CALENDAR -> CalendarScreen(
+                                                    userEvents = state.calendarEvents,
+                                                    virtualOverview = state.virtualOverview,
+                                                    virtualCourseDetails = state.virtualCourseDetails,
+                                                    selectedDate = selectedCalendarDate,
+                                                    onSelectDate = { selectedCalendarDate = it },
+                                                    onAddEvent = { date ->
+                                                        calendarDraftDate = date
+                                                        editingCalendarEvent = null
+                                                        showCalendarEditor = true
+                                                    },
+                                                    onEditEvent = { ev ->
+                                                        editingCalendarEvent = ev
+                                                        calendarDraftDate = null
+                                                        showCalendarEditor = true
+                                                    },
+                                                    onRequestDeleteEvent = { ev -> confirmDeleteCalendarEvent = ev },
+                                                    onOpenVirtualAssignment = { item ->
+                                                        currentTab = MainTab.VIRTUAL
+                                                        selectedVirtualCourseId = item.orgUnitId
+                                                        virtualCourseSubTab = 1
+                                                        selectedVirtualAssignment = item
+                                                    },
+                                                    onOpenWeb = { url -> repo.openSalaVirtualWeb(url) },
+                                                    loading = state.calendarLoading,
+                                                    listState = calendarListState
+                                                )
+
                                                 MainTab.CENTRAL -> CentralScreen(
                                                     dashboard = state.dashboard,
                                                     finance = state.finance,
@@ -1361,10 +1581,10 @@ fun App(initialTab: Int = 0) {
                                             contentBody()
                                         } else {
                                             val pullState = rememberPullToRefreshState()
-                                            val refreshing = if (currentTab == MainTab.VIRTUAL) {
-                                                state.virtualLoading && state.virtualOverview != null
-                                            } else {
-                                                state.loading && state.dashboard != null
+                                            val refreshing = when (currentTab) {
+                                                MainTab.VIRTUAL -> state.virtualLoading && state.virtualOverview != null
+                                                MainTab.CALENDAR -> state.calendarLoading
+                                                else -> state.loading && state.dashboard != null
                                             }
                                             PullToRefreshBox(
                                                 isRefreshing = refreshing,
@@ -1377,6 +1597,7 @@ fun App(initialTab: Int = 0) {
                                                                 else repo.loadVirtualOverviewIfNeeded(force = true)
                                                             }
                                                             MainTab.COURSE -> repo.loadAcademicIfNeeded(force = true)
+                                                            MainTab.CALENDAR -> repo.loadCalendarContextIfNeeded(force = true)
                                                             MainTab.CENTRAL -> repo.loadFinanceAndServicesIfNeeded(force = true)
                                                             MainTab.SEMESTER -> {
                                                                 repo.refreshDashboard()
@@ -1434,9 +1655,28 @@ fun App(initialTab: Int = 0) {
                                         statusTop = statusTop,
                                         unreadCount = unreadCount,
                                         isDesktop = isDesktop,
-                                        loading = state.loading,
+                                        loading = state.loading ||
+                                            (currentTab == MainTab.VIRTUAL && state.virtualLoading) ||
+                                            (currentTab == MainTab.CALENDAR && state.calendarLoading),
                                         onOpenNotifications = { navigateToTab(MainTab.CENTRAL) },
-                                        onRefresh = { scope.launch { repo.refreshDashboard() } }
+                                        onRefresh = {
+                                            scope.launch {
+                                                when (currentTab) {
+                                                    MainTab.VIRTUAL -> {
+                                                        val ou = selectedVirtualCourseId
+                                                        if (ou != null) repo.loadVirtualCourse(ou, force = true)
+                                                        else repo.loadVirtualOverviewIfNeeded(force = true)
+                                                    }
+                                                    MainTab.COURSE -> repo.loadAcademicIfNeeded(force = true)
+                                                    MainTab.CALENDAR -> repo.loadCalendarContextIfNeeded(force = true)
+                                                    MainTab.CENTRAL -> repo.loadFinanceAndServicesIfNeeded(force = true)
+                                                    MainTab.SEMESTER -> {
+                                                        repo.refreshDashboard()
+                                                        repo.preloadHomeContextIfNeeded(force = true)
+                                                    }
+                                                }
+                                            }
+                                        }
                                     )
                                 }
 
@@ -1561,14 +1801,64 @@ fun App(initialTab: Int = 0) {
                                     notifications = state.notifications,
                                     onDismiss = { showAllNotificationsModal = false }
                                 )
+                                showCalendarEditor -> CalendarEventEditorSheet(
+                                    existing = editingCalendarEvent,
+                                    initialDate = calendarDraftDate ?: selectedCalendarDate,
+                                    subjectSuggestions = calendarSubjectSuggestions,
+                                    saving = state.calendarSaving,
+                                    onSave = { input ->
+                                        scope.launch {
+                                            val editing = editingCalendarEvent
+                                            val ok = if (editing == null) {
+                                                repo.createCalendarEvent(input)
+                                            } else {
+                                                repo.updateCalendarEvent(editing.id, input)
+                                            }
+                                            if (ok) {
+                                                parseIsoDate(input.date)?.let { selectedCalendarDate = it }
+                                                showCalendarEditor = false
+                                                editingCalendarEvent = null
+                                            }
+                                        }
+                                    },
+                                    onRequestDelete = editingCalendarEvent?.let { ev ->
+                                        { confirmDeleteCalendarEvent = ev }
+                                    },
+                                    onDismiss = {
+                                        showCalendarEditor = false
+                                        editingCalendarEvent = null
+                                    }
+                                )
                                 showGlobalSearchModal -> GlobalSearchSheet(
                                     subjects = mergedSubjects,
                                     schedule = state.schedule,
                                     curriculum = state.curriculum,
                                     virtualOverview = state.virtualOverview,
                                     virtualCourseDetails = state.virtualCourseDetails,
+                                    calendarEvents = state.calendarEvents,
                                     onSelectResult = ::handleGlobalSearchResult,
                                     onDismiss = { showGlobalSearchModal = false }
+                                )
+                            }
+
+                            confirmDeleteCalendarEvent?.let { targetEvent ->
+                                AppleAlert(
+                                    title = "Excluir evento?",
+                                    message = "Deseja remover \"${targetEvent.title}\" do seu calendário?",
+                                    confirmText = "Excluir",
+                                    confirmDestructive = true,
+                                    onConfirm = {
+                                        confirmDeleteCalendarEvent = null
+                                        scope.launch {
+                                            if (repo.deleteCalendarEvent(targetEvent.id)) {
+                                                if (editingCalendarEvent?.id == targetEvent.id) {
+                                                    showCalendarEditor = false
+                                                    editingCalendarEvent = null
+                                                }
+                                            }
+                                        }
+                                    },
+                                    onDismiss = { confirmDeleteCalendarEvent = null }
                                 )
                             }
 
@@ -1855,7 +2145,7 @@ private fun AppleLiquidGlassTabBar(
         animationSpec = AppleMotion.dpStandard
     )
     val horizontalPad by animateDpAsState(
-        targetValue = if (minimized) 56.dp else 20.dp,
+        targetValue = if (minimized) 44.dp else 12.dp,
         animationSpec = AppleMotion.dpStandard
     )
 
@@ -1865,7 +2155,7 @@ private fun AppleLiquidGlassTabBar(
     Box(
         modifier = modifier
             .padding(bottom = (navBottom + 12.dp).coerceAtLeast(0.dp), start = safePad, end = safePad)
-            .widthIn(max = 420.dp)
+            .widthIn(max = 460.dp)
             .fillMaxWidth()
     ) {
         GlassSurface(
@@ -1941,9 +2231,11 @@ private fun AppleLiquidGlassTabBar(
                                 Text(
                                     text = tab.label,
                                     color = if (isSelected) colors.accent else colors.textPrimary,
-                                    style = appleType.caption2,
+                                    style = appleType.caption2.copy(fontSize = 10.5.sp),
                                     fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
                                     maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.padding(top = 2.dp)
                                 )
                             }

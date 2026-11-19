@@ -5,11 +5,13 @@ import io.ktor.client.call.body
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.timeout
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.request.patch
 import io.ktor.client.request.post
+import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.http.ContentType
@@ -168,6 +170,42 @@ class PortalApiClient {
             setBody(VirtualSettingsPayload(pollingEnabled = pollingEnabled))
         }
         return parseOrThrow(resp)
+    }
+
+    suspend fun calendarEvents(baseUrl: String, token: String): CalendarEventsResponse =
+        getAuthed(baseUrl, "/api/calendar/events", token)
+
+    suspend fun createCalendarEvent(baseUrl: String, token: String, input: CalendarEventInput): CalendarEventSingleResponse {
+        val resp = client.post("${cleanBase(baseUrl)}/api/calendar/events") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody(input)
+        }
+        return parseOrThrow(resp)
+    }
+
+    suspend fun updateCalendarEvent(baseUrl: String, token: String, id: Long, input: CalendarEventInput): CalendarEventSingleResponse {
+        val resp = client.put("${cleanBase(baseUrl)}/api/calendar/events/$id") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody(input)
+        }
+        return parseOrThrow(resp)
+    }
+
+    suspend fun deleteCalendarEvent(baseUrl: String, token: String, id: Long) {
+        val resp = client.delete("${cleanBase(baseUrl)}/api/calendar/events/$id") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+        }
+        if (resp.status == HttpStatusCode.Unauthorized) throw UnauthorizedException()
+        if (resp.status.value >= 400) {
+            val errBody = runCatching { resp.body<ErrorResponse>() }.getOrNull()
+            throw ApiException(
+                message = errBody?.error ?: "Erro ao excluir evento (HTTP ${resp.status.value})",
+                code = errBody?.code.orEmpty(),
+                statusCode = resp.status.value
+            )
+        }
     }
 
     suspend fun createD2LTicket(baseUrl: String, token: String, path: String): ProxyTicketResponse {

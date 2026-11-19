@@ -3,6 +3,7 @@ package me.muriloscolari.unicep.data.repo
 import androidx.compose.runtime.Immutable
 import me.muriloscolari.unicep.data.api.CurriculumResponse
 import me.muriloscolari.unicep.data.api.ScheduleResponse
+import me.muriloscolari.unicep.data.api.UserCalendarEvent
 import me.muriloscolari.unicep.data.api.VirtualAnnouncement
 import me.muriloscolari.unicep.data.api.VirtualAssignmentItem
 import me.muriloscolari.unicep.data.api.VirtualContentModule
@@ -52,7 +53,8 @@ enum class GlobalSearchResultKind(val badge: String) {
     VIRTUAL_COURSE("Sala Virtual"),
     VIRTUAL_ASSIGNMENT("Tarefa"),
     VIRTUAL_ANNOUNCEMENT("Aviso"),
-    VIRTUAL_MATERIAL("Material")
+    VIRTUAL_MATERIAL("Material"),
+    CALENDAR_EVENT("Calendário")
 }
 
 @Immutable
@@ -70,7 +72,8 @@ data class GlobalSearchResult(
     val virtualAssignment: VirtualAssignmentItem? = null,
     val virtualAnnouncement: VirtualAnnouncement? = null,
     val virtualTopic: VirtualContentTopic? = null,
-    val virtualCourseName: String? = null
+    val virtualCourseName: String? = null,
+    val calendarDateIso: String? = null
 )
 
 fun normalizeSearchText(raw: String): String {
@@ -458,7 +461,8 @@ fun searchPortalData(
     schedule: ScheduleResponse?,
     curriculum: CurriculumResponse?,
     virtualOverview: VirtualOverviewResponse?,
-    virtualCourseDetails: Map<Long, VirtualCourseDetailResponse>
+    virtualCourseDetails: Map<Long, VirtualCourseDetailResponse>,
+    calendarEvents: List<UserCalendarEvent> = emptyList()
 ): List<GlobalSearchResult> {
     val nq = normalizeSearchText(query)
     if (nq.length < 2) return emptyList()
@@ -632,6 +636,30 @@ fun searchPortalData(
                     subtitle = sub.ifBlank { "Matriz curricular" },
                     badge = "Matriz",
                     courseSubTab = 1
+                )
+            }
+        }
+    }
+
+    // 4. Calendário pessoal
+    if (filter == GlobalSearchFilter.ALL) {
+        for (ev in calendarEvents) {
+            if (matches(ev.title, ev.disciplineName, ev.description, ev.date)) {
+                val dateLabel = parseIsoDate(ev.date)?.let { formatBrDate(it) } ?: ev.date
+                val timeLabel = if (ev.allDay) "Dia inteiro" else ev.time
+                val sub = listOfNotNull(
+                    dateLabel.takeIf { it.isNotBlank() },
+                    timeLabel.takeIf { it.isNotBlank() },
+                    ev.disciplineName.takeIf { it.isNotBlank() }?.toDisplayTitle()
+                ).joinToString(" · ")
+                results += GlobalSearchResult(
+                    id = "cal_${ev.id}",
+                    kind = GlobalSearchResultKind.CALENDAR_EVENT,
+                    filterGroup = GlobalSearchFilter.ALL,
+                    title = ev.title,
+                    subtitle = sub.ifBlank { "Evento no calendário" },
+                    isAlert = ev.reminderMinutes.isNotEmpty(),
+                    calendarDateIso = ev.date
                 )
             }
         }

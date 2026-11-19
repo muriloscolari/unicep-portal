@@ -39,9 +39,12 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.workDataOf
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.okhttp.OkHttp
 import java.io.File
@@ -56,6 +59,8 @@ import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import me.muriloscolari.unicep.data.api.UserCalendarEvent
+import me.muriloscolari.unicep.data.repo.computeUpcomingReminderTriggers
 
 actual object PlatformBridge {
     private val localDateFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")
@@ -73,6 +78,7 @@ actual object PlatformBridge {
     private const val PREF_TREE_URI = "virtual_download_tree_uri"
     private const val PREF_FOLDER_LABEL = "virtual_download_folder_label"
     private const val DEFAULT_DOWNLOAD_LABEL = "Downloads/UnicepPortal"
+    private const val CALENDAR_REMINDER_TAG = "unicep_calendar_reminder"
 
     fun bindFolderPicker(trigger: () -> Unit) {
         folderPickerTrigger = trigger
@@ -435,6 +441,46 @@ actual object PlatformBridge {
         WorkManager.getInstance(ctx).cancelUniqueWork("unicep_grade_sync")
     }
 
+    actual fun syncCalendarReminders(events: List<UserCalendarEvent>) {
+        val ctx = appContext ?: return
+        val wm = WorkManager.getInstance(ctx)
+        wm.cancelAllWorkByTag(CALENDAR_REMINDER_TAG)
+
+        val nowMs = System.currentTimeMillis()
+        val offsetMins = currentLocalDateTime().utcOffsetMinutes
+        val triggers = computeUpcomingReminderTriggers(
+            events = events,
+            nowMillis = nowMs,
+            utcOffsetMinutes = offsetMins
+        ).take(60)
+
+        triggers.forEach { rem ->
+            val delayMs = (rem.triggerAtMillis - nowMs).coerceAtLeast(1_000L)
+            val data = workDataOf(
+                CalendarReminderWorker.KEY_EVENT_ID to rem.eventId,
+                CalendarReminderWorker.KEY_REMINDER_KEY to rem.reminderKey,
+                CalendarReminderWorker.KEY_NOTIF_ID to rem.notifId,
+                CalendarReminderWorker.KEY_TITLE to rem.title,
+                CalendarReminderWorker.KEY_BODY to rem.body
+            )
+            val req = OneTimeWorkRequestBuilder<CalendarReminderWorker>()
+                .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
+                .addTag(CALENDAR_REMINDER_TAG)
+                .setInputData(data)
+                .build()
+            wm.enqueueUniqueWork(
+                "cal_rem_${rem.reminderKey}",
+                ExistingWorkPolicy.REPLACE,
+                req
+            )
+        }
+    }
+
+    actual fun cancelAllCalendarReminders() {
+        val ctx = appContext ?: return
+        WorkManager.getInstance(ctx).cancelAllWorkByTag(CALENDAR_REMINDER_TAG)
+    }
+
     actual fun requestNotificationPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
         val act = activityRef?.get() ?: return
@@ -565,7 +611,11 @@ actual object PlatformBridge {
         return LocalDateTimeInfo(
             dayOfWeekIso = zdt.dayOfWeek.value,
             hour = zdt.hour,
-            minute = zdt.minute
+            minute = zdt.minute,
+            year = zdt.year,
+            month = zdt.monthValue,
+            day = zdt.dayOfMonth,
+            utcOffsetMinutes = zdt.offset.totalSeconds / 60
         )
     }
 

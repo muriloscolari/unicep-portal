@@ -14,8 +14,8 @@ O projeto é um monorepo com dois blocos principais:
    - Realiza polling periódico de notas, faltas e novas atividades da Sala Virtual em segundo plano (`poller/worker.go`).
 
 2. **Frontend (`app/`) — Kotlin + Compose Multiplatform**
-   - **`composeApp` (`commonMain`)**: UI compartilhada em 4 abas (`Semestre`, `Curso`, `Virtual`, `Central`) com Design System dual (**Apple/Cupertino** + **Material Design 3**).
-   - **`androidApp` (`androidMain`)**: App Android nativo (`minSdk 26`, `targetSdk 35`) com R8/ProGuard, armazenamento seguro via Android Keystore (`AndroidSecureStore.kt`), visualizador nativo de PDF/imagem/HTML (`AndroidDocumentViewer.kt`), downloads SAF por disciplina, notificações periódicas via `WorkManager` (`GradeSyncWorker.kt`) e auto-update via Forgejo Releases (`AppUpdater.android.kt`).
+   - **`composeApp` (`commonMain` / `commonTest`)**: UI compartilhada em 5 abas (`Semestre`, `Curso`, `Virtual`, `Calendário`, `Central`) com Design System dual (**Apple/Cupertino** + **Material Design 3**) e suíte de testes unitários em `commonTest`.
+   - **`androidApp` (`androidMain`)**: App Android nativo (`minSdk 26`, `targetSdk 35`) com R8/ProGuard, armazenamento seguro via Android Keystore (`AndroidSecureStore.kt`), visualizador nativo de PDF/imagem/HTML (`AndroidDocumentViewer.kt`), downloads SAF por disciplina, notificações periódicas e lembretes agendados via `WorkManager` (`GradeSyncWorker.kt`, `CalendarReminderWorker.kt`) e auto-update via Forgejo Releases (`AppUpdater.android.kt`).
    - **`wasmJsMain`**: Site Web compilado para WebAssembly (`unicep-portal.js` + `.wasm`) servido diretamente pelo backend Go na raiz `/`.
 
 ---
@@ -34,12 +34,13 @@ O projeto é um monorepo com dois blocos principais:
 
 ### Frontend (`app/`)
 - `composeApp/src/commonMain/kotlin/me/muriloscolari/unicep/`:
-  - `App.kt`: navegação principal (4 abas), integração com histórico (`#semestre`, `#semestre/frequencia-limite`, `#curso`, `#virtual`, `#central`) e diálogo de auto-update Android.
-  - `data/api/Models.kt`, `PortalApiClient.kt` e `data/repo/PortalRepository.kt`, `VirtualAlertEvaluator.kt`: cliente HTTP Ktor com timeouts configurados, estado reativo, filtros persistidos e alertas de prazos da Sala Virtual.
+  - `App.kt`: navegação principal (5 abas), integração com histórico (`#semestre`, `#semestre/frequencia-limite`, `#curso`, `#virtual`, `#calendario`, `#central`) e diálogo de auto-update Android.
+  - `data/api/Models.kt`, `PortalApiClient.kt` e `data/repo/PortalRepository.kt`, `TodayAndSearchEngine.kt`, `CalendarEngine.kt`, `CalendarReminderEvaluator.kt`, `VirtualAlertEvaluator.kt`, `FrequencyAlertEvaluator.kt`: cliente HTTP Ktor com timeouts configurados, estado reativo, motor de "Hoje na UNICEP" e busca global, calendário unificado e avaliadores de lembretes/alertas.
   - `platform/Platform.kt`: contrato `expect object PlatformBridge` e `@Composable expect fun PlatformDocumentViewer`.
   - `ui/designsystem/Theme.kt`, `Components.kt`, `Icons.kt`: tokens de cor, tipografia tabular (`tnum`) e componentes Apple vs Material 3.
-  - `ui/screens/LoginScreen.kt`, `GradesScreen.kt`, `AcademicScreen.kt`, `VirtualScreen.kt`, `MoreScreen.kt`: telas de Login, Semestre (`AttendanceLimitModal` e `SubjectDetailModal`), Curso, Sala Virtual (disciplinas, tarefas, avisos, conteúdos e download em lote) e Central.
-- `composeApp/src/androidMain/kotlin/.../platform/`: `Platform.android.kt`, `AndroidDocumentViewer.kt`, `AndroidSecureStore.kt`, `GradeSyncWorker.kt`, `AppUpdater.android.kt`.
+  - `ui/screens/LoginScreen.kt`, `GradesScreen.kt`, `AcademicScreen.kt`, `VirtualScreen.kt`, `CalendarScreen.kt`, `MoreScreen.kt`, `TodayAndSearchComponents.kt`: telas de Login, Semestre (`AttendanceLimitModal`, `SubjectDetailModal` e painel "Hoje na UNICEP"), Busca Global, Curso, Sala Virtual (disciplinas, tarefas, avisos, conteúdos e download em lote), Calendário (prazos do Virtual + eventos pessoais com lembretes) e Central.
+- `composeApp/src/commonTest/kotlin/me/muriloscolari/unicep/`: testes unitários multiplataforma (`CalendarEngineTest.kt`, `CalendarReminderEvaluatorTest.kt`, `VirtualAlertEvaluatorTest.kt`, `FrequencyAlertEvaluatorTest.kt`, `TodayAndSearchEngineTest.kt`, `TextAndTimeUtilTest.kt`).
+- `composeApp/src/androidMain/kotlin/.../platform/`: `Platform.android.kt`, `AndroidDocumentViewer.kt`, `AndroidSecureStore.kt`, `GradeSyncWorker.kt`, `CalendarReminderWorker.kt`, `AppUpdater.android.kt`.
 - `composeApp/src/wasmJsMain/`: `Main.kt`, `Platform.wasmJs.kt`, `resources/index.html`, `loader.js`, `favicon.svg`, `favicon-32.png`, `favicon.ico`, `apple-touch-icon.png`.
 - `androidApp/`: `build.gradle.kts` (`versionCode`, `versionName`, `signingConfigs`), `src/main/AndroidManifest.xml`, `res/xml/network_security_config.xml`, `res/xml/file_paths.xml`, ícones adaptativos.
 
@@ -80,6 +81,10 @@ Sempre execute os checks relevantes antes de commitar ou publicar:
 - **Testes do Backend Go (obrigatório rodar com `-race`):**
   ```bash
   cd backend && go test -count=1 -v -race ./...
+  ```
+- **Testes unitários do Frontend (`commonTest`):**
+  ```bash
+  cd app && ./gradlew :composeApp:testAndroidHostTest
   ```
 - **Build Web Wasm (standalone, sem precisar de Android SDK):**
   ```bash

@@ -42,6 +42,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import me.muriloscolari.unicep.data.api.CurriculumResponse
 import me.muriloscolari.unicep.data.api.ScheduleResponse
+import me.muriloscolari.unicep.data.api.UserCalendarEvent
 import me.muriloscolari.unicep.data.api.VirtualAssignmentItem
 import me.muriloscolari.unicep.data.api.VirtualCourseDetailResponse
 import me.muriloscolari.unicep.data.api.VirtualOverviewResponse
@@ -480,6 +481,7 @@ fun GlobalSearchSheet(
     curriculum: CurriculumResponse?,
     virtualOverview: VirtualOverviewResponse?,
     virtualCourseDetails: Map<Long, VirtualCourseDetailResponse>,
+    calendarEvents: List<UserCalendarEvent> = emptyList(),
     onSelectResult: (GlobalSearchResult) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -502,7 +504,8 @@ fun GlobalSearchSheet(
         schedule,
         curriculum,
         virtualOverview,
-        virtualCourseDetails
+        virtualCourseDetails,
+        calendarEvents
     ) {
         searchPortalData(
             query = query,
@@ -511,7 +514,8 @@ fun GlobalSearchSheet(
             schedule = schedule,
             curriculum = curriculum,
             virtualOverview = virtualOverview,
-            virtualCourseDetails = virtualCourseDetails
+            virtualCourseDetails = virtualCourseDetails,
+            calendarEvents = calendarEvents
         )
     }
 
@@ -657,6 +661,7 @@ fun GlobalSearchSheet(
                                 GlobalSearchResultKind.VIRTUAL_ASSIGNMENT -> colors.orange
                                 GlobalSearchResultKind.VIRTUAL_ANNOUNCEMENT -> colors.indigo
                                 GlobalSearchResultKind.VIRTUAL_MATERIAL -> colors.green
+                                GlobalSearchResultKind.CALENDAR_EVENT -> colors.accent
                             }
                             Row(
                                 modifier = Modifier

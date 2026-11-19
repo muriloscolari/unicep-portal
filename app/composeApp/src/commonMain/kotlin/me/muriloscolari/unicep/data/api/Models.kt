@@ -366,6 +366,8 @@ data class VirtualGradeItem(
 @Serializable
 data class VirtualQuizItem(
     val quizId: Long = 0L,
+    val orgUnitId: Long = 0L,
+    val orgUnitName: String = "",
     val name: String = "",
     val description: String = "",
     val isActive: Boolean = false,
@@ -396,6 +398,7 @@ data class VirtualOverviewResponse(
     val semesters: List<VirtualSemesterOption> = emptyList(),
     val courses: List<VirtualCourseSummary> = emptyList(),
     val upcomingAssignments: List<VirtualAssignmentItem> = emptyList(),
+    val upcomingQuizzes: List<VirtualQuizItem> = emptyList(),
     val announcements: List<VirtualAnnouncement> = emptyList(),
     val calendarEvents: List<VirtualCalendarEvent> = emptyList()
 )
@@ -412,4 +415,47 @@ data class VirtualCourseDetailResponse(
     val quizzes: List<VirtualQuizItem> = emptyList(),
     val discussions: List<VirtualDiscussionForum> = emptyList(),
     val calendar: List<VirtualCalendarEvent> = emptyList()
+)
+
+// --- Calendário Pessoal ---
+
+@Immutable
+@Serializable
+data class UserCalendarEvent(
+    val id: Long = 0L,
+    val title: String = "",
+    val description: String = "",
+    val date: String = "",
+    val time: String = "",
+    val allDay: Boolean = false,
+    val startAtMillis: Long = 0L,
+    val disciplineName: String = "",
+    val colorKey: String = "accent",
+    val reminderMinutes: List<Int> = emptyList(),
+    val createdAt: String = "",
+    val updatedAt: String = ""
+)
+
+@Immutable
+@Serializable
+data class CalendarEventInput(
+    val title: String,
+    val description: String = "",
+    val date: String,
+    val time: String = "",
+    val allDay: Boolean = false,
+    val startAtMillis: Long = 0L,
+    val disciplineName: String = "",
+    val colorKey: String = "accent",
+    val reminderMinutes: List<Int> = emptyList()
+)
+
+@Serializable
+data class CalendarEventsResponse(
+    val events: List<UserCalendarEvent> = emptyList()
+)
+
+@Serializable
+data class CalendarEventSingleResponse(
+    val event: UserCalendarEvent
 )

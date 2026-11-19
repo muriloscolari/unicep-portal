@@ -115,6 +115,8 @@ type VirtualGradeItem struct {
 // QuizItem represents a read-only Brightspace quiz summary.
 type QuizItem struct {
 	QuizID          int64  `json:"quizId"`
+	OrgUnitID       int64  `json:"orgUnitId,omitempty"`
+	OrgUnitName     string `json:"orgUnitName,omitempty"`
 	Name            string `json:"name"`
 	Description     string `json:"description,omitempty"`
 	IsActive        bool   `json:"isActive"`
@@ -124,6 +126,16 @@ type QuizItem struct {
 	TimeLimitMins   *int   `json:"timeLimitMins,omitempty"`
 	AttemptsAllowed *int   `json:"attemptsAllowed,omitempty"`
 	WebURL          string `json:"webUrl"`
+}
+
+// ContentTopicSnapshot is a lightweight flattened content topic used for poller change detection.
+type ContentTopicSnapshot struct {
+	OrgUnitID      int64  `json:"orgUnitId"`
+	OrgUnitName    string `json:"orgUnitName,omitempty"`
+	ModuleTitle    string `json:"moduleTitle,omitempty"`
+	TopicID        int64  `json:"topicId"`
+	Title          string `json:"title"`
+	TypeIdentifier string `json:"typeIdentifier,omitempty"`
 }
 
 // DiscussionForum represents a read-only Brightspace discussion forum.
@@ -143,8 +155,10 @@ type OverviewResponse struct {
 	Semesters           []SemesterOption `json:"semesters"`
 	Courses             []CourseSummary  `json:"courses"`
 	UpcomingAssignments []AssignmentItem `json:"upcomingAssignments"`
+	UpcomingQuizzes     []QuizItem       `json:"upcomingQuizzes"`
 	Announcements       []Announcement   `json:"announcements"`
 	CalendarEvents      []CalendarEvent  `json:"calendarEvents"`
+	SucceededCourseIDs  []int64          `json:"-"`
 }
 
 // CourseDetailResponse aggregates all read-only data for a single Brightspace course offering.

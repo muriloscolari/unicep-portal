@@ -524,6 +524,84 @@ object PortalIcons {
         }
     }
 
+    val CalendarFill: ImageVector by lazy {
+        strokeIcon("CalendarFill") {
+            fillPath {
+                moveTo(3.5f, 6.5f)
+                curveTo(3.5f, 5.4f, 4.4f, 4.5f, 5.5f, 4.5f)
+                horizontalLineTo(18.5f)
+                curveTo(19.6f, 4.5f, 20.5f, 5.4f, 20.5f, 6.5f)
+                verticalLineTo(9.2f)
+                horizontalLineTo(3.5f)
+                close()
+                moveTo(3.5f, 10.6f)
+                horizontalLineTo(20.5f)
+                verticalLineTo(19f)
+                curveTo(20.5f, 20.1f, 19.6f, 21f, 18.5f, 21f)
+                horizontalLineTo(5.5f)
+                curveTo(4.4f, 21f, 3.5f, 20.1f, 3.5f, 19f)
+                close()
+            }
+            strokePath {
+                moveTo(8f, 3f)
+                verticalLineTo(6f)
+                moveTo(16f, 3f)
+                verticalLineTo(6f)
+            }
+        }
+    }
+
+    val Plus: ImageVector by lazy {
+        strokeIcon("Plus") {
+            strokePath(strokeWidth = 2f) {
+                moveTo(12f, 5f)
+                verticalLineTo(19f)
+                moveTo(5f, 12f)
+                horizontalLineTo(19f)
+            }
+        }
+    }
+
+    val Edit: ImageVector by lazy {
+        strokeIcon("Edit") {
+            strokePath {
+                moveTo(15.5f, 4.5f)
+                lineTo(19.5f, 8.5f)
+                lineTo(9f, 19f)
+                horizontalLineTo(5f)
+                verticalLineTo(15f)
+                close()
+                moveTo(13f, 7f)
+                lineTo(17f, 11f)
+            }
+        }
+    }
+
+    val Trash: ImageVector by lazy {
+        strokeIcon("Trash") {
+            strokePath {
+                moveTo(4f, 6.5f)
+                horizontalLineTo(20f)
+                moveTo(9f, 6.5f)
+                verticalLineTo(4.5f)
+                curveTo(9f, 3.95f, 9.45f, 3.5f, 10f, 3.5f)
+                horizontalLineTo(14f)
+                curveTo(14.55f, 3.5f, 15f, 3.95f, 15f, 4.5f)
+                verticalLineTo(6.5f)
+                moveTo(6.5f, 6.5f)
+                lineTo(7.4f, 19f)
+                curveTo(7.45f, 19.83f, 8.15f, 20.5f, 9f, 20.5f)
+                horizontalLineTo(15f)
+                curveTo(15.85f, 20.5f, 16.55f, 19.83f, 16.6f, 19f)
+                lineTo(17.5f, 6.5f)
+                moveTo(10f, 10.5f)
+                verticalLineTo(16.5f)
+                moveTo(14f, 10.5f)
+                verticalLineTo(16.5f)
+            }
+        }
+    }
+
     val Clock: ImageVector by lazy {
         strokeIcon("Clock") {
             strokePath {

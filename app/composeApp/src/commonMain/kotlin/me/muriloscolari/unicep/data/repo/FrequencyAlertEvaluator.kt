@@ -3,19 +3,25 @@ package me.muriloscolari.unicep.data.repo
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import me.muriloscolari.unicep.data.api.ReportCardItem
+import me.muriloscolari.unicep.platform.AppTabIndex
 import me.muriloscolari.unicep.platform.PlatformBridge
 import kotlin.math.roundToInt
 
 private val alertJson = Json { ignoreUnknownKeys = true }
 
-fun readFrequencyAlertThreshold(): Int {
-    val raw = PlatformBridge.getString(PrefKeys.FREQ_ALERT_THRESHOLD)?.toIntOrNull()
+fun readFrequencyAlertThreshold(
+    storageGet: (String) -> String? = PlatformBridge::getString
+): Int {
+    val raw = storageGet(PrefKeys.FREQ_ALERT_THRESHOLD)?.toIntOrNull()
     return raw ?: 80
 }
 
-fun saveFrequencyAlertThreshold(threshold: Int) {
+fun saveFrequencyAlertThreshold(
+    threshold: Int,
+    storagePut: (String, String) -> Unit = PlatformBridge::putString
+) {
     val clean = if (threshold <= 0) 0 else threshold.coerceIn(75, 95)
-    PlatformBridge.putString(PrefKeys.FREQ_ALERT_THRESHOLD, clean.toString())
+    storagePut(PrefKeys.FREQ_ALERT_THRESHOLD, clean.toString())
 }
 
 fun computeReportFreqPercent(item: ReportCardItem): Double? {
@@ -27,11 +33,14 @@ fun computeReportFreqPercent(item: ReportCardItem): Double? {
 
 fun evaluateFrequencyAlerts(
     items: List<ReportCardItem>,
-    thresholdPercent: Int = readFrequencyAlertThreshold()
+    thresholdPercent: Int = readFrequencyAlertThreshold(),
+    storageGet: (String) -> String? = PlatformBridge::getString,
+    storagePut: (String, String) -> Unit = PlatformBridge::putString,
+    onNotify: (id: Int, title: String, body: String, openTab: Int) -> Boolean = PlatformBridge::postSystemNotification
 ) {
     if (thresholdPercent <= 0 || items.isEmpty()) return
 
-    val prevMap: MutableMap<String, Int> = PlatformBridge.getString(PrefKeys.FREQ_ALERT_NOTIFIED)
+    val prevMap: MutableMap<String, Int> = storageGet(PrefKeys.FREQ_ALERT_NOTIFIED)
         ?.let { raw -> runCatching { alertJson.decodeFromString<Map<String, Int>>(raw) }.getOrNull() }
         ?.toMutableMap()
         ?: mutableMapOf()
@@ -51,11 +60,11 @@ fun evaluateFrequencyAlerts(
                     else -> "restam $rem faltas"
                 }
                 val notifId = 70_000 + (key.hashCode() and 0x7FFF)
-                val posted = PlatformBridge.postSystemNotification(
-                    id = notifId,
-                    title = "Frequência em $freq%: ${item.name}",
-                    body = "Atingiu seu limite de $thresholdPercent% ($remText).",
-                    openTab = 0
+                val posted = onNotify(
+                    notifId,
+                    "Frequência em $freq%: ${item.name}",
+                    "Atingiu seu limite de $thresholdPercent% ($remText).",
+                    AppTabIndex.SEMESTER
                 )
                 if (posted) {
                     prevMap[key] = freq
@@ -68,6 +77,6 @@ fun evaluateFrequencyAlerts(
     }
 
     if (changed) {
-        PlatformBridge.putString(PrefKeys.FREQ_ALERT_NOTIFIED, alertJson.encodeToString(prevMap))
+        storagePut(PrefKeys.FREQ_ALERT_NOTIFIED, alertJson.encodeToString(prevMap))
     }
 }

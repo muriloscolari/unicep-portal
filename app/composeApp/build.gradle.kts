@@ -23,6 +23,7 @@ kotlin {
             compileSdk = 37
             minSdk = 26
             androidResources.enable = true
+            withHostTest {}
         }
     }
 
@@ -35,6 +36,11 @@ kotlin {
         browser {
             commonWebpackConfig {
                 outputFileName = "unicep-portal.js"
+            }
+            testTask {
+                useKarma {
+                    useFirefoxHeadless()
+                }
             }
         }
         binaries.executable()
@@ -69,6 +75,10 @@ kotlin {
 
         wasmJsMain.dependencies {
             implementation(libs.ktor.client.js)
+        }
+
+        commonTest.dependencies {
+            implementation(kotlin("test"))
         }
     }
 }

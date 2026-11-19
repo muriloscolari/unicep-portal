@@ -3,6 +3,7 @@ package me.muriloscolari.unicep.data.repo
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import me.muriloscolari.unicep.data.api.VirtualAssignmentItem
+import me.muriloscolari.unicep.platform.AppTabIndex
 import me.muriloscolari.unicep.platform.PlatformBridge
 
 private val virtualAlertJson = Json { ignoreUnknownKeys = true }
@@ -17,17 +18,24 @@ fun formatLeadHoursLabel(hours: Int): String = when {
     else -> "${hours}h"
 }
 
-fun readVirtualNotifyNewAssignment(): Boolean =
-    PlatformBridge.getString(PrefKeys.VIRTUAL_NOTIFY_NEW_ASSIGNMENT)
+fun readVirtualNotifyNewAssignment(
+    storageGet: (String) -> String? = PlatformBridge::getString
+): Boolean =
+    storageGet(PrefKeys.VIRTUAL_NOTIFY_NEW_ASSIGNMENT)
         ?.toBooleanStrictOrNull()
         ?: true
 
-fun saveVirtualNotifyNewAssignment(enabled: Boolean) {
-    PlatformBridge.putString(PrefKeys.VIRTUAL_NOTIFY_NEW_ASSIGNMENT, enabled.toString())
+fun saveVirtualNotifyNewAssignment(
+    enabled: Boolean,
+    storagePut: (String, String) -> Unit = PlatformBridge::putString
+) {
+    storagePut(PrefKeys.VIRTUAL_NOTIFY_NEW_ASSIGNMENT, enabled.toString())
 }
 
-fun readVirtualDeadlineLeadHours(): List<Int> {
-    val raw = PlatformBridge.getString(PrefKeys.VIRTUAL_DEADLINE_LEAD_HOURS) ?: return DEFAULT_VIRTUAL_DEADLINE_LEAD_HOURS
+fun readVirtualDeadlineLeadHours(
+    storageGet: (String) -> String? = PlatformBridge::getString
+): List<Int> {
+    val raw = storageGet(PrefKeys.VIRTUAL_DEADLINE_LEAD_HOURS) ?: return DEFAULT_VIRTUAL_DEADLINE_LEAD_HOURS
     return runCatching {
         virtualAlertJson.decodeFromString<List<Int>>(raw)
             .mapNotNull { h -> h.takeIf { it in 1..336 } }
@@ -36,9 +44,12 @@ fun readVirtualDeadlineLeadHours(): List<Int> {
     }.getOrElse { DEFAULT_VIRTUAL_DEADLINE_LEAD_HOURS }
 }
 
-fun saveVirtualDeadlineLeadHours(hoursList: List<Int>): List<Int> {
+fun saveVirtualDeadlineLeadHours(
+    hoursList: List<Int>,
+    storagePut: (String, String) -> Unit = PlatformBridge::putString
+): List<Int> {
     val clean = hoursList.mapNotNull { h -> h.takeIf { it in 1..336 } }.distinct().sorted()
-    PlatformBridge.putString(PrefKeys.VIRTUAL_DEADLINE_LEAD_HOURS, virtualAlertJson.encodeToString(clean))
+    storagePut(PrefKeys.VIRTUAL_DEADLINE_LEAD_HOURS, virtualAlertJson.encodeToString(clean))
     return clean
 }
 
@@ -50,17 +61,20 @@ fun resolveAssignmentDueAtMillis(item: VirtualAssignmentItem): Long {
 fun evaluateVirtualDeadlineAlerts(
     assignments: List<VirtualAssignmentItem>,
     leadHoursList: List<Int> = readVirtualDeadlineLeadHours(),
-    nowMillis: Long = PlatformBridge.currentTimeMillis()
+    nowMillis: Long = PlatformBridge.currentTimeMillis(),
+    storageGet: (String) -> String? = PlatformBridge::getString,
+    storagePut: (String, String) -> Unit = PlatformBridge::putString,
+    onNotify: (id: Int, title: String, body: String, openTab: Int) -> Boolean = PlatformBridge::postSystemNotification
 ) {
     if (leadHoursList.isEmpty() || assignments.isEmpty()) return
     val sortedLeads = leadHoursList.filter { it in 1..336 }.distinct().sorted()
     if (sortedLeads.isEmpty()) return
 
-    val prevMap: MutableMap<String, Boolean> = PlatformBridge.getString(PrefKeys.VIRTUAL_DEADLINE_NOTIFIED)
+    val prevMap: MutableMap<String, Boolean> = storageGet(PrefKeys.VIRTUAL_DEADLINE_NOTIFIED)
         ?.let { raw -> runCatching { virtualAlertJson.decodeFromString<Map<String, Boolean>>(raw) }.getOrNull() }
         ?.toMutableMap()
         ?: mutableMapOf()
-    val prevIds: MutableMap<String, Int> = PlatformBridge.getString(PrefKeys.VIRTUAL_DEADLINE_NOTIF_IDS)
+    val prevIds: MutableMap<String, Int> = storageGet(PrefKeys.VIRTUAL_DEADLINE_NOTIF_IDS)
         ?.let { raw -> runCatching { virtualAlertJson.decodeFromString<Map<String, Int>>(raw) }.getOrNull() }
         ?.toMutableMap()
         ?: mutableMapOf()
@@ -103,11 +117,11 @@ fun evaluateVirtualDeadlineAlerts(
             idsChanged = true
             candidate
         }
-        val posted = PlatformBridge.postSystemNotification(
-            id = notifId,
-            title = "Prazo próximo ($remainingLabel): ${assignment.name}",
-            body = "${assignment.orgUnitName.ifBlank { "Sala Virtual" }} • Atividade ainda não enviada.",
-            openTab = 2
+        val posted = onNotify(
+            notifId,
+            "Prazo próximo ($remainingLabel): ${assignment.name}",
+            "${assignment.orgUnitName.ifBlank { "Sala Virtual" }} • Atividade ainda não enviada.",
+            AppTabIndex.VIRTUAL
         )
         if (posted) {
             matchedBuckets.forEach { h -> prevMap["$keyPrefix$h"] = true }
@@ -116,10 +130,10 @@ fun evaluateVirtualDeadlineAlerts(
     }
 
     if (changed) {
-        PlatformBridge.putString(PrefKeys.VIRTUAL_DEADLINE_NOTIFIED, virtualAlertJson.encodeToString(prevMap))
+        storagePut(PrefKeys.VIRTUAL_DEADLINE_NOTIFIED, virtualAlertJson.encodeToString(prevMap))
     }
     if (idsChanged) {
-        PlatformBridge.putString(PrefKeys.VIRTUAL_DEADLINE_NOTIF_IDS, virtualAlertJson.encodeToString(prevIds))
+        storagePut(PrefKeys.VIRTUAL_DEADLINE_NOTIF_IDS, virtualAlertJson.encodeToString(prevIds))
     }
 }
 
@@ -190,15 +204,4 @@ fun parseIso8601ToEpochMillis(raw: String): Long? {
     val localSeconds = daysSinceEpoch * 86_400L + hour * 3_600L + minute * 60L + second
     val utcSeconds = localSeconds - offsetMinutes * 60L
     return utcSeconds * 1000L
-}
-
-// Howard Hinnant's civil-from-days inverse for UTC epoch days (1970-01-01 = 0).
-private fun daysFromCivil(yInput: Int, mInput: Int, d: Int): Long {
-    val y = (if (mInput <= 2) yInput - 1 else yInput).toLong()
-    val era = if (y >= 0) y / 400 else (y - 399) / 400
-    val yoe = y - era * 400
-    val m = mInput.toLong()
-    val doy = (153L * (m + if (m > 2) -3L else 9L) + 2L) / 5L + d.toLong() - 1L
-    val doe = yoe * 365L + yoe / 4L - yoe / 100L + doy
-    return era * 146_097L + doe - 719_468L
 }

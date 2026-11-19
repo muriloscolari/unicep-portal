@@ -259,7 +259,7 @@ fun CentralScreen(
                         PortalSectionHeader("Notificações")
                         PortalCard(contentPadding = PaddingValues(0.dp)) {
                             PortalListRow(
-                                title = "Verificar novas notas",
+                                title = "Verificar novas atualizações",
                                 leadingIcon = PortalIcons.Refresh,
                                 leadingTint = colors.accent,
                                 onClick = onSyncNotifications,
@@ -572,7 +572,10 @@ private fun NotificationAlertRow(n: NotificationItem) {
     val colors = LocalPortalColors.current
     val appleType = LocalAppleTypography.current
     val isGrade = n.kind == "grade"
-    val isVirtual = n.kind == "d2l_assignment" || n.kind == "d2l_announcement"
+    val isVirtual = n.kind == "d2l_assignment" ||
+        n.kind == "d2l_announcement" ||
+        n.kind == "d2l_content" ||
+        n.kind == "d2l_quiz"
     val numericNew = n.newValue.replace(',', '.').toDoubleOrNull()
     val changeColor = when {
         isVirtual -> colors.accent
@@ -731,7 +734,7 @@ private fun VirtualAlertsSettingsRow(
         ) {
             Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                 Text(
-                    text = "Sala Virtual · Atividades e avisos",
+                    text = "Sala Virtual · Atividades, materiais e avisos",
                     color = colors.textPrimary,
                     style = appleType.body,
                     fontWeight = FontWeight.Medium
@@ -739,9 +742,9 @@ private fun VirtualAlertsSettingsRow(
                 Spacer(Modifier.height(2.dp))
                 Text(
                     text = if (notifyNewAssignment) {
-                        "Notificar em segundo plano quando o professor postar nova atividade ou aviso (sincronizado)"
+                        "Notificar em segundo plano quando o professor postar atividade, material, questionário ou aviso"
                     } else {
-                        "Alertas de novas atividades e avisos desativados nesta conta"
+                        "Alertas de novas postagens na Sala Virtual desativados nesta conta"
                     },
                     color = colors.textSecondary,
                     style = appleType.footnote

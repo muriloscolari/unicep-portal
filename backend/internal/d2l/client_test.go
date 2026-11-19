@@ -339,3 +339,96 @@ func TestParseD2LTimeWithoutOffset(t *testing.T) {
 		t.Fatalf("expected %s, got %s", want, got)
 	}
 }
+
+func TestOptionalTools403And404KeepCompleteTrueAndPickSemesterIgnoresEmptyFuture(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/d2l/login", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("login"))
+	})
+	mux.HandleFunc("/d2l/lp/auth/login/login.d2l", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "d2lSessionVal", Value: "ok", Path: "/"})
+		http.Redirect(w, r, "/d2l/home", http.StatusFound)
+	})
+	mux.HandleFunc("/d2l/home", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("home"))
+	})
+	mux.HandleFunc("/d2l/api/lp/1.0/users/whoami", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Identifier":"10001","FirstName":"ALUNO","LastName":"EXEMPLO"}`))
+	})
+	// Semestre futuro vazio ("1/2027") não deve esconder os cursos de "2/2026".
+	mux.HandleFunc("/d2l/le/manageCourses/api/mysemesters", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"OrgUnitId":"50000","Name":"1/2027","Code":"1/2027"},{"OrgUnitId":"48648","Name":"2/2026","Code":"2/2026"}]`))
+	})
+	mux.HandleFunc("/d2l/le/manageCourses/api/mycourses", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Courses":[
+			{"OrgUnitId":"101","Name":"Engenharia","Code":"ENG","IsActive":true,"SemesterName":"2/2026","CanAccessCourse":true},
+			{"OrgUnitId":"102","Name":"Sem Dropbox","Code":"SD","IsActive":true,"SemesterName":"2/2026","CanAccessCourse":true}
+		]}`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/6606/news/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/calendar/events/myEvents/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Objects":[]}`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/101/dropbox/folders/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/101/news/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/101/quizzes/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Objects":[{"QuizId":701,"Name":"Quiz Arquitetura","IsActive":true,"DueDate":"2099-11-25T23:59:00Z"}]}`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/101/content/toc", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Modules":[{"ModuleId":1,"Title":"Módulo 1","Topics":[{"TopicId":91,"Title":"Plano.pdf","TypeIdentifier":"File"}],"Modules":[{"ModuleId":2,"Title":"Submódulo A","Topics":[{"TopicId":92,"Title":"Slides.pdf","TypeIdentifier":"File"}],"Modules":[]}]}]}`))
+	})
+	// Disciplina 102 sem Dropbox (403) e sem Quizzes/TOC (404)
+	mux.HandleFunc("/d2l/api/le/1.74/102/dropbox/folders/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/102/news/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/102/quizzes/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/102/content/toc", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	mgr := NewManager(srv.URL, func(string) (string, error) { return "secret", nil })
+	ctx := context.Background()
+
+	ov, err := mgr.GetOverviewWithOptions(ctx, "1234567", true)
+	if err != nil {
+		t.Fatalf("GetOverviewWithOptions failed: %v", err)
+	}
+	if !ov.Complete {
+		t.Fatalf("expected Complete=true when optional tools return 403/404")
+	}
+	if len(ov.SucceededCourseIDs) != 2 {
+		t.Fatalf("expected both courses in SucceededCourseIDs, got %v", ov.SucceededCourseIDs)
+	}
+	if len(ov.UpcomingQuizzes) != 1 || ov.UpcomingQuizzes[0].OrgUnitID != 101 || ov.UpcomingQuizzes[0].OrgUnitName != "Engenharia" {
+		t.Fatalf("unexpected UpcomingQuizzes: %+v", ov.UpcomingQuizzes)
+	}
+
+	topics, okIDs, err := mgr.FetchActiveCourseTopics(ctx, "1234567", ov.Courses)
+	if err != nil {
+		t.Fatalf("FetchActiveCourseTopics failed: %v", err)
+	}
+	if len(okIDs) != 2 || len(topics) != 2 {
+		t.Fatalf("expected 2 topics and 2 okIDs, got topics=%+v okIDs=%v", topics, okIDs)
+	}
+	if topics[1].ModuleTitle != "Submódulo A" || topics[1].Title != "Slides.pdf" {
+		t.Fatalf("unexpected nested submodule topic: %+v", topics[1])
+	}
+
+	if semesterSortKey("10/2026") <= semesterSortKey("2/2026") {
+		t.Fatalf("expected 10/2026 > 2/2026")
+	}
+}

@@ -42,6 +42,8 @@ var (
 	// ErrFileNotFound indicates Brightspace returned 404 for the requested attachment/content file.
 	ErrFileNotFound = errors.New("arquivo não encontrado na Sala Virtual")
 
+	errToolUnavailable = errors.New("d2l tool unavailable")
+
 	saoPauloTZ = loadSaoPauloLocation()
 )
 
@@ -326,8 +328,8 @@ func (m *Manager) doGetJSON(ctx context.Context, client *http.Client, relPath st
 	if status == http.StatusUnauthorized || (status == http.StatusForbidden && strings.HasPrefix(strings.ToLower(relPath), "/d2l/api/lp/")) {
 		return ErrSessionExpired
 	}
-	if status == http.StatusForbidden {
-		return fmt.Errorf("d2l api status %d on %s", status, relPath)
+	if status == http.StatusForbidden || status == http.StatusNotFound {
+		return fmt.Errorf("%w: status %d on %s", errToolUnavailable, status, relPath)
 	}
 	if status >= 400 {
 		return fmt.Errorf("d2l api status %d on %s", status, relPath)
@@ -435,8 +437,10 @@ func (m *Manager) fetchOverviewUncached(ctx context.Context, ra string) (Overvie
 			Semesters:           []SemesterOption{},
 			Courses:             []CourseSummary{},
 			UpcomingAssignments: []AssignmentItem{},
+			UpcomingQuizzes:     []QuizItem{},
 			Announcements:       []Announcement{},
 			CalendarEvents:      []CalendarEvent{},
+			SucceededCourseIDs:  []int64{},
 		}
 
 		var (
@@ -489,27 +493,24 @@ func (m *Manager) fetchOverviewUncached(ctx context.Context, ra string) (Overvie
 		res.Semesters = semesters
 		res.Courses = courses
 
-		// Identify active courses in the latest semester to enrich assignments, news, and calendar.
-		targetSem := pickLatestSemesterName(semesters, courses)
+		// Identify active courses in the latest semester to enrich assignments, news, quizzes, and calendar.
 		orgIDs := []string{strconv.FormatInt(rootOrgUnitID, 10)}
-		var activeCourses []int
 		courseMap := make(map[int64]string, len(courses))
-		for i, c := range courses {
+		for _, c := range courses {
 			courseMap[c.OrgUnitID] = c.Name
 			if c.CanAccess {
 				orgIDs = append(orgIDs, strconv.FormatInt(c.OrgUnitID, 10))
 			}
-			isCurrentSem := (targetSem != "" && c.SemesterName == targetSem) || (targetSem == "" && c.IsActive) || (c.SemesterName == "" && c.IsActive)
-			if c.CanAccess && isCurrentSem {
-				activeCourses = append(activeCourses, i)
-			}
 		}
+		activeCourses := selectActiveCourseIndices(semesters, courses)
 
 		var (
 			enrichWG      sync.WaitGroup
 			mu            sync.Mutex
 			allNews       = append([]Announcement{}, globalNews...)
 			allAssigns    []AssignmentItem
+			allQuizzes    []QuizItem
+			succeededIDs  []int64
 			calendarItems []CalendarEvent
 			successCount  int
 			failCount     int
@@ -522,8 +523,8 @@ func (m *Manager) fetchOverviewUncached(ctx context.Context, ra string) (Overvie
 		go func() {
 			defer enrichWG.Done()
 			now := time.Now().UTC()
-			start := now.Add(-7 * 24 * time.Hour).Format("2006-01-02T15:04:05.000Z")
-			end := now.Add(45 * 24 * time.Hour).Format("2006-01-02T15:04:05.000Z")
+			start := now.Add(-30 * 24 * time.Hour).Format("2006-01-02T15:04:05.000Z")
+			end := now.Add(120 * 24 * time.Hour).Format("2006-01-02T15:04:05.000Z")
 			path := fmt.Sprintf("/d2l/api/le/%s/calendar/events/myEvents/?startDateTime=%s&endDateTime=%s&orgUnitIdsCSV=%s",
 				leAPIVersion, url.QueryEscape(start), url.QueryEscape(end), url.QueryEscape(strings.Join(orgIDs, ",")))
 			var calResp rawCalendarList
@@ -545,8 +546,9 @@ func (m *Manager) fetchOverviewUncached(ctx context.Context, ra string) (Overvie
 
 				assigns, assignErr := m.fetchAssignments(ctx, client, course.OrgUnitID, course.Name)
 				courseNews, newsErr := m.fetchNews(ctx, client, course.OrgUnitID, course.Name)
+				courseQuizzes, quizErr := m.fetchQuizzes(ctx, client, course.OrgUnitID, course.Name)
 
-				if errors.Is(assignErr, ErrSessionExpired) || errors.Is(newsErr, ErrSessionExpired) {
+				if errors.Is(assignErr, ErrSessionExpired) || errors.Is(newsErr, ErrSessionExpired) || errors.Is(quizErr, ErrSessionExpired) {
 					mu.Lock()
 					sessionErr = ErrSessionExpired
 					mu.Unlock()
@@ -566,20 +568,36 @@ func (m *Manager) fetchOverviewUncached(ctx context.Context, ra string) (Overvie
 					}
 				}
 
+				var courseErr error
+				switch {
+				case assignErr != nil:
+					courseErr = assignErr
+				case newsErr != nil:
+					courseErr = newsErr
+				case quizErr != nil:
+					courseErr = quizErr
+				}
+
 				mu.Lock()
-				if assignErr != nil {
-					failCount++
-					if firstErr == nil {
-						firstErr = assignErr
-					}
-				} else {
-					successCount++
+				if assignErr == nil {
 					res.Courses[idx].AssignmentCount = len(visibleAssigns)
 					res.Courses[idx].PendingCount = pending
 					allAssigns = append(allAssigns, visibleAssigns...)
 				}
-				if len(courseNews) > 0 {
+				if newsErr == nil && len(courseNews) > 0 {
 					allNews = append(allNews, courseNews...)
+				}
+				if quizErr == nil && len(courseQuizzes) > 0 {
+					allQuizzes = append(allQuizzes, courseQuizzes...)
+				}
+				if courseErr != nil {
+					failCount++
+					if firstErr == nil {
+						firstErr = courseErr
+					}
+				} else {
+					successCount++
+					succeededIDs = append(succeededIDs, course.OrgUnitID)
 				}
 				mu.Unlock()
 			}()
@@ -599,6 +617,9 @@ func (m *Manager) fetchOverviewUncached(ctx context.Context, ra string) (Overvie
 		sort.SliceStable(allAssigns, func(i, j int) bool {
 			return compareAssignmentPriority(allAssigns[i], allAssigns[j])
 		})
+		sort.SliceStable(allQuizzes, func(i, j int) bool {
+			return compareQuizPriority(allQuizzes[i], allQuizzes[j])
+		})
 		sort.SliceStable(allNews, func(i, j int) bool {
 			return newsSortKey(allNews[i]) > newsSortKey(allNews[j])
 		})
@@ -610,8 +631,10 @@ func (m *Manager) fetchOverviewUncached(ctx context.Context, ra string) (Overvie
 		})
 
 		res.UpcomingAssignments = allAssigns
+		res.UpcomingQuizzes = allQuizzes
 		res.Announcements = allNews
 		res.CalendarEvents = calendarItems
+		res.SucceededCourseIDs = succeededIDs
 		out = res
 		return nil
 	})
@@ -699,7 +722,7 @@ func (m *Manager) GetCourseDetail(ctx context.Context, ra string, orgUnitID int6
 		}()
 		go func() {
 			defer wg.Done()
-			quizzes, e := m.fetchQuizzes(ctx, client, orgUnitID)
+			quizzes, e := m.fetchQuizzes(ctx, client, orgUnitID, course.Name)
 			recordSessionErr(e)
 			if e == nil {
 				res.Quizzes = quizzes
@@ -869,6 +892,9 @@ func (m *Manager) fetchCourses(ctx context.Context, client *http.Client) ([]Cour
 func (m *Manager) fetchNews(ctx context.Context, client *http.Client, orgUnitID int64, orgUnitName string) ([]Announcement, error) {
 	var raw []rawNewsItem
 	if err := m.doGetJSON(ctx, client, fmt.Sprintf("/d2l/api/le/%s/%d/news/", leAPIVersion, orgUnitID), &raw); err != nil {
+		if errors.Is(err, errToolUnavailable) {
+			return []Announcement{}, nil
+		}
 		return nil, err
 	}
 	out := make([]Announcement, 0, len(raw))
@@ -902,6 +928,9 @@ func (m *Manager) fetchNews(ctx context.Context, client *http.Client, orgUnitID 
 func (m *Manager) fetchContentTOC(ctx context.Context, client *http.Client, orgUnitID int64) ([]ContentModule, error) {
 	var toc rawTOC
 	if err := m.doGetJSON(ctx, client, fmt.Sprintf("/d2l/api/le/%s/%d/content/toc", leAPIVersion, orgUnitID), &toc); err != nil {
+		if errors.Is(err, errToolUnavailable) {
+			return []ContentModule{}, nil
+		}
 		return nil, err
 	}
 	out := make([]ContentModule, 0, len(toc.Modules))
@@ -948,6 +977,9 @@ func convertModule(orgUnitID int64, raw rawTOCModule) ContentModule {
 func (m *Manager) fetchAssignments(ctx context.Context, client *http.Client, orgUnitID int64, orgUnitName string) ([]AssignmentItem, error) {
 	var folders []rawDropboxFolder
 	if err := m.doGetJSON(ctx, client, fmt.Sprintf("/d2l/api/le/%s/%d/dropbox/folders/", leAPIVersion, orgUnitID), &folders); err != nil {
+		if errors.Is(err, errToolUnavailable) {
+			return []AssignmentItem{}, nil
+		}
 		return nil, err
 	}
 
@@ -1064,9 +1096,12 @@ func (m *Manager) fetchGrades(ctx context.Context, client *http.Client, orgUnitI
 	return out, nil
 }
 
-func (m *Manager) fetchQuizzes(ctx context.Context, client *http.Client, orgUnitID int64) ([]QuizItem, error) {
+func (m *Manager) fetchQuizzes(ctx context.Context, client *http.Client, orgUnitID int64, orgUnitName string) ([]QuizItem, error) {
 	var raw rawQuizList
 	if err := m.doGetJSON(ctx, client, fmt.Sprintf("/d2l/api/le/%s/%d/quizzes/", leAPIVersion, orgUnitID), &raw); err != nil {
+		if errors.Is(err, errToolUnavailable) {
+			return []QuizItem{}, nil
+		}
 		return nil, err
 	}
 	out := make([]QuizItem, 0, len(raw.Objects))
@@ -1087,6 +1122,8 @@ func (m *Manager) fetchQuizzes(ctx context.Context, client *http.Client, orgUnit
 		}
 		out = append(out, QuizItem{
 			QuizID:          q.QuizID,
+			OrgUnitID:       orgUnitID,
+			OrgUnitName:     orgUnitName,
 			Name:            strings.TrimSpace(q.Name),
 			Description:     desc,
 			IsActive:        q.IsActive,
@@ -1150,6 +1187,150 @@ func (m *Manager) fetchCourseCalendar(ctx context.Context, client *http.Client, 
 	return out, nil
 }
 
+// FetchActiveCourseTopics fetches and flattens content topics passively across the student's active courses.
+func (m *Manager) FetchActiveCourseTopics(ctx context.Context, ra string, courses []CourseSummary) ([]ContentTopicSnapshot, []int64, error) {
+	var (
+		topics       []ContentTopicSnapshot
+		succeededIDs []int64
+	)
+	err := m.withClient(ctx, ra, func(client *http.Client, _, _ string) error {
+		courseList := courses
+		if len(courseList) == 0 {
+			fetched, err := m.fetchCourses(ctx, client)
+			if err != nil {
+				return err
+			}
+			courseList = fetched
+		}
+		activeIndices := selectActiveCourseIndices(nil, courseList)
+		if len(activeIndices) == 0 {
+			topics = []ContentTopicSnapshot{}
+			succeededIDs = []int64{}
+			return nil
+		}
+
+		var (
+			wg           sync.WaitGroup
+			mu           sync.Mutex
+			sem          = make(chan struct{}, 4)
+			allTopics    []ContentTopicSnapshot
+			okIDs        []int64
+			sessionErr   error
+			firstErr     error
+			successCount int
+			failCount    int
+		)
+
+		for _, idx := range activeIndices {
+			course := courseList[idx]
+			wg.Add(1)
+			go func(c CourseSummary) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				mods, err := m.fetchContentTOC(ctx, client, c.OrgUnitID)
+				if errors.Is(err, ErrSessionExpired) {
+					mu.Lock()
+					sessionErr = ErrSessionExpired
+					mu.Unlock()
+					return
+				}
+				mu.Lock()
+				defer mu.Unlock()
+				if err != nil {
+					failCount++
+					if firstErr == nil {
+						firstErr = err
+					}
+					return
+				}
+				successCount++
+				okIDs = append(okIDs, c.OrgUnitID)
+				allTopics = append(allTopics, flattenContentTopics(c.OrgUnitID, c.Name, "", mods)...)
+			}(course)
+		}
+		wg.Wait()
+		if sessionErr != nil {
+			return sessionErr
+		}
+		if successCount == 0 && failCount > 0 {
+			return firstErr
+		}
+
+		sort.SliceStable(allTopics, func(i, j int) bool {
+			if allTopics[i].OrgUnitID != allTopics[j].OrgUnitID {
+				return allTopics[i].OrgUnitID < allTopics[j].OrgUnitID
+			}
+			return allTopics[i].TopicID < allTopics[j].TopicID
+		})
+		sort.SliceStable(okIDs, func(i, j int) bool {
+			return okIDs[i] < okIDs[j]
+		})
+		topics = allTopics
+		succeededIDs = okIDs
+		return nil
+	})
+	return topics, succeededIDs, err
+}
+
+func flattenContentTopics(orgUnitID int64, courseName, parentModule string, mods []ContentModule) []ContentTopicSnapshot {
+	var out []ContentTopicSnapshot
+	for _, mod := range mods {
+		modTitle := strings.TrimSpace(mod.Title)
+		if modTitle == "" {
+			modTitle = parentModule
+		}
+		for _, t := range mod.Topics {
+			title := strings.TrimSpace(t.Title)
+			if t.TopicID <= 0 || title == "" {
+				continue
+			}
+			out = append(out, ContentTopicSnapshot{
+				OrgUnitID:      orgUnitID,
+				OrgUnitName:    courseName,
+				ModuleTitle:    modTitle,
+				TopicID:        t.TopicID,
+				Title:          title,
+				TypeIdentifier: t.TypeIdentifier,
+			})
+		}
+		if len(mod.Modules) > 0 {
+			out = append(out, flattenContentTopics(orgUnitID, courseName, modTitle, mod.Modules)...)
+		}
+	}
+	return out
+}
+
+func selectActiveCourseIndices(sems []SemesterOption, courses []CourseSummary) []int {
+	targetSem := pickLatestSemesterName(sems, courses)
+	var active []int
+	for i, c := range courses {
+		if !c.CanAccess {
+			continue
+		}
+		isCurrentSem := (targetSem != "" && c.SemesterName == targetSem) || (targetSem == "" && c.IsActive) || (c.SemesterName == "" && c.IsActive)
+		if isCurrentSem {
+			active = append(active, i)
+		}
+	}
+	if len(active) == 0 {
+		for i, c := range courses {
+			if c.CanAccess && c.IsActive {
+				active = append(active, i)
+			}
+		}
+	}
+	if len(active) == 0 {
+		for i, c := range courses {
+			if c.CanAccess {
+				active = append(active, i)
+			}
+		}
+	}
+	return active
+}
+
 func pickLatestSemesterName(sems []SemesterOption, courses []CourseSummary) string {
 	bestName := ""
 	bestKey := ""
@@ -1164,22 +1345,50 @@ func pickLatestSemesterName(sems []SemesterOption, courses []CourseSummary) stri
 			bestName = name
 		}
 	}
+	for _, c := range courses {
+		if c.CanAccess {
+			consider(c.SemesterName)
+		}
+	}
+	if bestName != "" {
+		return bestName
+	}
 	for _, s := range sems {
 		consider(s.Name)
-	}
-	for _, c := range courses {
-		consider(c.SemesterName)
 	}
 	return bestName
 }
 
 func semesterSortKey(name string) string {
-	// Handles "2/2026" -> "2026-2" so latest semester compares cleanly.
+	// Handles "2/2026" -> "2026-02" and "10/2026" -> "2026-10" so latest semester compares cleanly.
 	parts := strings.Split(name, "/")
 	if len(parts) == 2 {
-		return strings.TrimSpace(parts[1]) + "-" + strings.TrimSpace(parts[0])
+		semStr := strings.TrimSpace(parts[0])
+		yearStr := strings.TrimSpace(parts[1])
+		if semNum, err := strconv.Atoi(semStr); err == nil {
+			return fmt.Sprintf("%s-%02d", yearStr, semNum)
+		}
+		return yearStr + "-" + semStr
 	}
 	return name
+}
+
+func compareQuizPriority(a, b QuizItem) bool {
+	if a.IsActive != b.IsActive {
+		return a.IsActive
+	}
+	aDue := firstNonEmpty(a.DueDate, a.EndDate)
+	bDue := firstNonEmpty(b.DueDate, b.EndDate)
+	if aDue != bDue {
+		if aDue == "" {
+			return false
+		}
+		if bDue == "" {
+			return true
+		}
+		return aDue < bDue
+	}
+	return a.Name < b.Name
 }
 
 func statusPriorityRank(status string) int {
@@ -1214,6 +1423,11 @@ func compareAssignmentPriority(a, b AssignmentItem) bool {
 		return aDue < bDue
 	}
 	return a.Name < b.Name
+}
+
+// ParseD2LTime parses Brightspace ISO timestamps (with or without explicit timezone offset, defaulting naive timestamps to America/Sao_Paulo).
+func ParseD2LTime(raw string) (time.Time, bool) {
+	return parseD2LTime(raw)
 }
 
 func parseD2LTime(raw string) (time.Time, bool) {

@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import me.muriloscolari.unicep.data.api.ApiException
+import me.muriloscolari.unicep.data.api.CalendarEventInput
 import me.muriloscolari.unicep.data.api.CurriculumResponse
 import me.muriloscolari.unicep.data.api.DashboardResponse
 import me.muriloscolari.unicep.data.api.FinanceResponse
@@ -20,8 +21,10 @@ import me.muriloscolari.unicep.data.api.ReportCardResponse
 import me.muriloscolari.unicep.data.api.ScheduleResponse
 import me.muriloscolari.unicep.data.api.ServicesResponse
 import me.muriloscolari.unicep.data.api.UnauthorizedException
+import me.muriloscolari.unicep.data.api.UserCalendarEvent
 import me.muriloscolari.unicep.data.api.VirtualCourseDetailResponse
 import me.muriloscolari.unicep.data.api.VirtualOverviewResponse
+import me.muriloscolari.unicep.platform.AppTabIndex
 import me.muriloscolari.unicep.platform.DesignStylePreference
 import me.muriloscolari.unicep.platform.PlatformBridge
 
@@ -49,6 +52,8 @@ object PrefKeys {
     const val VIRTUAL_DEADLINE_NOTIF_IDS = "virtual_deadline_notif_ids_json"
     const val VIRTUAL_DOWNLOAD_TREE_URI = "virtual_download_tree_uri"
     const val VIRTUAL_DOWNLOAD_FOLDER_LABEL = "virtual_download_folder_label"
+    const val CACHE_CALENDAR_EVENTS = "cache_calendar_events_json"
+    const val CALENDAR_REMINDERS_NOTIFIED = "calendar_reminders_notified_json"
 }
 
 @Immutable
@@ -125,7 +130,11 @@ data class PortalUiState(
     val documentLoadingLabel: String? = null,
     val downloadingFileKey: String? = null,
     val batchDownloadDone: Int = 0,
-    val batchDownloadTotal: Int = 0
+    val batchDownloadTotal: Int = 0,
+    val calendarEvents: List<UserCalendarEvent> = emptyList(),
+    val calendarLoading: Boolean = false,
+    val calendarSaving: Boolean = false,
+    val calendarError: String? = null
 )
 
 class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
@@ -268,7 +277,9 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
             PrefKeys.VIRTUAL_NOTIFY_NEW_ASSIGNMENT,
             PrefKeys.VIRTUAL_DEADLINE_LEAD_HOURS,
             PrefKeys.VIRTUAL_DEADLINE_NOTIFIED,
-            PrefKeys.VIRTUAL_DEADLINE_NOTIF_IDS
+            PrefKeys.VIRTUAL_DEADLINE_NOTIF_IDS,
+            PrefKeys.CACHE_CALENDAR_EVENTS,
+            PrefKeys.CALENDAR_REMINDERS_NOTIFIED
         ).forEach { PlatformBridge.remove(it) }
     }
 
@@ -282,6 +293,7 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
         val fin = readCached<FinanceResponse>(PrefKeys.CACHE_FINANCE)
         val srv = readCached<ServicesResponse>(PrefKeys.CACHE_SERVICES)
         val virt = readCached<VirtualOverviewResponse>(PrefKeys.CACHE_VIRTUAL_OVERVIEW)
+        val cal = readCached<List<UserCalendarEvent>>(PrefKeys.CACHE_CALENDAR_EVENTS).orEmpty()
         val syncedAt = PlatformBridge.getString(PrefKeys.CACHE_UPDATED_AT_MS)?.toLongOrNull()
 
         val gradeId = dash.gradePeriods.firstOrNull()?.id.orEmpty()
@@ -306,6 +318,7 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
                 finance = fin,
                 services = srv,
                 virtualOverview = virt,
+                calendarEvents = cal,
                 notifications = dash.unreadNotifications
             )
         }
@@ -409,6 +422,7 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
         PlatformBridge.remove(PrefKeys.PASSWORD)
         clearAllCache()
         PlatformBridge.clearDownloadFolder()
+        PlatformBridge.cancelAllCalendarReminders()
         PlatformBridge.cancelGradeSync()
         _state.update {
             PortalUiState(
@@ -529,7 +543,8 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
     suspend fun preloadHomeContextIfNeeded(force: Boolean = false) = withToken { server, token ->
         val needSchedule = force || _state.value.schedule == null
         val needVirtual = force || _state.value.virtualOverview == null
-        if (!needSchedule && !needVirtual) return@withToken
+        val needCalendar = force || (_state.value.calendarEvents.isEmpty() && PlatformBridge.getString(PrefKeys.CACHE_CALENDAR_EVENTS) == null)
+        if (!needSchedule && !needVirtual && !needCalendar) return@withToken
 
         val ownerRa = _state.value.dashboard?.student?.ra ?: PlatformBridge.getString(PrefKeys.RA).orEmpty()
         if (needSchedule) {
@@ -545,6 +560,18 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
                 if (ownerRa.isNotBlank()) writeCached(PrefKeys.CACHE_VIRTUAL_OVERVIEW, ov)
                 _state.update { it.copy(virtualOverview = ov) }
                 evaluateVirtualDeadlineAlerts(ov.upcomingAssignments)
+            }
+        }
+        if (needCalendar) {
+            val cal = runCatching { api.calendarEvents(server, token).events }.onFailure { if (it is UnauthorizedException) throw it }.getOrNull()
+            if (cal != null) {
+                if (ownerRa.isNotBlank()) writeCached(PrefKeys.CACHE_CALENDAR_EVENTS, cal)
+                _state.update { it.copy(calendarEvents = cal) }
+                PlatformBridge.syncCalendarReminders(cal)
+                evaluateCalendarReminders(
+                    events = cal,
+                    utcOffsetMinutes = PlatformBridge.currentLocalDateTime().utcOffsetMinutes
+                )
             }
         }
     }
@@ -918,9 +945,150 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
             it.copy(
                 loading = false,
                 notifications = notifs,
-                statusBanner = if (res.created > 0) "${res.created} nova(s) atualização(ões) encontrada(s)" else "Nenhuma nota nova no momento"
+                statusBanner = if (res.created > 0) "${res.created} nova(s) atualização(ões) encontrada(s)" else "Nenhuma atualização nova no momento"
             )
         }
+    }
+
+    suspend fun loadCalendarContextIfNeeded(force: Boolean = false) = withToken { server, token ->
+        val needEvents = force || (_state.value.calendarEvents.isEmpty() && PlatformBridge.getString(PrefKeys.CACHE_CALENDAR_EVENTS) == null)
+        val needVirtual = force || _state.value.virtualOverview == null
+        if (!needEvents && !needVirtual) return@withToken
+
+        _state.update { it.copy(calendarLoading = true, calendarError = null) }
+        try {
+            val eventsRes = runCatching { api.calendarEvents(server, token) }
+            val eventsErr = eventsRes.exceptionOrNull()
+            if (eventsErr is UnauthorizedException) throw eventsErr
+
+            val ovRes = if (needVirtual) {
+                runCatching { api.virtualOverview(server, token, forceRefresh = force) }.also { r ->
+                    if (r.exceptionOrNull() is UnauthorizedException) throw r.exceptionOrNull()!!
+                }
+            } else null
+
+            val ownerRa = _state.value.dashboard?.student?.ra ?: PlatformBridge.getString(PrefKeys.RA).orEmpty()
+            val freshEvents = eventsRes.getOrNull()?.events
+            val freshOv = ovRes?.getOrNull()
+
+            if (freshEvents != null) {
+                if (ownerRa.isNotBlank()) writeCached(PrefKeys.CACHE_CALENDAR_EVENTS, freshEvents)
+                PlatformBridge.syncCalendarReminders(freshEvents)
+                evaluateCalendarReminders(
+                    events = freshEvents,
+                    utcOffsetMinutes = PlatformBridge.currentLocalDateTime().utcOffsetMinutes
+                )
+            }
+            if (freshOv != null) {
+                if (ownerRa.isNotBlank()) writeCached(PrefKeys.CACHE_VIRTUAL_OVERVIEW, freshOv)
+                evaluateVirtualDeadlineAlerts(freshOv.upcomingAssignments)
+            }
+
+            _state.update {
+                it.copy(
+                    calendarEvents = freshEvents ?: it.calendarEvents,
+                    virtualOverview = freshOv ?: it.virtualOverview,
+                    calendarError = if (freshEvents == null) (eventsErr?.message ?: "Não foi possível carregar os eventos do calendário") else null
+                )
+            }
+        } finally {
+            _state.update { it.copy(calendarLoading = false) }
+        }
+    }
+
+    suspend fun createCalendarEvent(input: CalendarEventInput): Boolean {
+        var success = false
+        withToken { server, token ->
+            _state.update { it.copy(calendarSaving = true, calendarError = null) }
+            try {
+                val created = api.createCalendarEvent(server, token, input).event
+                val updatedList = (_state.value.calendarEvents + created)
+                    .sortedWith(compareBy<UserCalendarEvent> { it.startAtMillis }.thenBy { it.id })
+                writeCached(PrefKeys.CACHE_CALENDAR_EVENTS, updatedList)
+                PlatformBridge.syncCalendarReminders(updatedList)
+                evaluateCalendarReminders(
+                    events = updatedList,
+                    utcOffsetMinutes = PlatformBridge.currentLocalDateTime().utcOffsetMinutes
+                )
+                _state.update {
+                    it.copy(
+                        calendarEvents = updatedList,
+                        statusBanner = "Evento adicionado ao calendário"
+                    )
+                }
+                success = true
+            } catch (e: ApiException) {
+                _state.update { it.copy(statusBanner = e.message ?: "Não foi possível salvar o evento") }
+            } finally {
+                _state.update { it.copy(calendarSaving = false) }
+            }
+        }
+        return success
+    }
+
+    suspend fun updateCalendarEvent(id: Long, input: CalendarEventInput): Boolean {
+        var success = false
+        withToken { server, token ->
+            _state.update { it.copy(calendarSaving = true, calendarError = null) }
+            try {
+                val updated = api.updateCalendarEvent(server, token, id, input).event
+                val updatedList = _state.value.calendarEvents
+                    .map { if (it.id == id) updated else it }
+                    .sortedWith(compareBy<UserCalendarEvent> { it.startAtMillis }.thenBy { it.id })
+                writeCached(PrefKeys.CACHE_CALENDAR_EVENTS, updatedList)
+                PlatformBridge.syncCalendarReminders(updatedList)
+                evaluateCalendarReminders(
+                    events = updatedList,
+                    utcOffsetMinutes = PlatformBridge.currentLocalDateTime().utcOffsetMinutes
+                )
+                _state.update {
+                    it.copy(
+                        calendarEvents = updatedList,
+                        statusBanner = "Evento atualizado"
+                    )
+                }
+                success = true
+            } catch (e: ApiException) {
+                _state.update { it.copy(statusBanner = e.message ?: "Não foi possível atualizar o evento") }
+            } finally {
+                _state.update { it.copy(calendarSaving = false) }
+            }
+        }
+        return success
+    }
+
+    suspend fun deleteCalendarEvent(id: Long): Boolean {
+        var success = false
+        withToken { server, token ->
+            _state.update { it.copy(calendarSaving = true, calendarError = null) }
+            try {
+                api.deleteCalendarEvent(server, token, id)
+                val updatedList = _state.value.calendarEvents.filterNot { it.id == id }
+                writeCached(PrefKeys.CACHE_CALENDAR_EVENTS, updatedList)
+                PlatformBridge.syncCalendarReminders(updatedList)
+                _state.update {
+                    it.copy(
+                        calendarEvents = updatedList,
+                        statusBanner = "Evento removido do calendário"
+                    )
+                }
+                success = true
+            } catch (e: ApiException) {
+                _state.update { it.copy(statusBanner = e.message ?: "Não foi possível excluir o evento") }
+            } finally {
+                _state.update { it.copy(calendarSaving = false) }
+            }
+        }
+        return success
+    }
+
+    fun evaluateDueCalendarReminders() {
+        val events = _state.value.calendarEvents
+        if (events.isEmpty()) return
+        evaluateCalendarReminders(
+            events = events,
+            utcOffsetMinutes = PlatformBridge.currentLocalDateTime().utcOffsetMinutes
+        )
     }
 
     suspend fun markAllNotificationsRead() = withToken { server, token ->
@@ -937,7 +1105,7 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
             id = (latest?.id ?: 9999L).toInt(),
             title = "UNICEP Portal • Teste de Notificação",
             body = "Notificações ativas neste aparelho! Exemplo: P1 → 9,5.",
-            openTab = 3
+            openTab = AppTabIndex.CENTRAL
         )
         latest?.let { PlatformBridge.putString(PrefKeys.LAST_NOTIFIED_ID, it.id.toString()) }
         _state.update {
@@ -960,16 +1128,25 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
         var maxProcessedId = lastSeenId
         var anyHandled = false
         freshOnes.forEach { n ->
-            if (n.kind == "d2l_assignment" || n.kind == "d2l_announcement") {
+            val isD2L = n.kind == "d2l_assignment" ||
+                n.kind == "d2l_announcement" ||
+                n.kind == "d2l_content" ||
+                n.kind == "d2l_quiz"
+            if (isD2L) {
                 if (!notifyVirtualNew) {
                     maxProcessedId = maxOf(maxProcessedId, n.id)
                     anyHandled = true
                     return@forEach
                 }
-                val prefix = if (n.kind == "d2l_announcement") "Novo aviso" else "Nova atividade"
+                val prefix = when (n.kind) {
+                    "d2l_announcement" -> "Novo aviso"
+                    "d2l_content" -> "Novo material"
+                    "d2l_quiz" -> "Novo questionário"
+                    else -> "Nova atividade"
+                }
                 val title = "$prefix: ${n.disciplineName.ifBlank { "Sala Virtual" }}"
                 val body = if (n.newValue.isNotBlank()) "${n.field} • ${n.newValue}" else n.field
-                if (PlatformBridge.postSystemNotification(n.id.toInt(), title, body, openTab = 2)) {
+                if (PlatformBridge.postSystemNotification(n.id.toInt(), title, body, openTab = AppTabIndex.VIRTUAL)) {
                     maxProcessedId = maxOf(maxProcessedId, n.id)
                     anyHandled = true
                 }
@@ -978,7 +1155,7 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
             val title = if (n.kind == "grade") "Nova nota: ${n.disciplineName}" else "Atualização: ${n.disciplineName}"
             val oldTxt = if (n.oldValue.isBlank()) "—" else n.oldValue
             val body = "${n.field}: $oldTxt → ${n.newValue}"
-            if (PlatformBridge.postSystemNotification(n.id.toInt(), title, body, openTab = 3)) {
+            if (PlatformBridge.postSystemNotification(n.id.toInt(), title, body, openTab = AppTabIndex.CENTRAL)) {
                 maxProcessedId = maxOf(maxProcessedId, n.id)
                 anyHandled = true
             }

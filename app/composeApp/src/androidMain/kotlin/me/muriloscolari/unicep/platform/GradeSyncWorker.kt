@@ -14,10 +14,13 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import me.muriloscolari.unicep.data.api.LoginRequest
 import me.muriloscolari.unicep.data.api.PortalApiClient
 import me.muriloscolari.unicep.data.api.UnauthorizedException
 import me.muriloscolari.unicep.data.repo.PrefKeys
+import me.muriloscolari.unicep.data.repo.evaluateCalendarReminders
 import me.muriloscolari.unicep.data.repo.evaluateFrequencyAlerts
 import me.muriloscolari.unicep.data.repo.evaluateVirtualDeadlineAlerts
 import me.muriloscolari.unicep.data.repo.readFrequencyAlertThreshold
@@ -56,17 +59,29 @@ class GradeSyncWorker(
         val freshOnes = unread.filter { it.id > lastSeenId }.sortedBy { it.id }
         val notifyVirtualNew = readVirtualNotifyNewAssignment()
         if (freshOnes.isNotEmpty()) {
+            var maxProcessedId = lastSeenId
             var anyHandled = false
             freshOnes.forEach { n ->
-                if (n.kind == "d2l_assignment" || n.kind == "d2l_announcement") {
+                val isD2L = n.kind == "d2l_assignment" ||
+                    n.kind == "d2l_announcement" ||
+                    n.kind == "d2l_content" ||
+                    n.kind == "d2l_quiz"
+                if (isD2L) {
                     if (!notifyVirtualNew) {
+                        maxProcessedId = maxOf(maxProcessedId, n.id)
                         anyHandled = true
                         return@forEach
                     }
-                    val prefix = if (n.kind == "d2l_announcement") "Novo aviso" else "Nova atividade"
+                    val prefix = when (n.kind) {
+                        "d2l_announcement" -> "Novo aviso"
+                        "d2l_content" -> "Novo material"
+                        "d2l_quiz" -> "Novo questionário"
+                        else -> "Nova atividade"
+                    }
                     val title = "$prefix: ${n.disciplineName.ifBlank { "Sala Virtual" }}"
                     val body = if (n.newValue.isNotBlank()) "${n.field} • ${n.newValue}" else n.field
-                    if (showLocalNotification(appContext, n.id.toInt(), title, body, openTab = 2)) {
+                    if (showLocalNotification(appContext, n.id.toInt(), title, body, openTab = AppTabIndex.VIRTUAL)) {
+                        maxProcessedId = maxOf(maxProcessedId, n.id)
                         anyHandled = true
                     }
                     return@forEach
@@ -74,12 +89,13 @@ class GradeSyncWorker(
                 val title = if (n.kind == "grade") "Nova nota: ${n.disciplineName}" else "Atualização: ${n.disciplineName}"
                 val oldTxt = if (n.oldValue.isBlank()) "—" else n.oldValue
                 val body = "${n.field}: $oldTxt → ${n.newValue}"
-                if (showLocalNotification(appContext, n.id.toInt(), title, body, openTab = 3)) {
+                if (showLocalNotification(appContext, n.id.toInt(), title, body, openTab = AppTabIndex.CENTRAL)) {
+                    maxProcessedId = maxOf(maxProcessedId, n.id)
                     anyHandled = true
                 }
             }
             if (anyHandled) {
-                PlatformBridge.putString(PrefKeys.LAST_NOTIFIED_ID, freshOnes.last().id.toString())
+                PlatformBridge.putString(PrefKeys.LAST_NOTIFIED_ID, maxProcessedId.toString())
             }
         }
 
@@ -96,26 +112,49 @@ class GradeSyncWorker(
                 evaluateVirtualDeadlineAlerts(ov.upcomingAssignments, leadHours)
             }
         }
+
+        runCatching { api.calendarEvents(server, token).events }.getOrNull()?.let { events ->
+            runCatching {
+                PlatformBridge.putString(PrefKeys.CACHE_CALENDAR_EVENTS, Json.encodeToString(events))
+            }
+            PlatformBridge.syncCalendarReminders(events)
+            evaluateCalendarReminders(
+                events = events,
+                utcOffsetMinutes = PlatformBridge.currentLocalDateTime().utcOffsetMinutes
+            )
+        }
         return Result.success()
     }
 
     companion object {
         const val CHANNEL_ID = "grades_updates_v2"
+        const val CALENDAR_CHANNEL_ID = "calendar_reminders_v1"
 
         fun ensureChannel(context: Context) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                val channel = NotificationChannel(
+                val gradesChannel = NotificationChannel(
                     CHANNEL_ID,
-                    "Notas e Faltas",
+                    "Notas, Faltas e Sala Virtual",
                     NotificationManager.IMPORTANCE_HIGH
                 ).apply {
-                    description = "Notificações imediatas quando o professor lança ou altera notas"
+                    description = "Notificações quando o professor lança notas, faltas, atividades, materiais ou avisos"
                     enableVibration(true)
                     enableLights(true)
                     lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 }
-                nm.createNotificationChannel(channel)
+                val calendarChannel = NotificationChannel(
+                    CALENDAR_CHANNEL_ID,
+                    "Lembretes do Calendário",
+                    NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = "Lembretes agendados para eventos, provas e compromissos"
+                    enableVibration(true)
+                    enableLights(true)
+                    lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                }
+                nm.createNotificationChannel(gradesChannel)
+                nm.createNotificationChannel(calendarChannel)
             }
         }
 
@@ -124,7 +163,23 @@ class GradeSyncWorker(
             id: Int,
             title: String,
             body: String,
-            openTab: Int = 3
+            openTab: Int = AppTabIndex.CENTRAL
+        ): Boolean = buildAndPostNotification(context, CHANNEL_ID, id, title, body, openTab)
+
+        fun showCalendarNotification(
+            context: Context,
+            id: Int,
+            title: String,
+            body: String
+        ): Boolean = buildAndPostNotification(context, CALENDAR_CHANNEL_ID, id, title, body, AppTabIndex.CALENDAR)
+
+        private fun buildAndPostNotification(
+            context: Context,
+            channelId: String,
+            id: Int,
+            title: String,
+            body: String,
+            openTab: Int
         ): Boolean {
             ensureChannel(context)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -149,7 +204,7 @@ class GradeSyncWorker(
             val customIconId = context.resources.getIdentifier("ic_stat_unicep", "drawable", context.packageName)
             val smallIcon = if (customIconId != 0) customIconId else android.R.drawable.ic_dialog_info
 
-            val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            val notification = NotificationCompat.Builder(context, channelId)
                 .setSmallIcon(smallIcon)
                 .setContentTitle(title)
                 .setContentText(body)
