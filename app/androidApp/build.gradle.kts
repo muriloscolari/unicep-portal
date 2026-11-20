@@ -20,8 +20,8 @@ android {
         applicationId = "me.muriloscolari.unicep"
         minSdk = 26
         targetSdk = 35
-        versionCode = 21
-        versionName = "1.11.1"
+        versionCode = 22
+        versionName = "1.11.2"
     }
 
     androidResources {

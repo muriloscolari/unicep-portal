@@ -436,3 +436,63 @@ fun upcomingCalendarItems(
         .filter { it.date >= fromDate && it.date <= endDate }
         .sortedWith(compareBy<CalendarAgendaItem> { it.date }.thenBy { it.sortMillis }.thenBy { it.title })
 }
+
+/**
+ * Builds deduplicated subject suggestions for the calendar event editor, prioritizing
+ * current gradebook subjects and skipping redundant Brightspace course suffixes such as
+ * `"Eletrônica - 4° Termo - 2/2026..."` when `"Eletrônica"` is already present.
+ */
+fun buildCalendarSubjectSuggestions(
+    gradeNames: List<String>,
+    virtualCourseNames: List<String>,
+    limit: Int = 20
+): List<String> {
+    val out = mutableListOf<String>()
+    val seenNorm = mutableSetOf<String>()
+
+    for (raw in gradeNames) {
+        val clean = raw.trim()
+        if (clean.isBlank()) continue
+        val norm = normalizeSearchText(clean)
+        if (norm.isNotBlank() && seenNorm.add(norm)) {
+            out += clean
+        }
+    }
+
+    for (raw in virtualCourseNames) {
+        val clean = raw.trim()
+        if (clean.isBlank()) continue
+        val normFull = normalizeSearchText(clean)
+        if (normFull.isBlank() || seenNorm.contains(normFull)) continue
+        val normPrefix = normalizeSearchText(clean.substringBefore(" - ").trim())
+        if (normPrefix.isNotBlank() && seenNorm.contains(normPrefix)) continue
+        seenNorm.add(normFull)
+        out += clean
+    }
+
+    return if (limit > 0) out.take(limit) else out
+}
+
+/**
+ * Filters and ranks subject suggestion chips dynamically as the user types.
+ */
+fun filterSubjectSuggestions(suggestions: List<String>, query: String): List<String> {
+    val normQuery = normalizeSearchText(query)
+    if (normQuery.isBlank()) return suggestions
+    val tokens = normQuery.split(' ').filter { it.isNotBlank() }
+
+    return suggestions
+        .mapNotNull { subj ->
+            val norm = normalizeSearchText(subj)
+            val rank = when {
+                norm == normQuery -> 0
+                norm.startsWith(normQuery) -> 1
+                norm.contains(normQuery) -> 2
+                tokens.isNotEmpty() && tokens.all { tok -> norm.contains(tok) } -> 3
+                else -> return@mapNotNull null
+            }
+            subj to rank
+        }
+        .sortedBy { it.second }
+        .map { it.first }
+}

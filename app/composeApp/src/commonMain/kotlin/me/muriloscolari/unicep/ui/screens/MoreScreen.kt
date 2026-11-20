@@ -125,6 +125,8 @@ fun CentralScreen(
     updateStatusMessage: String? = null,
     onCheckUpdate: () -> Unit = {},
     onInstallUpdate: () -> Unit = {},
+    ignoringBatteryOptimizations: Boolean = true,
+    onRequestBackgroundBattery: () -> Unit = {},
     onLogout: () -> Unit,
     loading: Boolean = false,
     listState: LazyListState = rememberLazyListState(),
@@ -325,6 +327,27 @@ fun CentralScreen(
                                 onToggleLeadHour = onToggleVirtualDeadlineLeadHour,
                                 onAddCustomLeadHour = onAddCustomVirtualDeadlineHour
                             )
+                            if (PlatformBridge.supportsBackgroundBatterySettings()) {
+                                PortalDivider(Modifier.padding(start = 58.dp))
+                                PortalListRow(
+                                    title = "Notificações com app fechado",
+                                    subtitle = if (ignoringBatteryOptimizations) {
+                                        "Sem restrição de bateria (verificação contínua ativa)"
+                                    } else {
+                                        "Toque para liberar bateria em segundo plano no aparelho"
+                                    },
+                                    leadingIcon = PortalIcons.Bell,
+                                    leadingTint = if (ignoringBatteryOptimizations) colors.green else colors.orange,
+                                    onClick = onRequestBackgroundBattery,
+                                    showChevron = false,
+                                    trailing = {
+                                        PortalBadge(
+                                            text = if (ignoringBatteryOptimizations) "Ativo" else "Liberar",
+                                            color = if (ignoringBatteryOptimizations) colors.green else colors.orange
+                                        )
+                                    }
+                                )
+                            }
                             if (PlatformBridge.supportsCustomDownloadFolder()) {
                                 PortalDivider(Modifier.padding(start = 58.dp))
                                 DownloadFolderSettingsRow(
@@ -336,9 +359,9 @@ fun CentralScreen(
                         }
                         PortalSectionFooter(
                             text = if (capabilities.isWeb) {
-                                "Verificamos novas notas automaticamente a cada 15 minutos no servidor."
+                                "Verificamos novas notas e Sala Virtual automaticamente a cada 5 minutos no servidor."
                             } else {
-                                "Verificamos novas notas automaticamente a cada 15 minutos em segundo plano."
+                                "Verificamos novas notas e Sala Virtual em segundo plano mesmo com o app fechado."
                             }
                         )
                     }

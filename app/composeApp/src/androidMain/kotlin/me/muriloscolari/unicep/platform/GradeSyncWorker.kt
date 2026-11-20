@@ -14,18 +14,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
-import me.muriloscolari.unicep.data.api.LoginRequest
-import me.muriloscolari.unicep.data.api.PortalApiClient
-import me.muriloscolari.unicep.data.api.UnauthorizedException
 import me.muriloscolari.unicep.data.repo.PrefKeys
-import me.muriloscolari.unicep.data.repo.evaluateCalendarReminders
-import me.muriloscolari.unicep.data.repo.evaluateFrequencyAlerts
-import me.muriloscolari.unicep.data.repo.evaluateVirtualDeadlineAlerts
-import me.muriloscolari.unicep.data.repo.readFrequencyAlertThreshold
-import me.muriloscolari.unicep.data.repo.readVirtualDeadlineLeadHours
-import me.muriloscolari.unicep.data.repo.readVirtualNotifyNewAssignment
 
 class GradeSyncWorker(
     private val appContext: Context,
@@ -34,96 +23,21 @@ class GradeSyncWorker(
 
     override suspend fun doWork(): Result {
         PlatformBridge.initContext(appContext)
-        val server = PlatformBridge.getString(PrefKeys.SERVER_URL)
-            ?.takeIf { it.isNotBlank() }
-            ?: return Result.success()
-        var token = PlatformBridge.getString(PrefKeys.JWT_TOKEN) ?: return Result.success()
-
-        val api = PortalApiClient()
-        val unread = try {
-            api.notifications(server, token, unreadOnly = true).items
-        } catch (_: UnauthorizedException) {
-            val ra = PlatformBridge.getString(PrefKeys.RA) ?: return Result.success()
-            val pass = PlatformBridge.getString(PrefKeys.PASSWORD) ?: return Result.success()
-            val perfil = PlatformBridge.getString(PrefKeys.PERFIL) ?: "alunograd"
-            val fresh = runCatching { api.login(server, LoginRequest(ra, pass, perfil)) }.getOrNull()
-                ?: return Result.retry()
-            token = fresh.token
-            PlatformBridge.putString(PrefKeys.JWT_TOKEN, token)
-            runCatching { api.notifications(server, token, unreadOnly = true).items }.getOrElse { return Result.retry() }
-        } catch (_: Exception) {
-            return Result.retry()
-        }
-
-        val lastSeenId = PlatformBridge.getString(PrefKeys.LAST_NOTIFIED_ID)?.toLongOrNull() ?: 0L
-        val freshOnes = unread.filter { it.id > lastSeenId }.sortedBy { it.id }
-        val notifyVirtualNew = readVirtualNotifyNewAssignment()
-        if (freshOnes.isNotEmpty()) {
-            var maxProcessedId = lastSeenId
-            var anyHandled = false
-            freshOnes.forEach { n ->
-                val isD2L = n.kind == "d2l_assignment" ||
-                    n.kind == "d2l_announcement" ||
-                    n.kind == "d2l_content" ||
-                    n.kind == "d2l_quiz"
-                if (isD2L) {
-                    if (!notifyVirtualNew) {
-                        maxProcessedId = maxOf(maxProcessedId, n.id)
-                        anyHandled = true
-                        return@forEach
-                    }
-                    val prefix = when (n.kind) {
-                        "d2l_announcement" -> "Novo aviso"
-                        "d2l_content" -> "Novo material"
-                        "d2l_quiz" -> "Novo questionário"
-                        else -> "Nova atividade"
-                    }
-                    val title = "$prefix: ${n.disciplineName.ifBlank { "Sala Virtual" }}"
-                    val body = if (n.newValue.isNotBlank()) "${n.field} • ${n.newValue}" else n.field
-                    if (showLocalNotification(appContext, n.id.toInt(), title, body, openTab = AppTabIndex.VIRTUAL)) {
-                        maxProcessedId = maxOf(maxProcessedId, n.id)
-                        anyHandled = true
-                    }
-                    return@forEach
+        return when (BackgroundSyncEngine.sync(appContext, fastOnly = false)) {
+            SyncOutcome.SUCCESS -> {
+                if (!PlatformBridge.getString(PrefKeys.JWT_TOKEN).isNullOrBlank()) {
+                    NotificationSyncScheduler.scheduleNextSyncAlarm(appContext)
                 }
-                val title = if (n.kind == "grade") "Nova nota: ${n.disciplineName}" else "Atualização: ${n.disciplineName}"
-                val oldTxt = if (n.oldValue.isBlank()) "—" else n.oldValue
-                val body = "${n.field}: $oldTxt → ${n.newValue}"
-                if (showLocalNotification(appContext, n.id.toInt(), title, body, openTab = AppTabIndex.CENTRAL)) {
-                    maxProcessedId = maxOf(maxProcessedId, n.id)
-                    anyHandled = true
+                Result.success()
+            }
+            SyncOutcome.NO_SESSION -> Result.success()
+            SyncOutcome.RETRY_NEEDED -> {
+                if (!PlatformBridge.getString(PrefKeys.JWT_TOKEN).isNullOrBlank()) {
+                    NotificationSyncScheduler.scheduleNextSyncAlarm(appContext)
                 }
-            }
-            if (anyHandled) {
-                PlatformBridge.putString(PrefKeys.LAST_NOTIFIED_ID, maxProcessedId.toString())
+                Result.retry()
             }
         }
-
-        val freqThreshold = readFrequencyAlertThreshold()
-        if (freqThreshold > 0) {
-            runCatching { api.dashboard(server, token) }.getOrNull()?.let { dash ->
-                evaluateFrequencyAlerts(dash.currentReport.items, freqThreshold)
-            }
-        }
-
-        val leadHours = readVirtualDeadlineLeadHours()
-        if (leadHours.isNotEmpty()) {
-            runCatching { api.virtualOverview(server, token) }.getOrNull()?.let { ov ->
-                evaluateVirtualDeadlineAlerts(ov.upcomingAssignments, leadHours)
-            }
-        }
-
-        runCatching { api.calendarEvents(server, token).events }.getOrNull()?.let { events ->
-            runCatching {
-                PlatformBridge.putString(PrefKeys.CACHE_CALENDAR_EVENTS, Json.encodeToString(events))
-            }
-            PlatformBridge.syncCalendarReminders(events)
-            evaluateCalendarReminders(
-                events = events,
-                utcOffsetMinutes = PlatformBridge.currentLocalDateTime().utcOffsetMinutes
-            )
-        }
-        return Result.success()
     }
 
     companion object {

@@ -111,6 +111,11 @@ expect object PlatformBridge {
     fun cancelAllCalendarReminders()
     fun requestNotificationPermissionIfNeeded()
     fun postSystemNotification(id: Int, title: String, body: String, openTab: Int = 3): Boolean
+    fun supportsBackgroundBatterySettings(): Boolean
+    fun isIgnoringBatteryOptimizations(): Boolean
+    fun requestIgnoreBatteryOptimizations(): Boolean
+    fun openAppBackgroundSettings(): Boolean
+    fun setAppResumeListener(listener: (() -> Unit)?)
     fun initNavigationHistory(initialRoute: String)
     fun pushNavigationRoute(route: String)
     fun readInitialNavigationRoute(): String?

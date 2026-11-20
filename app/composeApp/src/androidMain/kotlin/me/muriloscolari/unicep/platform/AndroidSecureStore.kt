@@ -25,10 +25,16 @@ internal class AndroidSecureStore(context: Context) {
         prefs.edit().putString(key, encrypted).apply()
     }
 
+    fun putStringSync(key: String, value: String) {
+        val encrypted = encrypt(value)
+        prefs.edit().putString(key, encrypted).commit()
+    }
+
     fun remove(key: String) {
         prefs.edit().remove(key).apply()
     }
 
+    @Synchronized
     private fun getOrCreateKey(): SecretKey {
         val ks = KeyStore.getInstance(KEYSTORE_PROVIDER).apply { load(null) }
         val existing = ks.getKey(KEY_ALIAS, null) as? SecretKey

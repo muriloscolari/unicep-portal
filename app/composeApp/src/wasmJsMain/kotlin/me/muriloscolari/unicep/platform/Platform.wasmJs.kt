@@ -652,6 +652,16 @@ actual object PlatformBridge {
         return jsShowWebNotification(title, body)
     }
 
+    actual fun supportsBackgroundBatterySettings(): Boolean = false
+
+    actual fun isIgnoringBatteryOptimizations(): Boolean = true
+
+    actual fun requestIgnoreBatteryOptimizations(): Boolean = false
+
+    actual fun openAppBackgroundSettings(): Boolean = false
+
+    actual fun setAppResumeListener(listener: (() -> Unit)?) {}
+
     actual fun initNavigationHistory(initialRoute: String) {
         rootRoute = initialRoute
         if (historyInitialized) return

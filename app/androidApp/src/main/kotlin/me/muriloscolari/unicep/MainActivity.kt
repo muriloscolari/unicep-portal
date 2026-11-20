@@ -10,6 +10,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import me.muriloscolari.unicep.data.repo.PrefKeys
 import me.muriloscolari.unicep.platform.PlatformBridge
 
 class MainActivity : ComponentActivity() {
@@ -21,6 +22,9 @@ class MainActivity : ComponentActivity() {
             PlatformBridge.onFolderPicked(uri)
         }
         PlatformBridge.bindActivity(this)
+        if (!PlatformBridge.getString(PrefKeys.JWT_TOKEN).isNullOrBlank()) {
+            PlatformBridge.scheduleGradeSync()
+        }
         PlatformBridge.bindFolderPicker { folderPickerLauncher.launch(null) }
         val initialTab = intent?.getIntExtra("open_tab", 0) ?: 0
         setContent {
@@ -40,6 +44,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         requestHighRefreshRate()
+        PlatformBridge.notifyAppResumed()
     }
 
     private fun requestHighRefreshRate() {

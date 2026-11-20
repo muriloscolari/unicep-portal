@@ -55,6 +55,9 @@ object PrefKeys {
     const val VIRTUAL_DOWNLOAD_FOLDER_LABEL = "virtual_download_folder_label"
     const val CACHE_CALENDAR_EVENTS = "cache_calendar_events_json"
     const val CALENDAR_REMINDERS_NOTIFIED = "calendar_reminders_notified_json"
+    const val LAST_BG_FULL_SYNC_MS = "last_bg_full_sync_ms"
+    const val CALENDAR_ALARM_IDS = "calendar_alarm_ids_json"
+    const val BATTERY_OPT_PROMPTED = "battery_opt_prompted"
 }
 
 @Immutable
@@ -283,7 +286,9 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
             PrefKeys.VIRTUAL_DEADLINE_NOTIFIED,
             PrefKeys.VIRTUAL_DEADLINE_NOTIF_IDS,
             PrefKeys.CACHE_CALENDAR_EVENTS,
-            PrefKeys.CALENDAR_REMINDERS_NOTIFIED
+            PrefKeys.CALENDAR_REMINDERS_NOTIFIED,
+            PrefKeys.LAST_BG_FULL_SYNC_MS,
+            PrefKeys.CALENDAR_ALARM_IDS
         ).forEach { PlatformBridge.remove(it) }
     }
 
@@ -338,9 +343,9 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
         val hasCache = !token.isNullOrBlank() && restoreCacheForRa(ra)
 
         if (!token.isNullOrBlank()) {
+            PlatformBridge.scheduleGradeSync()
             val loaded = runCatching { loadAllInitial(server, token, background = hasCache) }
             if (loaded.isSuccess) {
-                PlatformBridge.scheduleGradeSync()
                 return
             }
             val err = loaded.exceptionOrNull()

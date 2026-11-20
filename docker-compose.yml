@@ -27,7 +27,7 @@ services:
       D2L_BASE_URL: ${D2L_BASE_URL:-https://salavirtual.unicep.edu.br}
       DATA_DIR: /app/data
       WEB_DIR: /app/web
-      POLL_INTERVAL_MINUTES: ${POLL_INTERVAL_MINUTES:-15}
+      POLL_INTERVAL_MINUTES: ${POLL_INTERVAL_MINUTES:-5}
       NOTIFY_ABSENCES: ${NOTIFY_ABSENCES:-true}
     ports:
       - "${BIND_HOST:-127.0.0.1}:${PORT:-47832}:47832"

@@ -67,6 +67,7 @@ import me.muriloscolari.unicep.data.repo.addDays
 import me.muriloscolari.unicep.data.repo.buildCalendarAgendaItems
 import me.muriloscolari.unicep.data.repo.buildMonthGrid
 import me.muriloscolari.unicep.data.repo.filterCalendarItems
+import me.muriloscolari.unicep.data.repo.filterSubjectSuggestions
 import me.muriloscolari.unicep.data.repo.formatBrDate
 import me.muriloscolari.unicep.data.repo.formatCalendarReminderChipLabel
 import me.muriloscolari.unicep.data.repo.formatCalendarReminderLabel
@@ -76,6 +77,7 @@ import me.muriloscolari.unicep.data.repo.groupCalendarItemsByDate
 import me.muriloscolari.unicep.data.repo.localDateTimeToEpochMillis
 import me.muriloscolari.unicep.data.repo.monthNamePt
 import me.muriloscolari.unicep.data.repo.nextMonth
+import me.muriloscolari.unicep.data.repo.normalizeSearchText
 import me.muriloscolari.unicep.data.repo.parseBrDate
 import me.muriloscolari.unicep.data.repo.parseHourMinute
 import me.muriloscolari.unicep.data.repo.parseIsoDate
@@ -1249,32 +1251,59 @@ fun CalendarEventEditorSheet(
             }
 
             // Disciplina opcional
+            val filteredSubjectSuggestions = remember(subjectSuggestions, disciplineName) {
+                filterSubjectSuggestions(subjectSuggestions, disciplineName)
+            }
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = disciplineName,
                     onValueChange = { if (it.length <= 120) disciplineName = it },
                     label = { Text("Disciplina (opcional)") },
                     placeholder = { Text("Ex: Engenharia de Software") },
+                    trailingIcon = if (disciplineName.isNotEmpty()) {
+                        {
+                            Box(
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .clip(CircleShape)
+                                    .pointerHoverIcon(PointerIcon.Hand)
+                                    .clickable {
+                                        PlatformBridge.performHaptic(PortalHapticType.SELECTION)
+                                        disciplineName = ""
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = PortalIcons.Close,
+                                    contentDescription = "Limpar disciplina",
+                                    tint = colors.textSecondary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    } else null,
                     singleLine = true,
                     colors = textFieldColors,
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier.fillMaxWidth()
                 )
-                if (subjectSuggestions.isNotEmpty()) {
+                if (filteredSubjectSuggestions.isNotEmpty()) {
                     FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        subjectSuggestions.forEach { subj ->
-                            val selected = disciplineName.equals(subj, ignoreCase = true)
+                        filteredSubjectSuggestions.forEach { subj ->
+                            val selected = disciplineName.isNotBlank() &&
+                                normalizeSearchText(disciplineName) == normalizeSearchText(subj)
                             Box(
                                 modifier = Modifier
                                     .clip(CircleShape)
                                     .background(if (selected) colors.accentSoft else colors.surfaceSecondary)
                                     .pointerHoverIcon(PointerIcon.Hand)
                                     .clickable {
-                                        disciplineName = if (selected) "" else subj
+                                        PlatformBridge.performHaptic(PortalHapticType.SELECTION)
+                                        disciplineName = if (disciplineName.equals(subj, ignoreCase = true)) "" else subj
                                     }
                                     .padding(horizontal = 11.dp, vertical = 6.dp)
                             ) {

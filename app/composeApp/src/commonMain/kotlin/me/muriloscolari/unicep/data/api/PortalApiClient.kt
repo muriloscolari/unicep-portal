@@ -36,7 +36,11 @@ class DownloadedFilePayload(
     val suggestedFileName: String
 )
 
-class PortalApiClient {
+class PortalApiClient(
+    private val connectTimeoutMs: Long = 15_000,
+    private val requestTimeoutMs: Long = 90_000,
+    private val socketTimeoutMs: Long = 90_000
+) {
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -48,10 +52,14 @@ class PortalApiClient {
             json(json)
         }
         install(HttpTimeout) {
-            connectTimeoutMillis = 15_000
-            requestTimeoutMillis = 90_000
-            socketTimeoutMillis = 90_000
+            connectTimeoutMillis = connectTimeoutMs
+            requestTimeoutMillis = requestTimeoutMs
+            socketTimeoutMillis = socketTimeoutMs
         }
+    }
+
+    fun close() {
+        client.close()
     }
 
     suspend fun login(baseUrl: String, req: LoginRequest): LoginResponse {

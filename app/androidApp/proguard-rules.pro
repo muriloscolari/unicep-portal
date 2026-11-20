@@ -21,10 +21,14 @@
 -dontwarn org.openjsse.**
 -dontwarn io.ktor.**
 
-# WorkManager Workers
+# WorkManager Workers & BroadcastReceivers
+-keep class * extends androidx.work.ListenableWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}
 -keepclassmembers class * extends androidx.work.ListenableWorker {
     public <init>(android.content.Context, androidx.work.WorkerParameters);
 }
+-keep class me.muriloscolari.unicep.platform.NotificationSyncReceiver { *; }
 
 # Remove verbose debug logs in release
 -assumenosideeffects class android.util.Log {

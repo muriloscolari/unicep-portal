@@ -115,6 +115,8 @@ import me.muriloscolari.unicep.data.repo.CalendarDate
 import me.muriloscolari.unicep.data.repo.GlobalSearchResult
 import me.muriloscolari.unicep.data.repo.GlobalSearchResultKind
 import me.muriloscolari.unicep.data.repo.PortalRepository
+import me.muriloscolari.unicep.data.repo.PrefKeys
+import me.muriloscolari.unicep.data.repo.buildCalendarSubjectSuggestions
 import me.muriloscolari.unicep.data.repo.parseIsoDate
 import me.muriloscolari.unicep.platform.AppUpdateInfo
 import me.muriloscolari.unicep.platform.DesignStyle
@@ -193,6 +195,10 @@ fun App(initialTab: Int = 0) {
     var showGlobalSearchModal by remember { mutableStateOf(false) }
     var showAllNotificationsModal by remember { mutableStateOf(false) }
     var confirmLogoutDialog by remember { mutableStateOf(false) }
+    var ignoringBatteryOptimizations by remember {
+        mutableStateOf(PlatformBridge.isIgnoringBatteryOptimizations())
+    }
+    var showBatteryOptDialog by remember { mutableStateOf(false) }
     var selectedCalendarDate by remember { mutableStateOf(currentLocalCalendarDate()) }
     var showCalendarEditor by remember { mutableStateOf(false) }
     var editingCalendarEvent by remember { mutableStateOf<UserCalendarEvent?>(null) }
@@ -205,12 +211,10 @@ fun App(initialTab: Int = 0) {
     var predictiveBackState by remember { mutableStateOf(PredictiveBackState()) }
 
     val calendarSubjectSuggestions = remember(state.grades, state.virtualOverview) {
-        (state.grades?.items.orEmpty().map { it.name.toDisplayTitle() } +
-            state.virtualOverview?.courses.orEmpty().map { it.name.toDisplayTitle() })
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-            .distinct()
-            .take(20)
+        buildCalendarSubjectSuggestions(
+            gradeNames = state.grades?.items.orEmpty().map { it.name.toDisplayTitle() },
+            virtualCourseNames = state.virtualOverview?.courses.orEmpty().map { it.name.toDisplayTitle() }
+        )
     }
 
     var availableUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
@@ -531,6 +535,10 @@ fun App(initialTab: Int = 0) {
             showUpdateDialog = false
             true
         }
+        showBatteryOptDialog -> {
+            showBatteryOptDialog = false
+            true
+        }
         confirmLogoutDialog -> {
             confirmLogoutDialog = false
             true
@@ -578,6 +586,7 @@ fun App(initialTab: Int = 0) {
     val hasAnyOverlay = state.activeDocumentViewer != null ||
         backOverlayController.hasOverlay ||
         confirmLogoutDialog ||
+        showBatteryOptDialog ||
         confirmDeleteCalendarEvent != null ||
         showCalendarEditor ||
         showUpdateDialog ||
@@ -605,6 +614,9 @@ fun App(initialTab: Int = 0) {
             MainTab.entries.getOrNull(tab)?.let { targetTab ->
                 navigateToTab(targetTab)
             }
+        }
+        PlatformBridge.setAppResumeListener {
+            ignoringBatteryOptimizations = PlatformBridge.isIgnoringBatteryOptimizations()
         }
         PlatformBridge.setWebKeyShortcutListener { action ->
             when (action) {
@@ -664,6 +676,18 @@ fun App(initialTab: Int = 0) {
             PlatformBridge.setAndroidBackEnabled(false)
             PlatformBridge.setAndroidBackHandler(null)
             PlatformBridge.setOpenTabListener(null)
+            PlatformBridge.setAppResumeListener(null)
+        }
+    }
+
+    LaunchedEffect(state.loggedIn) {
+        if (state.loggedIn && PlatformBridge.supportsBackgroundBatterySettings()) {
+            val ignoring = PlatformBridge.isIgnoringBatteryOptimizations()
+            ignoringBatteryOptimizations = ignoring
+            if (!ignoring && PlatformBridge.getString(PrefKeys.BATTERY_OPT_PROMPTED) != "1") {
+                PlatformBridge.putString(PrefKeys.BATTERY_OPT_PROMPTED, "1")
+                showBatteryOptDialog = true
+            }
         }
     }
 
@@ -1015,6 +1039,8 @@ fun App(initialTab: Int = 0) {
                                 updateStatusMessage = updateStatusMessage,
                                 onCheckUpdate = { checkAppUpdate(manual = true) },
                                 onInstallUpdate = { installAppUpdate() },
+                                ignoringBatteryOptimizations = ignoringBatteryOptimizations,
+                                onRequestBackgroundBattery = { PlatformBridge.requestIgnoreBatteryOptimizations() },
                                 onLogout = { scope.launch { repo.logout() } },
                                 loading = state.loading,
                                 listState = centralListState,
@@ -1666,6 +1692,8 @@ fun App(initialTab: Int = 0) {
                                                     updateStatusMessage = updateStatusMessage,
                                                     onCheckUpdate = { checkAppUpdate(manual = true) },
                                                     onInstallUpdate = { installAppUpdate() },
+                                                    ignoringBatteryOptimizations = ignoringBatteryOptimizations,
+                                                    onRequestBackgroundBattery = { PlatformBridge.requestIgnoreBatteryOptimizations() },
                                                     onLogout = { scope.launch { repo.logout() } },
                                                     loading = state.loading,
                                                     listState = centralListState,
@@ -1991,6 +2019,20 @@ fun App(initialTab: Int = 0) {
                     }
                 }
             }
+        }
+
+        if (showBatteryOptDialog) {
+            AppleAlert(
+                title = "Notificações com app fechado",
+                message = "Para receber alertas de novas notas, materiais e atividades da Sala Virtual mesmo com o aplicativo fechado, permita que o UNICEP Portal rode sem restrição de bateria.",
+                confirmText = "Permitir",
+                dismissText = "Agora não",
+                onConfirm = {
+                    showBatteryOptDialog = false
+                    PlatformBridge.requestIgnoreBatteryOptimizations()
+                },
+                onDismiss = { showBatteryOptDialog = false }
+            )
         }
 
         state.documentLoadingLabel?.let { label ->

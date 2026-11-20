@@ -177,4 +177,79 @@ class CalendarEngineTest {
         val onlyNext3Days = upcomingCalendarItems(all, fromDate = CalendarDate(2026, 11, 18), days = 3)
         assertEquals(2, onlyNext3Days.size)
     }
+
+    @Test
+    fun buildCalendarSubjectSuggestionsDeduplicatesD2LSuffixesWithoutCollidingDistinctCourses() {
+        val suggestions = buildCalendarSubjectSuggestions(
+            gradeNames = listOf(
+                "Eletrônica",
+                "Cálculo I",
+                "Sistemas Operacionais",
+                "Desenvolvimento de Sistemas WEB"
+            ),
+            virtualCourseNames = listOf(
+                "Eletrônica - 4° Termo - 2/2026 - Turma A - Ecomp. Not.",
+                "Sistemas Operacionais - 4° Termo - 2/2026 - Turma A",
+                "Cálculo II - 4° Termo - 2/2026",
+                "Ehser - 2/2026 - Adm, Biom, Ccont..."
+            )
+        )
+
+        assertEquals(
+            listOf(
+                "Eletrônica",
+                "Cálculo I",
+                "Sistemas Operacionais",
+                "Desenvolvimento de Sistemas WEB",
+                "Cálculo II - 4° Termo - 2/2026",
+                "Ehser - 2/2026 - Adm, Biom, Ccont..."
+            ),
+            suggestions
+        )
+    }
+
+    @Test
+    fun filterSubjectSuggestionsFiltersDynamicallyAndRanksMatches() {
+        val suggestions = listOf(
+            "Atividades Complementares I",
+            "Desenvolvimento de Sistemas WEB",
+            "Eletrônica",
+            "Modelagem de Sistemas",
+            "Sistemas Operacionais",
+            "Ehser - 2/2026 - Adm, Biom"
+        )
+
+        assertEquals(suggestions, filterSubjectSuggestions(suggestions, ""))
+        assertEquals(suggestions, filterSubjectSuggestions(suggestions, "   "))
+
+        // Sem acento deve encontrar "Eletrônica" e remover todas as demais
+        assertEquals(listOf("Eletrônica"), filterSubjectSuggestions(suggestions, "Eletro"))
+
+        // Busca com múltiplos tokens deve filtrar apenas a disciplina correspondente
+        assertEquals(
+            listOf("Desenvolvimento de Sistemas WEB"),
+            filterSubjectSuggestions(suggestions, "sist web")
+        )
+
+        // Ordenação por relevância: exato > prefixo > substring > tokens
+        val ranked = filterSubjectSuggestions(
+            listOf(
+                "Microeletrônica Aplicada",
+                "Eletrônica",
+                "Eletrônica Digital"
+            ),
+            "eletronica"
+        )
+        assertEquals(
+            listOf(
+                "Eletrônica",
+                "Eletrônica Digital",
+                "Microeletrônica Aplicada"
+            ),
+            ranked
+        )
+
+        // Sem correspondência retorna lista vazia
+        assertTrue(filterSubjectSuggestions(suggestions, "quimica").isEmpty())
+    }
 }

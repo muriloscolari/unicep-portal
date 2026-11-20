@@ -64,7 +64,7 @@ func LoadFromLookup(lookup func(string) (string, bool)) (Config, error) {
 		log.Println("WARN: APP_SECRET missing or <32 chars; generated ephemeral random secret for this process")
 	}
 
-	pollMin := 15
+	pollMin := 5
 	if v := get("POLL_INTERVAL_MINUTES"); v != "" {
 		if parsed, err := strconv.Atoi(v); err == nil && parsed >= 5 {
 			pollMin = parsed

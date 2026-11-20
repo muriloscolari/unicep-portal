@@ -76,6 +76,7 @@ actual object PlatformBridge {
     private var backEnabled: Boolean = false
     private var predictiveBackListener: ((PredictiveBackState) -> Unit)? = null
     private var openTabListener: ((Int) -> Unit)? = null
+    private var appResumeListener: (() -> Unit)? = null
     private var registeredBackCallback: OnBackPressedCallback? = null
     private var folderPickerTrigger: (() -> Unit)? = null
     private var pendingFolderContinuation: CancellableContinuation<String?>? = null
@@ -186,6 +187,10 @@ actual object PlatformBridge {
 
     actual fun putString(key: String, value: String) {
         secureStore?.putString(key, value)
+    }
+
+    internal fun putStringSync(key: String, value: String) {
+        secureStore?.putStringSync(key, value)
     }
 
     actual fun remove(key: String) {
@@ -437,22 +442,12 @@ actual object PlatformBridge {
 
     actual fun scheduleGradeSync() {
         val ctx = appContext ?: return
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
-        val request = PeriodicWorkRequestBuilder<GradeSyncWorker>(15, TimeUnit.MINUTES)
-            .setConstraints(constraints)
-            .build()
-        WorkManager.getInstance(ctx).enqueueUniquePeriodicWork(
-            "unicep_grade_sync",
-            ExistingPeriodicWorkPolicy.KEEP,
-            request
-        )
+        NotificationSyncScheduler.schedulePeriodicSync(ctx)
     }
 
     actual fun cancelGradeSync() {
         val ctx = appContext ?: return
-        WorkManager.getInstance(ctx).cancelUniqueWork("unicep_grade_sync")
+        NotificationSyncScheduler.cancelPeriodicSync(ctx)
     }
 
     actual fun syncCalendarReminders(events: List<UserCalendarEvent>) {
@@ -488,11 +483,14 @@ actual object PlatformBridge {
                 req
             )
         }
+
+        NotificationSyncScheduler.scheduleCalendarAlarms(ctx, triggers)
     }
 
     actual fun cancelAllCalendarReminders() {
         val ctx = appContext ?: return
         WorkManager.getInstance(ctx).cancelAllWorkByTag(CALENDAR_REMINDER_TAG)
+        NotificationSyncScheduler.cancelCalendarAlarms(ctx)
     }
 
     actual fun requestNotificationPermissionIfNeeded() {
@@ -510,6 +508,62 @@ actual object PlatformBridge {
             requestNotificationPermissionIfNeeded()
         }
         return posted
+    }
+
+    actual fun supportsBackgroundBatterySettings(): Boolean = true
+
+    actual fun isIgnoringBatteryOptimizations(): Boolean {
+        val ctx = appContext ?: return true
+        val pm = ctx.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return true
+        return pm.isIgnoringBatteryOptimizations(ctx.packageName)
+    }
+
+    actual fun requestIgnoreBatteryOptimizations(): Boolean {
+        val ctx = appContext ?: return false
+        val hostCtx = activityRef?.get() ?: ctx
+        val reqIntent = Intent(
+            android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+            Uri.parse("package:${ctx.packageName}")
+        ).apply {
+            if (hostCtx !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val launched = runCatching {
+            hostCtx.startActivity(reqIntent)
+            true
+        }.getOrDefault(false)
+        if (launched) return true
+        return openAppBackgroundSettings()
+    }
+
+    actual fun openAppBackgroundSettings(): Boolean {
+        val ctx = appContext ?: return false
+        val hostCtx = activityRef?.get() ?: ctx
+        val detailsIntent = Intent(
+            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.parse("package:${ctx.packageName}")
+        ).apply {
+            if (hostCtx !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        if (runCatching { hostCtx.startActivity(detailsIntent); true }.getOrDefault(false)) {
+            return true
+        }
+        val batteryListIntent = Intent(
+            android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS
+        ).apply {
+            if (hostCtx !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        return runCatching {
+            hostCtx.startActivity(batteryListIntent)
+            true
+        }.getOrDefault(false)
+    }
+
+    actual fun setAppResumeListener(listener: (() -> Unit)?) {
+        appResumeListener = listener
+    }
+
+    fun notifyAppResumed() {
+        appResumeListener?.invoke()
     }
 
     actual fun initNavigationHistory(initialRoute: String) {}
