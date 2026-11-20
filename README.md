@@ -12,6 +12,12 @@ Cliente moderno, rápido e auto-hospedado para o Portal do Aluno da UNICEP (`cds
 | :---: | :---: |
 | ![Aba Semestre](docs/screenshots/semestre-apple.png) | ![Modal Frequência no limite](docs/screenshots/frequencia-limite.png) |
 
+### Sala Virtual (D2L) e Calendário Unificado
+
+| Sala Virtual | Calendário |
+| :---: | :---: |
+| ![Aba Sala Virtual](docs/screenshots/virtual-apple.png) | ![Aba Calendário](docs/screenshots/calendario-apple.png) |
+
 ### Central e Alternância Visual (Apple vs Material Design 3)
 
 | Estilo Apple | Material Design 3 |
