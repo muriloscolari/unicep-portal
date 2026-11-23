@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.js.Js
+import kotlinx.browser.document
 import kotlinx.browser.window
 import me.muriloscolari.unicep.data.api.UserCalendarEvent
 import me.muriloscolari.unicep.ui.designsystem.LocalPortalColors
@@ -392,6 +393,8 @@ private fun jsLocalDay(): Int = js("new Date().getDate()")
 
 private fun jsLocalUtcOffsetMinutes(): Int = js("-(new Date().getTimezoneOffset())")
 
+private fun jsIsDocumentVisible(): Boolean = js("document.visibilityState === 'visible'")
+
 private fun jsPrefersReducedMotion(): Boolean = js(
     """(() => {
         try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
@@ -543,12 +546,18 @@ private fun encodeBytesToBase64(bytes: ByteArray): String {
 actual object PlatformBridge {
     private var popListener: ((String) -> Unit)? = null
     private var webShortcutListener: ((WebShortcutAction) -> Boolean)? = null
+    private var appResumeListener: (() -> Unit)? = null
     private var historyInitialized = false
     private var rootRoute = "semestre"
     private var lastKnownRoute = ""
 
     init {
         runCatching {
+            document.addEventListener("visibilitychange") {
+                if (jsIsDocumentVisible()) {
+                    appResumeListener?.invoke()
+                }
+            }
             window.addEventListener("popstate") {
                 val route = jsReadCurrentRoute()
                 if (route == "guard") {
@@ -660,7 +669,9 @@ actual object PlatformBridge {
 
     actual fun openAppBackgroundSettings(): Boolean = false
 
-    actual fun setAppResumeListener(listener: (() -> Unit)?) {}
+    actual fun setAppResumeListener(listener: (() -> Unit)?) {
+        appResumeListener = listener
+    }
 
     actual fun initNavigationHistory(initialRoute: String) {
         rootRoute = initialRoute

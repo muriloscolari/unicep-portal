@@ -680,6 +680,7 @@ func (m *Manager) GetCourseDetail(ctx context.Context, ra string, orgUnitID int6
 		var (
 			wg         sync.WaitGroup
 			sessionErr error
+			assignErr  error
 			errMu      sync.Mutex
 		)
 		recordSessionErr := func(e error) {
@@ -703,7 +704,11 @@ func (m *Manager) GetCourseDetail(ctx context.Context, ra string, orgUnitID int6
 			defer wg.Done()
 			assigns, e := m.fetchAssignments(ctx, client, orgUnitID, course.Name)
 			recordSessionErr(e)
-			if e == nil && assigns != nil {
+			if e != nil {
+				assignErr = e
+				return
+			}
+			if assigns != nil {
 				res.Assignments = assigns
 			}
 		}()
@@ -752,6 +757,9 @@ func (m *Manager) GetCourseDetail(ctx context.Context, ra string, orgUnitID int6
 		if sessionErr != nil {
 			return sessionErr
 		}
+		if assignErr != nil {
+			return assignErr
+		}
 
 		pending := 0
 		activeCount := 0
@@ -768,10 +776,81 @@ func (m *Manager) GetCourseDetail(ctx context.Context, ra string, orgUnitID int6
 		})
 		res.Course.AssignmentCount = activeCount
 		res.Course.PendingCount = pending
+		m.reconcileCachedOverviewWithCourse(ra, res)
 		out = res
 		return nil
 	})
 	return out, err
+}
+
+func (m *Manager) reconcileCachedOverviewWithCourse(ra string, detail CourseDetailResponse) {
+	m.overviewMu.Lock()
+	defer m.overviewMu.Unlock()
+
+	cached, ok := m.overviewCache[ra]
+	if !ok || !time.Now().Before(cached.expiresAt) {
+		return
+	}
+
+	courseID := detail.Course.OrgUnitID
+	inScope := false
+	for _, idx := range selectActiveCourseIndices(cached.resp.Semesters, cached.resp.Courses) {
+		if idx >= 0 && idx < len(cached.resp.Courses) && cached.resp.Courses[idx].OrgUnitID == courseID {
+			inScope = true
+			break
+		}
+	}
+	if !inScope {
+		for _, a := range cached.resp.UpcomingAssignments {
+			if a.OrgUnitID == courseID {
+				inScope = true
+				break
+			}
+		}
+	}
+	if !inScope {
+		for _, c := range cached.resp.Courses {
+			if c.OrgUnitID == courseID && (c.AssignmentCount > 0 || c.PendingCount > 0) {
+				inScope = true
+				break
+			}
+		}
+	}
+	if !inScope {
+		return
+	}
+
+	updated := cached.resp
+	updatedCourses := make([]CourseSummary, len(cached.resp.Courses))
+	copy(updatedCourses, cached.resp.Courses)
+	for i := range updatedCourses {
+		if updatedCourses[i].OrgUnitID == courseID {
+			updatedCourses[i].AssignmentCount = detail.Course.AssignmentCount
+			updatedCourses[i].PendingCount = detail.Course.PendingCount
+		}
+	}
+	updated.Courses = updatedCourses
+
+	updatedAssigns := make([]AssignmentItem, 0, len(cached.resp.UpcomingAssignments)+len(detail.Assignments))
+	for _, a := range cached.resp.UpcomingAssignments {
+		if a.OrgUnitID != courseID {
+			updatedAssigns = append(updatedAssigns, a)
+		}
+	}
+	for _, a := range detail.Assignments {
+		if a.Status != "expired" {
+			updatedAssigns = append(updatedAssigns, a)
+		}
+	}
+	sort.SliceStable(updatedAssigns, func(i, j int) bool {
+		return compareAssignmentPriority(updatedAssigns[i], updatedAssigns[j])
+	})
+	updated.UpcomingAssignments = updatedAssigns
+
+	m.overviewCache[ra] = cachedOverview{
+		resp:      updated,
+		expiresAt: cached.expiresAt,
+	}
 }
 
 // FetchRaw downloads a validated read-only file or attachment from Brightspace using the student's session.
@@ -1042,11 +1121,24 @@ func (m *Manager) fetchAssignments(ctx context.Context, client *http.Client, org
 		return nil, err
 	}
 
-	out := make([]AssignmentItem, len(folders))
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, 4)
+	visibleFolders := make([]rawDropboxFolder, 0, len(folders))
+	for _, f := range folders {
+		if f.IsHidden {
+			continue
+		}
+		visibleFolders = append(visibleFolders, f)
+	}
 
-	for i, f := range folders {
+	out := make([]AssignmentItem, len(visibleFolders))
+	var (
+		wg         sync.WaitGroup
+		errMu      sync.Mutex
+		sessionErr error
+		firstErr   error
+		sem        = make(chan struct{}, 4)
+	)
+
+	for i, f := range visibleFolders {
 		i, f := i, f
 		wg.Add(1)
 		go func() {
@@ -1081,39 +1173,86 @@ func (m *Manager) fetchAssignments(ctx context.Context, client *http.Client, org
 				WebURL:         fmt.Sprintf("%s/d2l/lms/dropbox/user/folder_submit_files.d2l?db=%d&grpid=0&isprv=0&bp=0&ou=%d", m.baseURL, f.ID, orgUnitID),
 			}
 
+			subsPath := fmt.Sprintf("/d2l/api/le/%s/%d/dropbox/folders/%d/submissions/", leAPIVersion, orgUnitID, f.ID)
 			var subs []rawEntityDropbox
-			if err := m.doGetJSON(ctx, client, fmt.Sprintf("/d2l/api/le/%s/%d/dropbox/folders/%d/submissions/", leAPIVersion, orgUnitID, f.ID), &subs); err == nil && len(subs) > 0 {
-				sub := subs[0]
-				item.CompletionDate = strings.TrimSpace(sub.CompletionDate)
-				for _, s := range sub.Submissions {
-					if item.SubmissionDate == "" || s.SubmissionDate > item.SubmissionDate {
-						item.SubmissionDate = strings.TrimSpace(s.SubmissionDate)
-					}
-					for _, sf := range s.Files {
-						if sf.IsDeleted {
-							continue
-						}
-						var dlPath string
-						if s.ID > 0 && sf.FileID > 0 {
-							dlPath = fmt.Sprintf("/d2l/api/le/%s/%d/dropbox/folders/%d/submissions/%d/files/%d", leAPIVersion, orgUnitID, f.ID, s.ID, sf.FileID)
-						}
-						item.SubmittedFiles = append(item.SubmittedFiles, FileAttachment{
-							FileID:       sf.FileID,
-							FileName:     strings.TrimSpace(sf.FileName),
-							Size:         sf.Size,
-							DownloadPath: dlPath,
-						})
-					}
+			err := m.doGetJSON(ctx, client, subsPath, &subs)
+			if err != nil && !errors.Is(err, ErrSessionExpired) && !errors.Is(err, errToolUnavailable) {
+				timer := time.NewTimer(150 * time.Millisecond)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					err = ctx.Err()
+				case <-timer.C:
+					subs = nil
+					err = m.doGetJSON(ctx, client, subsPath, &subs)
 				}
-				if sub.Feedback != nil {
-					item.Score = sub.Feedback.Score
-					item.FeedbackText = sub.Feedback.Feedback.PlainText()
+			}
+			if errors.Is(err, ErrSessionExpired) {
+				errMu.Lock()
+				sessionErr = ErrSessionExpired
+				errMu.Unlock()
+				return
+			}
+			if err != nil && !errors.Is(err, errToolUnavailable) {
+				errMu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				errMu.Unlock()
+				return
+			}
+
+			if err == nil && len(subs) > 0 {
+				var (
+					hasGraded    bool
+					hasSubmitted bool
+				)
+				for _, sub := range subs {
+					if cd := strings.TrimSpace(sub.CompletionDate); cd != "" && (item.CompletionDate == "" || cd > item.CompletionDate) {
+						item.CompletionDate = cd
+					}
+					for _, s := range sub.Submissions {
+						if subDate := strings.TrimSpace(s.SubmissionDate); subDate != "" && (item.SubmissionDate == "" || subDate > item.SubmissionDate) {
+							item.SubmissionDate = subDate
+						}
+						for _, sf := range s.Files {
+							if sf.IsDeleted {
+								continue
+							}
+							var dlPath string
+							if s.ID > 0 && sf.FileID > 0 {
+								dlPath = fmt.Sprintf("/d2l/api/le/%s/%d/dropbox/folders/%d/submissions/%d/files/%d", leAPIVersion, orgUnitID, f.ID, s.ID, sf.FileID)
+							}
+							item.SubmittedFiles = append(item.SubmittedFiles, FileAttachment{
+								FileID:       sf.FileID,
+								FileName:     strings.TrimSpace(sf.FileName),
+								Size:         sf.Size,
+								DownloadPath: dlPath,
+							})
+						}
+					}
+					var entryFeedbackText string
+					if sub.Feedback != nil {
+						if sub.Feedback.Score != nil {
+							item.Score = sub.Feedback.Score
+						}
+						entryFeedbackText = sub.Feedback.Feedback.PlainText()
+						if entryFeedbackText != "" {
+							item.FeedbackText = entryFeedbackText
+						}
+					}
+					if sub.Status == 3 || (sub.Feedback != nil && (sub.Feedback.Score != nil || entryFeedbackText != "")) {
+						hasGraded = true
+					}
+					if len(sub.Submissions) > 0 || sub.Status == 1 || sub.Status == 2 || strings.TrimSpace(sub.CompletionDate) != "" {
+						hasSubmitted = true
+					}
 				}
 				switch {
-				case sub.Status == 3 || (sub.Feedback != nil && (sub.Feedback.Score != nil || item.FeedbackText != "")):
+				case hasGraded:
 					item.Status = "graded"
 					item.StatusLabel = "Avaliado"
-				case len(sub.Submissions) > 0 || sub.Status == 1 || sub.Status == 2:
+				case hasSubmitted:
 					item.Status = "submitted"
 					item.StatusLabel = "Enviado"
 				}
@@ -1131,6 +1270,12 @@ func (m *Manager) fetchAssignments(ctx context.Context, client *http.Client, org
 		}()
 	}
 	wg.Wait()
+	if sessionErr != nil {
+		return nil, sessionErr
+	}
+	if firstErr != nil {
+		return nil, firstErr
+	}
 	return out, nil
 }
 
@@ -1729,6 +1874,7 @@ type rawTOC struct {
 type rawDropboxFolder struct {
 	ID                 int64           `json:"Id"`
 	Name               string          `json:"Name"`
+	IsHidden           bool            `json:"IsHidden"`
 	CustomInstructions richText        `json:"CustomInstructions"`
 	Attachments        []rawAttachment `json:"Attachments"`
 	DueDate            string          `json:"DueDate"`

@@ -8,11 +8,14 @@ import me.muriloscolari.unicep.data.api.ReportCardItem
 import me.muriloscolari.unicep.data.api.ScheduleResponse
 import me.muriloscolari.unicep.data.api.UserCalendarEvent
 import me.muriloscolari.unicep.data.api.VirtualAssignmentItem
+import me.muriloscolari.unicep.data.api.VirtualCourseDetailResponse
+import me.muriloscolari.unicep.data.api.VirtualCourseSummary
 import me.muriloscolari.unicep.data.api.VirtualOverviewResponse
 import me.muriloscolari.unicep.platform.LocalDateTimeInfo
 import me.muriloscolari.unicep.ui.screens.UnifiedSubject
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -70,7 +73,8 @@ class TodayAndSearchEngineTest {
             upcomingAssignments = listOf(
                 VirtualAssignmentItem(id = 1, orgUnitId = 10, name = "Projeto BD", dueAtMillis = nowMs + 2 * 86_400_000L, status = "not_submitted"),
                 VirtualAssignmentItem(id = 2, orgUnitId = 10, name = "Já enviada", dueAtMillis = nowMs + 86_400_000L, status = "submitted"),
-                VirtualAssignmentItem(id = 3, orgUnitId = 10, name = "Muito distante", dueAtMillis = nowMs + 15 * 86_400_000L, status = "not_submitted")
+                VirtualAssignmentItem(id = 3, orgUnitId = 10, name = "Muito distante", dueAtMillis = nowMs + 15 * 86_400_000L, status = "not_submitted"),
+                VirtualAssignmentItem(id = 4, orgUnitId = 10, name = "Encerrada recente", dueAtMillis = nowMs - 30 * 60_000L, status = "expired")
             )
         )
 
@@ -123,5 +127,44 @@ class TodayAndSearchEngineTest {
         assertEquals(2, res.size)
         assertTrue(res.any { it.kind == GlobalSearchResultKind.SUBJECT })
         assertTrue(res.any { it.kind == GlobalSearchResultKind.CALENDAR_EVENT && it.isAlert })
+    }
+
+    @Test
+    fun searchPortalDataPrefersFreshCourseDetailAssignmentStatusOverStaleOverview() {
+        val staleAssignment = VirtualAssignmentItem(
+            id = 2L,
+            orgUnitId = 73611L,
+            orgUnitName = "Desenvolvimento WEB",
+            name = "Camadas para WEB",
+            status = "not_submitted",
+            statusLabel = "Não enviado"
+        )
+        val freshAssignment = staleAssignment.copy(
+            status = "submitted",
+            statusLabel = "Enviado"
+        )
+        val ov = VirtualOverviewResponse(
+            upcomingAssignments = listOf(staleAssignment)
+        )
+        val details = mapOf(
+            73611L to VirtualCourseDetailResponse(
+                course = VirtualCourseSummary(orgUnitId = 73611L, name = "Desenvolvimento WEB"),
+                assignments = listOf(freshAssignment)
+            )
+        )
+
+        val res = searchPortalData(
+            query = "camadas",
+            filter = GlobalSearchFilter.VIRTUAL,
+            subjects = emptyList(),
+            schedule = null,
+            curriculum = null,
+            virtualOverview = ov,
+            virtualCourseDetails = details
+        )
+
+        assertEquals(1, res.size)
+        assertFalse(res[0].isAlert)
+        assertTrue(res[0].subtitle.contains("Enviado"))
     }
 }

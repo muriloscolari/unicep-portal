@@ -533,3 +533,276 @@ func TestOverviewResponseMarshalsEmptySlicesAsArraysNotNull(t *testing.T) {
 		}
 	}
 }
+
+func newD2LBasicTestMux(loginCalls *atomic.Int32) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/d2l/login", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "d2lSameSiteCanaryA", Value: "1", Path: "/"})
+		_, _ = w.Write([]byte("login"))
+	})
+	mux.HandleFunc("/d2l/lp/auth/login/login.d2l", func(w http.ResponseWriter, r *http.Request) {
+		n := int32(1)
+		if loginCalls != nil {
+			n = loginCalls.Add(1)
+		}
+		http.SetCookie(w, &http.Cookie{Name: "d2lSessionVal", Value: "sess-" + string(rune('0'+n)), Path: "/"})
+		http.Redirect(w, r, "/d2l/home", http.StatusFound)
+	})
+	mux.HandleFunc("/d2l/home", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("home"))
+	})
+	mux.HandleFunc("/d2l/api/lp/1.0/users/whoami", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Identifier":"10001","FirstName":"ALUNO","LastName":"EXEMPLO"}`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/6606/news/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/calendar/events/myEvents/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Objects":[]}`))
+	})
+	return mux
+}
+
+func TestSubmissionsRetryAndPersistentFailureDoesNotFakeNotSubmitted(t *testing.T) {
+	var sub101Calls atomic.Int32
+	mux := newD2LBasicTestMux(nil)
+	mux.HandleFunc("/d2l/le/manageCourses/api/mysemesters", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"OrgUnitId":"48648","Name":"2/2026","Code":"2/2026"}]`))
+	})
+	mux.HandleFunc("/d2l/le/manageCourses/api/mycourses", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Courses":[
+			{"OrgUnitId":"101","Name":"Transient OK","Code":"C1","IsActive":true,"SemesterName":"2/2026","CanAccessCourse":true},
+			{"OrgUnitId":"102","Name":"Persistent Fail","Code":"C2","IsActive":true,"SemesterName":"2/2026","CanAccessCourse":true}
+		]}`))
+	})
+	for _, ou := range []string{"101", "102"} {
+		ou := ou
+		mux.HandleFunc("/d2l/api/le/1.74/"+ou+"/news/", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`[]`)) })
+		mux.HandleFunc("/d2l/api/le/1.74/"+ou+"/quizzes/", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"Objects":[]}`)) })
+		mux.HandleFunc("/d2l/api/le/1.74/"+ou+"/content/toc", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"Modules":[]}`)) })
+		mux.HandleFunc("/d2l/api/le/1.74/"+ou+"/grades/values/myGradeValues/", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`[]`)) })
+		mux.HandleFunc("/d2l/api/le/1.74/"+ou+"/discussions/forums/", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`[]`)) })
+		mux.HandleFunc("/d2l/api/le/1.74/"+ou+"/calendar/events/", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`[]`)) })
+	}
+
+	mux.HandleFunc("/d2l/api/le/1.74/101/dropbox/folders/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"Id":10,"Name":"Atividade 1","DueDate":"2099-12-01T23:59:00Z"}]`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/101/dropbox/folders/10/submissions/", func(w http.ResponseWriter, r *http.Request) {
+		if sub101Calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(`[{"Status":1,"Submissions":[{"Id":55,"SubmissionDate":"2099-11-15T10:00:00Z","Files":[]}]}]`))
+	})
+
+	mux.HandleFunc("/d2l/api/le/1.74/102/dropbox/folders/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"Id":20,"Name":"Atividade 2","DueDate":"2099-12-01T23:59:00Z"}]`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/102/dropbox/folders/20/submissions/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	mgr := NewManager(srv.URL, func(string) (string, error) { return "secret", nil })
+	ctx := context.Background()
+
+	ov, err := mgr.GetOverviewWithOptions(ctx, "1234567", true)
+	if err != nil {
+		t.Fatalf("expected partial overview to succeed, got %v", err)
+	}
+	if ov.Complete {
+		t.Fatalf("expected Complete=false when course 102 submissions persistently fail")
+	}
+	if sub101Calls.Load() != 2 {
+		t.Fatalf("expected 101 submissions to retry once (2 calls), got %d", sub101Calls.Load())
+	}
+	if len(ov.UpcomingAssignments) != 1 || ov.UpcomingAssignments[0].OrgUnitID != 101 || ov.UpcomingAssignments[0].Status != "submitted" {
+		t.Fatalf("expected only course 101 submitted assignment, got %+v", ov.UpcomingAssignments)
+	}
+	for _, c := range ov.Courses {
+		if c.OrgUnitID == 102 && c.PendingCount != 0 {
+			t.Fatalf("expected failed course 102 not to report fake pending count, got %+v", c)
+		}
+	}
+
+	if _, err := mgr.GetCourseDetail(ctx, "1234567", 102); err == nil {
+		t.Fatalf("expected GetCourseDetail to fail when /submissions/ returns persistent 500")
+	}
+}
+
+func TestSubmissionsSessionExpiredTriggersRelogin(t *testing.T) {
+	var loginCalls atomic.Int32
+	var expiredOnce atomic.Bool
+	expiredOnce.Store(true)
+
+	mux := newD2LBasicTestMux(&loginCalls)
+	mux.HandleFunc("/d2l/le/manageCourses/api/mysemesters", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"OrgUnitId":"48648","Name":"2/2026","Code":"2/2026"}]`))
+	})
+	mux.HandleFunc("/d2l/le/manageCourses/api/mycourses", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Courses":[{"OrgUnitId":"101","Name":"DSW","Code":"DSW","IsActive":true,"SemesterName":"2/2026","CanAccessCourse":true}]}`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/101/news/", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`[]`)) })
+	mux.HandleFunc("/d2l/api/le/1.74/101/quizzes/", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"Objects":[]}`)) })
+	mux.HandleFunc("/d2l/api/le/1.74/101/dropbox/folders/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"Id":10,"Name":"Atividade","DueDate":"2099-12-01T23:59:00Z"}]`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/101/dropbox/folders/10/submissions/", func(w http.ResponseWriter, r *http.Request) {
+		if expiredOnce.Swap(false) {
+			http.Redirect(w, r, "/d2l/login?sessionExpired=1", http.StatusFound)
+			return
+		}
+		_, _ = w.Write([]byte(`[{"Status":1,"Submissions":[{"Id":90,"SubmissionDate":"2099-11-16T18:00:00Z","Files":[]}]}]`))
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	mgr := NewManager(srv.URL, func(string) (string, error) { return "secret", nil })
+	ov, err := mgr.GetOverview(context.Background(), "1234567")
+	if err != nil {
+		t.Fatalf("expected re-login and recovery, got err=%v", err)
+	}
+	if loginCalls.Load() != 2 {
+		t.Fatalf("expected 2 logins (initial + relogin on submissions 302), got %d", loginCalls.Load())
+	}
+	if len(ov.UpcomingAssignments) != 1 || ov.UpcomingAssignments[0].Status != "submitted" {
+		t.Fatalf("expected assignment status submitted after relogin, got %+v", ov.UpcomingAssignments)
+	}
+}
+
+func TestSubmissionsMultiEntryCompletionDateAndHiddenFolder(t *testing.T) {
+	mux := newD2LBasicTestMux(nil)
+	mux.HandleFunc("/d2l/le/manageCourses/api/mycourses", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Courses":[{"OrgUnitId":"101","Name":"DSW","Code":"DSW","IsActive":true,"SemesterName":"2/2026","CanAccessCourse":true}]}`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/101/content/toc", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"Modules":[]}`)) })
+	mux.HandleFunc("/d2l/api/le/1.74/101/grades/values/myGradeValues/", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`[]`)) })
+	mux.HandleFunc("/d2l/api/le/1.74/101/news/", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`[]`)) })
+	mux.HandleFunc("/d2l/api/le/1.74/101/quizzes/", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"Objects":[]}`)) })
+	mux.HandleFunc("/d2l/api/le/1.74/101/discussions/forums/", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`[]`)) })
+	mux.HandleFunc("/d2l/api/le/1.74/101/calendar/events/", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`[]`)) })
+	mux.HandleFunc("/d2l/api/le/1.74/101/dropbox/folders/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[
+			{"Id":10,"Name":"Multi-entity","IsHidden":false,"DueDate":"2099-12-01T23:59:00Z"},
+			{"Id":11,"Name":"CompletionDate Only","IsHidden":false,"DueDate":"2099-12-02T23:59:00Z"},
+			{"Id":12,"Name":"Oculta","IsHidden":true,"DueDate":"2099-12-03T23:59:00Z"}
+		]`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/101/dropbox/folders/10/submissions/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[
+			{"Status":0,"Submissions":[]},
+			{"Status":1,"Submissions":[{"Id":100,"SubmissionDate":"2099-11-16T23:59:00Z","Files":[{"FileId":200,"FileName":"trab.pdf","Size":512,"IsDeleted":false}]}]}
+		]`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/101/dropbox/folders/11/submissions/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"Status":0,"CompletionDate":"2099-11-15T12:00:00Z","Submissions":[]}]`))
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	mgr := NewManager(srv.URL, func(string) (string, error) { return "secret", nil })
+	detail, err := mgr.GetCourseDetail(context.Background(), "1234567", 101)
+	if err != nil {
+		t.Fatalf("GetCourseDetail failed: %v", err)
+	}
+	if len(detail.Assignments) != 2 {
+		t.Fatalf("expected 2 visible assignments (hidden folder skipped), got %+v", detail.Assignments)
+	}
+	if detail.Course.PendingCount != 0 || detail.Course.AssignmentCount != 2 {
+		t.Fatalf("expected 0 pending and 2 active, got %+v", detail.Course)
+	}
+	for _, a := range detail.Assignments {
+		if a.Status != "submitted" {
+			t.Fatalf("expected assignment %q to be submitted, got %+v", a.Name, a)
+		}
+	}
+}
+
+func TestGetCourseDetailReconcilesCachedOverviewWithoutLeakingOldSemester(t *testing.T) {
+	var submittedNow atomic.Bool
+
+	mux := newD2LBasicTestMux(nil)
+	mux.HandleFunc("/d2l/le/manageCourses/api/mysemesters", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"OrgUnitId":"48648","Name":"2/2026","Code":"2/2026"},{"OrgUnitId":"48000","Name":"1/2026","Code":"1/2026"}]`))
+	})
+	mux.HandleFunc("/d2l/le/manageCourses/api/mycourses", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Courses":[
+			{"OrgUnitId":"101","Name":"Desenvolvimento WEB","Code":"DSW","IsActive":true,"SemesterName":"2/2026","CanAccessCourse":true},
+			{"OrgUnitId":"102","Name":"Disciplina Antiga","Code":"OLD","IsActive":true,"SemesterName":"1/2026","CanAccessCourse":true}
+		]}`))
+	})
+	for _, ou := range []string{"101", "102"} {
+		ou := ou
+		mux.HandleFunc("/d2l/api/le/1.74/"+ou+"/content/toc", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"Modules":[]}`)) })
+		mux.HandleFunc("/d2l/api/le/1.74/"+ou+"/grades/values/myGradeValues/", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`[]`)) })
+		mux.HandleFunc("/d2l/api/le/1.74/"+ou+"/news/", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`[]`)) })
+		mux.HandleFunc("/d2l/api/le/1.74/"+ou+"/quizzes/", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"Objects":[]}`)) })
+		mux.HandleFunc("/d2l/api/le/1.74/"+ou+"/discussions/forums/", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`[]`)) })
+		mux.HandleFunc("/d2l/api/le/1.74/"+ou+"/calendar/events/", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`[]`)) })
+	}
+	mux.HandleFunc("/d2l/api/le/1.74/101/dropbox/folders/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"Id":10,"Name":"Camadas WEB","DueDate":"2099-12-01T23:59:00Z"}]`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/101/dropbox/folders/10/submissions/", func(w http.ResponseWriter, r *http.Request) {
+		if submittedNow.Load() {
+			_, _ = w.Write([]byte(`[{"Status":1,"Submissions":[{"Id":77,"SubmissionDate":"2099-11-22T20:00:00Z","Files":[]}]}]`))
+			return
+		}
+		_, _ = w.Write([]byte(`[]`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/102/dropbox/folders/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"Id":20,"Name":"Atividade Antiga","DueDate":"2099-12-01T23:59:00Z"}]`))
+	})
+	mux.HandleFunc("/d2l/api/le/1.74/102/dropbox/folders/20/submissions/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	mgr := NewManager(srv.URL, func(string) (string, error) { return "secret", nil })
+	ctx := context.Background()
+
+	ov1, err := mgr.GetOverview(ctx, "1234567")
+	if err != nil {
+		t.Fatalf("initial GetOverview failed: %v", err)
+	}
+	if ov1.Courses[0].PendingCount != 1 || len(ov1.UpcomingAssignments) != 1 || ov1.UpcomingAssignments[0].Status != "not_submitted" {
+		t.Fatalf("unexpected initial overview: %+v", ov1)
+	}
+
+	submittedNow.Store(true)
+	detail101, err := mgr.GetCourseDetail(ctx, "1234567", 101)
+	if err != nil || detail101.Course.PendingCount != 0 {
+		t.Fatalf("expected course 101 PendingCount=0, got detail=%+v err=%v", detail101, err)
+	}
+
+	// Within 90s cache TTL, GetOverview must now reflect reconciled 0 pending and submitted status.
+	ov2, err := mgr.GetOverview(ctx, "1234567")
+	if err != nil {
+		t.Fatalf("cached GetOverview after GetCourseDetail failed: %v", err)
+	}
+	if ov2.Courses[0].PendingCount != 0 || ov2.Courses[0].AssignmentCount != 1 {
+		t.Fatalf("expected cached overview course 101 reconciled to PendingCount=0, got %+v", ov2.Courses[0])
+	}
+	if len(ov2.UpcomingAssignments) != 1 || ov2.UpcomingAssignments[0].Status != "submitted" {
+		t.Fatalf("expected cached overview assignment reconciled to submitted, got %+v", ov2.UpcomingAssignments)
+	}
+
+	// Opening an older-semester course (1/2026) must NOT inject its assignments into UpcomingAssignments.
+	if _, err := mgr.GetCourseDetail(ctx, "1234567", 102); err != nil {
+		t.Fatalf("GetCourseDetail(102) failed: %v", err)
+	}
+	ov3, err := mgr.GetOverview(ctx, "1234567")
+	if err != nil {
+		t.Fatalf("cached GetOverview after GetCourseDetail(102) failed: %v", err)
+	}
+	if len(ov3.UpcomingAssignments) != 1 || ov3.UpcomingAssignments[0].OrgUnitID != 101 {
+		t.Fatalf("expected old semester course 102 not to leak into UpcomingAssignments, got %+v", ov3.UpcomingAssignments)
+	}
+}

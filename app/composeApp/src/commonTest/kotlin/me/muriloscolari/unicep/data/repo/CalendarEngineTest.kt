@@ -252,4 +252,36 @@ class CalendarEngineTest {
         // Sem correspondência retorna lista vazia
         assertTrue(filterSubjectSuggestions(suggestions, "quimica").isEmpty())
     }
+
+    @Test
+    fun buildCalendarAgendaItemsPrefersFreshCourseDetailAssignmentOverStaleOverview() {
+        val nov20 = CalendarDate(2026, 11, 20)
+        val dueMs = localDateTimeToEpochMillis(nov20, 23, 59, utcOffsetMinutes = -180)
+        val stale = VirtualAssignmentItem(
+            id = 2L,
+            orgUnitId = 73611L,
+            orgUnitName = "DESENVOLVIMENTO WEB",
+            name = "Camadas WEB",
+            dueDate = "2026-11-21T02:59:00Z",
+            dueAtMillis = dueMs,
+            status = "not_submitted",
+            statusLabel = "Não enviado"
+        )
+        val fresh = stale.copy(status = "submitted", statusLabel = "Enviado")
+        val items = buildCalendarAgendaItems(
+            userEvents = emptyList(),
+            virtualOverview = VirtualOverviewResponse(upcomingAssignments = listOf(stale)),
+            virtualCourseDetails = mapOf(
+                73611L to VirtualCourseDetailResponse(
+                    course = VirtualCourseSummary(orgUnitId = 73611L, name = "DESENVOLVIMENTO WEB"),
+                    assignments = listOf(fresh)
+                )
+            ),
+            utcOffsetMinutes = -180
+        )
+
+        assertEquals(1, items.size)
+        assertEquals("Enviado", items[0].statusBadge)
+        assertEquals("green", items[0].colorKey)
+    }
 }

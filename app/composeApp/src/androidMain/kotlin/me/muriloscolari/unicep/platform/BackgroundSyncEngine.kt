@@ -133,6 +133,11 @@ internal object BackgroundSyncEngine {
                 val leadHours = readVirtualDeadlineLeadHours()
                 if (leadHours.isNotEmpty()) {
                     runCatching { api.virtualOverview(server, token) }.getOrNull()?.let { ov ->
+                        if (!PlatformBridge.getString(PrefKeys.CACHE_OWNER_RA).isNullOrBlank()) {
+                            runCatching {
+                                PlatformBridge.putStringSync(PrefKeys.CACHE_VIRTUAL_OVERVIEW, json.encodeToString(ov))
+                            }
+                        }
                         evaluateVirtualDeadlineAlerts(ov.upcomingAssignments, leadHours)
                     }
                 }

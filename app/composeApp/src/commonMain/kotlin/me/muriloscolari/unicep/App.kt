@@ -617,6 +617,16 @@ fun App(initialTab: Int = 0) {
         }
         PlatformBridge.setAppResumeListener {
             ignoringBatteryOptimizations = PlatformBridge.isIgnoringBatteryOptimizations()
+            if (state.loggedIn) {
+                scope.launch {
+                    when (currentTab) {
+                        MainTab.VIRTUAL -> repo.refreshVirtualOnResume(selectedVirtualCourseId)
+                        MainTab.SEMESTER -> repo.preloadHomeContextIfNeeded()
+                        MainTab.CALENDAR -> repo.loadCalendarContextIfNeeded()
+                        else -> Unit
+                    }
+                }
+            }
         }
         PlatformBridge.setWebKeyShortcutListener { action ->
             when (action) {

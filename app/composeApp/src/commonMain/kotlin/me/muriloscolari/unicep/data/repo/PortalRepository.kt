@@ -141,11 +141,35 @@ data class PortalUiState(
     val calendarError: String? = null
 )
 
+private const val VIRTUAL_OVERVIEW_FRESH_MS = 90_000L
+private const val VIRTUAL_COURSE_FRESH_MS = 90_000L
+
 class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
     private val cacheJson = Json {
         ignoreUnknownKeys = true
         coerceInputValues = true
     }
+
+    private var virtualOverviewSyncedAtMs: Long = 0L
+    private var forceNextVirtualOverviewRefresh: Boolean = false
+    private val virtualCourseSyncedAtMs = mutableMapOf<Long, Long>()
+    private var scheduleSyncedInSession: Boolean = false
+    private var academicSyncedInSession: Boolean = false
+    private var financeServicesSyncedInSession: Boolean = false
+    private var calendarEventsSyncedInSession: Boolean = false
+
+    private fun resetSessionFreshness() {
+        virtualOverviewSyncedAtMs = 0L
+        forceNextVirtualOverviewRefresh = false
+        virtualCourseSyncedAtMs.clear()
+        scheduleSyncedInSession = false
+        academicSyncedInSession = false
+        financeServicesSyncedInSession = false
+        calendarEventsSyncedInSession = false
+    }
+
+    private fun isVirtualOverviewFresh(nowMs: Long): Boolean =
+        virtualOverviewSyncedAtMs > 0L && (nowMs - virtualOverviewSyncedAtMs) < VIRTUAL_OVERVIEW_FRESH_MS
 
     private val _state = MutableStateFlow(
         PortalUiState(
@@ -302,6 +326,7 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
         val fin = readCached<FinanceResponse>(PrefKeys.CACHE_FINANCE)
         val srv = readCached<ServicesResponse>(PrefKeys.CACHE_SERVICES)
         val virt = readCached<VirtualOverviewResponse>(PrefKeys.CACHE_VIRTUAL_OVERVIEW)
+            ?.let { normalizeVirtualOverviewForTime(it, PlatformBridge.currentTimeMillis()) }
         val cal = readCached<List<UserCalendarEvent>>(PrefKeys.CACHE_CALENDAR_EVENTS).orEmpty()
         val syncedAt = PlatformBridge.getString(PrefKeys.CACHE_UPDATED_AT_MS)?.toLongOrNull()
 
@@ -390,6 +415,7 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
         val prevOwner = PlatformBridge.getString(PrefKeys.CACHE_OWNER_RA)
         if (!prevOwner.isNullOrBlank() && prevOwner != cleanRa) {
             clearAllCache()
+            resetSessionFreshness()
         }
         _state.update { it.copy(loading = !hasCache, error = null, serverUrl = cleanUrl) }
         return runCatching {
@@ -430,6 +456,7 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
         PlatformBridge.remove(PrefKeys.JWT_TOKEN)
         PlatformBridge.remove(PrefKeys.PASSWORD)
         clearAllCache()
+        resetSessionFreshness()
         PlatformBridge.clearDownloadFolder()
         PlatformBridge.cancelAllCalendarReminders()
         PlatformBridge.cancelGradeSync()
@@ -523,10 +550,16 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
     }
 
     suspend fun loadAcademicIfNeeded(force: Boolean = false) = withToken { server, token ->
-        if (!force && _state.value.curriculum != null && _state.value.schedule != null && !_state.value.isOffline) return@withToken
+        if (!force && academicSyncedInSession && _state.value.curriculum != null && _state.value.schedule != null && !_state.value.isOffline) return@withToken
         _state.update { it.copy(loading = true) }
         val curr = runCatching { api.curriculum(server, token) }.onFailure { if (it is UnauthorizedException) throw it }.getOrNull()
         val sched = runCatching { api.schedule(server, token) }.onFailure { if (it is UnauthorizedException) throw it }.getOrNull()
+        if (sched != null) {
+            scheduleSyncedInSession = true
+        }
+        if (curr != null && sched != null) {
+            academicSyncedInSession = true
+        }
         val ownerRa = _state.value.dashboard?.student?.ra ?: PlatformBridge.getString(PrefKeys.RA).orEmpty()
         var syncedNow: Long? = null
         if (ownerRa.isNotBlank() && (curr != null || sched != null)) {
@@ -550,30 +583,38 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
     }
 
     suspend fun preloadHomeContextIfNeeded(force: Boolean = false) = withToken { server, token ->
-        val needSchedule = force || _state.value.schedule == null
-        val needVirtual = force || _state.value.virtualOverview == null
-        val needCalendar = force || (_state.value.calendarEvents.isEmpty() && PlatformBridge.getString(PrefKeys.CACHE_CALENDAR_EVENTS) == null)
+        val nowMs = PlatformBridge.currentTimeMillis()
+        val needSchedule = force || _state.value.schedule == null || !scheduleSyncedInSession
+        val forceVirt = force || forceNextVirtualOverviewRefresh
+        val needVirtual = forceVirt || _state.value.virtualOverview == null || !isVirtualOverviewFresh(nowMs)
+        val needCalendar = force || !calendarEventsSyncedInSession
         if (!needSchedule && !needVirtual && !needCalendar) return@withToken
 
         val ownerRa = _state.value.dashboard?.student?.ra ?: PlatformBridge.getString(PrefKeys.RA).orEmpty()
         if (needSchedule) {
             val sched = runCatching { api.schedule(server, token) }.onFailure { if (it is UnauthorizedException) throw it }.getOrNull()
             if (sched != null) {
+                scheduleSyncedInSession = true
                 if (ownerRa.isNotBlank()) writeCached(PrefKeys.CACHE_SCHEDULE, sched)
                 _state.update { it.copy(schedule = sched) }
             }
         }
         if (needVirtual) {
-            val ov = runCatching { api.virtualOverview(server, token, forceRefresh = false) }.onFailure { if (it is UnauthorizedException) throw it }.getOrNull()
+            val ov = runCatching { api.virtualOverview(server, token, forceRefresh = forceVirt) }.onFailure { if (it is UnauthorizedException) throw it }.getOrNull()
             if (ov != null) {
-                if (ownerRa.isNotBlank()) writeCached(PrefKeys.CACHE_VIRTUAL_OVERVIEW, ov)
-                _state.update { it.copy(virtualOverview = ov) }
-                evaluateVirtualDeadlineAlerts(ov.upcomingAssignments)
+                val syncedAt = PlatformBridge.currentTimeMillis()
+                val cleanOv = normalizeVirtualOverviewForTime(ov, syncedAt)
+                virtualOverviewSyncedAtMs = syncedAt
+                forceNextVirtualOverviewRefresh = false
+                if (ownerRa.isNotBlank()) writeCached(PrefKeys.CACHE_VIRTUAL_OVERVIEW, cleanOv)
+                _state.update { it.copy(virtualOverview = cleanOv) }
+                evaluateVirtualDeadlineAlerts(cleanOv.upcomingAssignments)
             }
         }
         if (needCalendar) {
             val cal = runCatching { api.calendarEvents(server, token).events }.onFailure { if (it is UnauthorizedException) throw it }.getOrNull()
             if (cal != null) {
+                calendarEventsSyncedInSession = true
                 if (ownerRa.isNotBlank()) writeCached(PrefKeys.CACHE_CALENDAR_EVENTS, cal)
                 _state.update { it.copy(calendarEvents = cal) }
                 PlatformBridge.syncCalendarReminders(cal)
@@ -586,11 +627,14 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
     }
 
     suspend fun loadFinanceAndServicesIfNeeded(force: Boolean = false) = withToken { server, token ->
-        if (!force && _state.value.finance != null && _state.value.services != null && !_state.value.isOffline) return@withToken
+        if (!force && financeServicesSyncedInSession && _state.value.finance != null && _state.value.services != null && !_state.value.isOffline) return@withToken
         _state.update { it.copy(loading = true) }
         val fin = runCatching { api.finance(server, token) }.getOrNull()
         val srv = runCatching { api.services(server, token) }.getOrNull()
         val notifs = runCatching { api.notifications(server, token).items }.getOrNull()
+        if (fin != null && srv != null) {
+            financeServicesSyncedInSession = true
+        }
         val ownerRa = _state.value.dashboard?.student?.ra ?: PlatformBridge.getString(PrefKeys.RA).orEmpty()
         var syncedNow: Long? = null
         if (ownerRa.isNotBlank() && (fin != null || srv != null)) {
@@ -615,17 +659,23 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
     }
 
     suspend fun loadVirtualOverviewIfNeeded(force: Boolean = false) = withToken { server, token ->
-        if (!force && _state.value.virtualOverview != null && !_state.value.isOffline) return@withToken
+        val nowMs = PlatformBridge.currentTimeMillis()
+        val forceRefresh = force || forceNextVirtualOverviewRefresh
+        if (!forceRefresh && _state.value.virtualOverview != null && !_state.value.isOffline && isVirtualOverviewFresh(nowMs)) return@withToken
         _state.update { it.copy(virtualLoading = true, virtualError = null) }
         try {
-            val result = runCatching { api.virtualOverview(server, token, forceRefresh = force) }
+            val result = runCatching { api.virtualOverview(server, token, forceRefresh = forceRefresh) }
             val err = result.exceptionOrNull()
             if (err is UnauthorizedException) throw err
             val ov = result.getOrNull()
             if (ov != null) {
+                val syncedAt = PlatformBridge.currentTimeMillis()
+                val cleanOv = normalizeVirtualOverviewForTime(ov, syncedAt)
+                virtualOverviewSyncedAtMs = syncedAt
+                forceNextVirtualOverviewRefresh = false
                 val ownerRa = _state.value.dashboard?.student?.ra ?: PlatformBridge.getString(PrefKeys.RA).orEmpty()
                 if (ownerRa.isNotBlank()) {
-                    writeCached(PrefKeys.CACHE_VIRTUAL_OVERVIEW, ov)
+                    writeCached(PrefKeys.CACHE_VIRTUAL_OVERVIEW, cleanOv)
                 }
                 runCatching { api.getD2LSettings(server, token) }.getOrNull()?.let { s ->
                     saveVirtualNotifyNewAssignment(s.pollingEnabled)
@@ -633,11 +683,12 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
                 }
                 _state.update {
                     it.copy(
-                        virtualError = if (ov.complete) null else "Algumas disciplinas não responderam por completo.",
-                        virtualOverview = ov
+                        isOffline = false,
+                        virtualError = if (cleanOv.complete) null else "Algumas disciplinas não responderam por completo.",
+                        virtualOverview = cleanOv
                     )
                 }
-                evaluateVirtualDeadlineAlerts(ov.upcomingAssignments)
+                evaluateVirtualDeadlineAlerts(cleanOv.upcomingAssignments)
             } else {
                 val msg = formatVirtualError(err, "Não foi possível carregar a Sala Virtual")
                 _state.update { it.copy(virtualError = msg) }
@@ -648,7 +699,16 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
     }
 
     suspend fun loadVirtualCourse(orgUnitId: Long, force: Boolean = false) = withToken { server, token ->
-        if (!force && _state.value.virtualCourseDetails.containsKey(orgUnitId)) return@withToken
+        val nowMs = PlatformBridge.currentTimeMillis()
+        val lastSynced = virtualCourseSyncedAtMs[orgUnitId] ?: 0L
+        if (!force &&
+            _state.value.virtualCourseDetails.containsKey(orgUnitId) &&
+            !_state.value.isOffline &&
+            lastSynced > 0L &&
+            (nowMs - lastSynced) < VIRTUAL_COURSE_FRESH_MS
+        ) {
+            return@withToken
+        }
         _state.update { it.copy(virtualLoading = true, virtualError = null) }
         try {
             val result = runCatching { api.virtualCourseDetail(server, token, orgUnitId) }
@@ -656,10 +716,24 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
             if (err is UnauthorizedException) throw err
             val detail = result.getOrNull()
             if (detail != null) {
+                val syncedAt = PlatformBridge.currentTimeMillis()
+                virtualCourseSyncedAtMs[orgUnitId] = syncedAt
+                val reconciledOv = _state.value.virtualOverview?.let {
+                    reconcileVirtualOverviewWithCourseDetail(it, detail, syncedAt)
+                }
+                if (reconciledOv != null) {
+                    val ownerRa = _state.value.dashboard?.student?.ra ?: PlatformBridge.getString(PrefKeys.RA).orEmpty()
+                    if (ownerRa.isNotBlank()) {
+                        writeCached(PrefKeys.CACHE_VIRTUAL_OVERVIEW, reconciledOv)
+                    }
+                    evaluateVirtualDeadlineAlerts(reconciledOv.upcomingAssignments)
+                }
                 _state.update {
                     it.copy(
+                        isOffline = false,
                         virtualError = null,
-                        virtualCourseDetails = it.virtualCourseDetails + (orgUnitId to detail)
+                        virtualCourseDetails = it.virtualCourseDetails + (orgUnitId to detail),
+                        virtualOverview = reconciledOv ?: it.virtualOverview
                     )
                 }
             } else {
@@ -933,7 +1007,24 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
     }
 
     fun openSalaVirtualWeb(url: String = "https://salavirtual.unicep.edu.br/d2l/home") {
+        virtualOverviewSyncedAtMs = 0L
+        virtualCourseSyncedAtMs.clear()
+        forceNextVirtualOverviewRefresh = true
         PlatformBridge.openExternalUrl(url)
+    }
+
+    suspend fun refreshVirtualOnResume(selectedCourseId: Long?) {
+        val nowMs = PlatformBridge.currentTimeMillis()
+        _state.update { current ->
+            val ov = current.virtualOverview ?: return@update current
+            val normalized = normalizeVirtualOverviewForTime(ov, nowMs)
+            if (normalized === ov) current else current.copy(virtualOverview = normalized)
+        }
+        if (selectedCourseId != null) {
+            loadVirtualCourse(selectedCourseId, force = forceNextVirtualOverviewRefresh)
+        } else {
+            loadVirtualOverviewIfNeeded(force = false)
+        }
     }
 
     suspend fun openAvaSso() = withToken { server, token ->
@@ -967,27 +1058,34 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
     }
 
     suspend fun loadCalendarContextIfNeeded(force: Boolean = false) = withToken { server, token ->
-        val needEvents = force || (_state.value.calendarEvents.isEmpty() && PlatformBridge.getString(PrefKeys.CACHE_CALENDAR_EVENTS) == null)
-        val needVirtual = force || _state.value.virtualOverview == null
+        val nowMs = PlatformBridge.currentTimeMillis()
+        val needEvents = force || !calendarEventsSyncedInSession || _state.value.isOffline
+        val forceVirt = force || forceNextVirtualOverviewRefresh
+        val needVirtual = forceVirt || _state.value.virtualOverview == null || _state.value.isOffline || !isVirtualOverviewFresh(nowMs)
         if (!needEvents && !needVirtual) return@withToken
 
         _state.update { it.copy(calendarLoading = true, calendarError = null) }
         try {
-            val eventsRes = runCatching { api.calendarEvents(server, token) }
-            val eventsErr = eventsRes.exceptionOrNull()
-            if (eventsErr is UnauthorizedException) throw eventsErr
+            val eventsRes = if (needEvents) {
+                runCatching { api.calendarEvents(server, token) }.also { r ->
+                    if (r.exceptionOrNull() is UnauthorizedException) throw r.exceptionOrNull()!!
+                }
+            } else null
 
             val ovRes = if (needVirtual) {
-                runCatching { api.virtualOverview(server, token, forceRefresh = force) }.also { r ->
+                runCatching { api.virtualOverview(server, token, forceRefresh = forceVirt) }.also { r ->
                     if (r.exceptionOrNull() is UnauthorizedException) throw r.exceptionOrNull()!!
                 }
             } else null
 
             val ownerRa = _state.value.dashboard?.student?.ra ?: PlatformBridge.getString(PrefKeys.RA).orEmpty()
-            val freshEvents = eventsRes.getOrNull()?.events
-            val freshOv = ovRes?.getOrNull()
+            val freshEvents = eventsRes?.getOrNull()?.events
+            val freshOv = ovRes?.getOrNull()?.let {
+                normalizeVirtualOverviewForTime(it, PlatformBridge.currentTimeMillis())
+            }
 
             if (freshEvents != null) {
+                calendarEventsSyncedInSession = true
                 if (ownerRa.isNotBlank()) writeCached(PrefKeys.CACHE_CALENDAR_EVENTS, freshEvents)
                 PlatformBridge.syncCalendarReminders(freshEvents)
                 evaluateCalendarReminders(
@@ -996,15 +1094,21 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
                 )
             }
             if (freshOv != null) {
+                virtualOverviewSyncedAtMs = PlatformBridge.currentTimeMillis()
+                forceNextVirtualOverviewRefresh = false
                 if (ownerRa.isNotBlank()) writeCached(PrefKeys.CACHE_VIRTUAL_OVERVIEW, freshOv)
                 evaluateVirtualDeadlineAlerts(freshOv.upcomingAssignments)
             }
 
+            val eventsErr = eventsRes?.exceptionOrNull()
             _state.update {
                 it.copy(
+                    isOffline = if (freshEvents != null || freshOv != null) false else it.isOffline,
                     calendarEvents = freshEvents ?: it.calendarEvents,
                     virtualOverview = freshOv ?: it.virtualOverview,
-                    calendarError = if (freshEvents == null) (eventsErr?.message ?: "Não foi possível carregar os eventos do calendário") else null
+                    calendarError = if (eventsRes != null && freshEvents == null) {
+                        eventsErr?.message ?: "Não foi possível carregar os eventos do calendário"
+                    } else null
                 )
             }
         } finally {

@@ -298,10 +298,10 @@ fun buildCalendarAgendaItems(
         )
     }
 
-    // 2. Prazos de atividades da Sala Virtual
+    // 2. Prazos de atividades da Sala Virtual (detalhes carregados da disciplina têm precedência)
     val allAssignments = (
-        virtualOverview?.upcomingAssignments.orEmpty() +
-            virtualCourseDetails.values.flatMap { it.assignments }
+        virtualCourseDetails.values.flatMap { it.assignments } +
+            virtualOverview?.upcomingAssignments.orEmpty()
         ).distinctBy { "${it.orgUnitId}:${it.id}" }
 
     for (a in allAssignments) {

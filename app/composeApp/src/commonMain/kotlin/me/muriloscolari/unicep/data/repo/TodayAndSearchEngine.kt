@@ -417,7 +417,7 @@ fun buildTodaySummary(
         .orEmpty()
         .asSequence()
         .filter { item ->
-            val pending = item.status != "submitted" && item.status != "graded"
+            val pending = item.status == "not_submitted"
             pending && item.dueAtMillis > 0L &&
                 item.dueAtMillis >= (nowMillis - gracePastMs) &&
                 item.dueAtMillis <= (nowMillis + sevenDaysMs)
@@ -526,7 +526,7 @@ fun searchPortalData(
                 }
             }
 
-            val allAssignments = (ov.upcomingAssignments + virtualCourseDetails.values.flatMap { it.assignments })
+            val allAssignments = (virtualCourseDetails.values.flatMap { it.assignments } + ov.upcomingAssignments)
                 .distinctBy { "${it.orgUnitId}_${it.id}" }
             for (a in allAssignments) {
                 if (matches(a.name, a.orgUnitName, a.statusLabel)) {
@@ -537,7 +537,7 @@ fun searchPortalData(
                         filterGroup = GlobalSearchFilter.VIRTUAL,
                         title = a.name,
                         subtitle = "${a.orgUnitName.toDisplayTitle()} · ${a.statusLabel} · $due",
-                        isAlert = a.status != "submitted" && a.status != "graded",
+                        isAlert = a.status == "not_submitted",
                         virtualCourseId = a.orgUnitId,
                         virtualAssignment = a,
                         virtualCourseName = a.orgUnitName
