@@ -1,6 +1,8 @@
 import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 
 val webOnly = providers.gradleProperty("webOnly").orNull == "true"
+val androidOnly = providers.gradleProperty("androidOnly").orNull == "true"
+require(!(webOnly && androidOnly)) { "Cannot set both -PwebOnly=true and -PandroidOnly=true" }
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -31,19 +33,21 @@ kotlin {
         freeCompilerArgs.add("-Xexpect-actual-classes")
     }
 
-    @OptIn(ExperimentalWasmDsl::class)
-    wasmJs {
-        browser {
-            commonWebpackConfig {
-                outputFileName = "unicep-portal.js"
-            }
-            testTask {
-                useKarma {
-                    useFirefoxHeadless()
+    if (!androidOnly) {
+        @OptIn(ExperimentalWasmDsl::class)
+        wasmJs {
+            browser {
+                commonWebpackConfig {
+                    outputFileName = "unicep-portal.js"
+                }
+                testTask {
+                    useKarma {
+                        useFirefoxHeadless()
+                    }
                 }
             }
+            binaries.executable()
         }
-        binaries.executable()
     }
 
     sourceSets {
@@ -73,8 +77,10 @@ kotlin {
             }
         }
 
-        wasmJsMain.dependencies {
-            implementation(libs.ktor.client.js)
+        if (!androidOnly) {
+            wasmJsMain.dependencies {
+                implementation(libs.ktor.client.js)
+            }
         }
 
         commonTest.dependencies {

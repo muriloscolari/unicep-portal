@@ -1,9 +1,16 @@
 .git
+.idea
+*.iml
 data
 backend/server
 app/.gradle
+app/.kotlin
 app/**/build
 app/local.properties
+deploy
+scripts
+DOCUMENTACAO_PORTAL.md
+README.md
 *.apk
 *.jks
 *.keystore

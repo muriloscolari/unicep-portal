@@ -1,17 +1,24 @@
+# syntax=docker/dockerfile:1
+
 # Stage 1: Compila o frontend Compose Multiplatform Web (Wasm)
 FROM eclipse-temurin:21-jdk AS web-builder
 RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 && rm -rf /var/lib/apt/lists/*
 WORKDIR /src/app
 COPY app/ .
-RUN chmod +x ./gradlew && ./gradlew :composeApp:wasmJsBrowserDistribution -PwebOnly=true --no-daemon
+RUN --mount=type=cache,target=/root/.gradle/caches \
+    --mount=type=cache,target=/root/.gradle/wrapper \
+    chmod +x ./gradlew && ./gradlew :composeApp:wasmJsBrowserDistribution -PwebOnly=true --no-daemon
 
 # Stage 2: Compila o backend em Go (estático, sem CGO)
 FROM golang:1.24-alpine AS go-builder
 WORKDIR /src/backend
 COPY backend/go.mod backend/go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 COPY backend/ .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
 
 # Stage 3: Imagem final enxuta
 FROM alpine:3.21
