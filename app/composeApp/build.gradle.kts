@@ -1,3 +1,4 @@
+import java.security.MessageDigest
 import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 
 val webOnly = providers.gradleProperty("webOnly").orNull == "true"
@@ -91,4 +92,31 @@ kotlin {
 
 compose.resources {
     packageOfResClass = "me.muriloscolari.unicep.resources"
+}
+
+if (!androidOnly) {
+    val distDir = layout.buildDirectory.dir("dist/wasmJs/productionExecutable")
+    tasks.matching { it.name == "wasmJsBrowserDistribution" }.configureEach {
+        doLast {
+            val outDir = distDir.get().asFile
+            val indexFile = outDir.resolve("index.html")
+            if (!indexFile.isFile) return@doLast
+
+            fun shortSha256(fileName: String): String {
+                val file = outDir.resolve(fileName)
+                if (!file.isFile) return "v1"
+                val digest = MessageDigest.getInstance("SHA-256").digest(file.readBytes())
+                return digest.take(4).joinToString("") { b ->
+                    ((b.toInt() and 0xff) + 0x100).toString(16).substring(1)
+                }
+            }
+
+            val appHash = shortSha256("unicep-portal.js")
+            val loaderHash = shortSha256("loader.js")
+            val updated = indexFile.readText(Charsets.UTF_8)
+                .replace("unicep-portal.js?v=dev", "unicep-portal.js?v=$appHash")
+                .replace("loader.js?v=dev", "loader.js?v=$loaderHash")
+            indexFile.writeText(updated, Charsets.UTF_8)
+        }
+    }
 }

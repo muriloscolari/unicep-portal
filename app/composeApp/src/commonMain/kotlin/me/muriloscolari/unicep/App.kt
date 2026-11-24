@@ -1,25 +1,10 @@
 package me.muriloscolari.unicep
 
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.rememberDraggableState
-import androidx.compose.foundation.hoverable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsHoveredAsState
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -34,18 +19,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CircularProgressIndicator
@@ -62,7 +45,6 @@ import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
@@ -77,15 +59,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -93,18 +74,14 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.role
-import androidx.compose.ui.semantics.selected
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import me.muriloscolari.unicep.data.api.ReportCardResponse
 import me.muriloscolari.unicep.data.api.StudentInfo
@@ -117,6 +94,7 @@ import me.muriloscolari.unicep.data.repo.GlobalSearchResultKind
 import me.muriloscolari.unicep.data.repo.PortalRepository
 import me.muriloscolari.unicep.data.repo.PrefKeys
 import me.muriloscolari.unicep.data.repo.buildCalendarSubjectSuggestions
+import me.muriloscolari.unicep.data.repo.buildSubjectVirtualLinks
 import me.muriloscolari.unicep.data.repo.parseIsoDate
 import me.muriloscolari.unicep.platform.AppUpdateInfo
 import me.muriloscolari.unicep.platform.DesignStyle
@@ -128,54 +106,31 @@ import me.muriloscolari.unicep.ui.designsystem.AppleActivityIndicator
 import me.muriloscolari.unicep.ui.designsystem.AppleAlert
 import me.muriloscolari.unicep.ui.designsystem.AppleMotion
 import me.muriloscolari.unicep.ui.designsystem.BackOverlayController
-import me.muriloscolari.unicep.ui.designsystem.LocalBackOverlayController
-import me.muriloscolari.unicep.ui.designsystem.LocalPredictiveBackProgress
-import me.muriloscolari.unicep.ui.designsystem.predictiveBackSurfaceTransform
-import me.muriloscolari.unicep.ui.designsystem.AppleProgressBar
-import me.muriloscolari.unicep.ui.designsystem.GlassButton
 import me.muriloscolari.unicep.ui.designsystem.GlassEdgeBarBackdrop
 import me.muriloscolari.unicep.ui.designsystem.GlassSurface
 import me.muriloscolari.unicep.ui.designsystem.LocalAppleContentInsets
 import me.muriloscolari.unicep.ui.designsystem.LocalAppleTypography
+import me.muriloscolari.unicep.ui.designsystem.LocalBackOverlayController
 import me.muriloscolari.unicep.ui.designsystem.LocalDesignStyle
 import me.muriloscolari.unicep.ui.designsystem.LocalGlassEnabled
 import me.muriloscolari.unicep.ui.designsystem.LocalHazeState
 import me.muriloscolari.unicep.ui.designsystem.LocalPortalColors
+import me.muriloscolari.unicep.ui.designsystem.LocalPredictiveBackProgress
 import me.muriloscolari.unicep.ui.designsystem.PortalDivider
 import me.muriloscolari.unicep.ui.designsystem.PortalIcons
 import me.muriloscolari.unicep.ui.designsystem.PortalTheme
+import me.muriloscolari.unicep.ui.designsystem.predictiveBackSurfaceTransform
 import me.muriloscolari.unicep.ui.screens.AcademicScreen
-import me.muriloscolari.unicep.ui.screens.AppleAllNotificationsSheet
-import me.muriloscolari.unicep.ui.screens.AppleAttendanceLimitSheet
-import me.muriloscolari.unicep.ui.screens.AppleSubjectDetailSheet
-import me.muriloscolari.unicep.ui.screens.CalendarEventEditorSheet
 import me.muriloscolari.unicep.ui.screens.CalendarScreen
 import me.muriloscolari.unicep.ui.screens.CentralScreen
-import me.muriloscolari.unicep.ui.screens.GlobalSearchSheet
 import me.muriloscolari.unicep.ui.screens.LoginScreen
 import me.muriloscolari.unicep.ui.screens.SemesterScreen
 import me.muriloscolari.unicep.ui.screens.SplashLoadingScreen
-import me.muriloscolari.unicep.ui.screens.VirtualAnnouncementSheet
-import me.muriloscolari.unicep.ui.screens.VirtualAssignmentSheet
 import me.muriloscolari.unicep.ui.screens.VirtualScreen
 import me.muriloscolari.unicep.ui.screens.currentLocalCalendarDate
 import me.muriloscolari.unicep.ui.screens.isFrequencyAtLimit
 import me.muriloscolari.unicep.ui.screens.mergeUnifiedSubjects
-import me.muriloscolari.unicep.ui.util.initialsFromName
 import me.muriloscolari.unicep.ui.util.toDisplayTitle
-
-private enum class MainTab(
-    val route: String,
-    val label: String,
-    val icon: ImageVector,
-    val selectedIcon: ImageVector
-) {
-    SEMESTER("semestre", "Semestre", PortalIcons.Grades, PortalIcons.GradesFill),
-    COURSE("curso", "Curso", PortalIcons.Academic, PortalIcons.AcademicFill),
-    VIRTUAL("virtual", "Virtual", PortalIcons.Virtual, PortalIcons.VirtualFill),
-    CALENDAR("calendario", "Calendário", PortalIcons.Calendar, PortalIcons.CalendarFill),
-    CENTRAL("central", "Central", PortalIcons.More, PortalIcons.MoreFill)
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -209,6 +164,11 @@ fun App(initialTab: Int = 0) {
     var appliedInitialWebRoute by remember { mutableStateOf(initialWebRoute.isNullOrBlank()) }
     val backOverlayController = remember { BackOverlayController() }
     var predictiveBackState by remember { mutableStateOf(PredictiveBackState()) }
+
+    val mainPagerState = rememberPagerState(
+        initialPage = currentTab.ordinal,
+        pageCount = { MainTab.entries.size }
+    )
 
     val calendarSubjectSuggestions = remember(state.grades, state.virtualOverview) {
         buildCalendarSubjectSuggestions(
@@ -286,6 +246,32 @@ fun App(initialTab: Int = 0) {
 
     val navHaptics = LocalHapticFeedback.current
 
+    fun openVirtualCourse(orgUnitId: Long, subTab: Int = 0) {
+        selectedSubjectCode = null
+        showRiskyAttendanceModal = false
+        showGlobalSearchModal = false
+        showAllNotificationsModal = false
+        showCalendarEditor = false
+        editingCalendarEvent = null
+        selectedVirtualAssignment = null
+        selectedVirtualAnnouncement = null
+        tabBarMinimized = false
+        currentTab = MainTab.VIRTUAL
+        selectedVirtualCourseId = orgUnitId
+        virtualCourseSubTab = subTab
+    }
+
+    fun openVirtualAssignment(item: VirtualAssignmentItem) {
+        selectedSubjectCode = null
+        showRiskyAttendanceModal = false
+        showGlobalSearchModal = false
+        tabBarMinimized = false
+        currentTab = MainTab.VIRTUAL
+        selectedVirtualCourseId = item.orgUnitId
+        virtualCourseSubTab = 0 // Atividades
+        selectedVirtualAssignment = item
+    }
+
     fun navigateToTab(tab: MainTab) {
         navHaptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         val sameTabRoot = tab == currentTab &&
@@ -316,6 +302,25 @@ fun App(initialTab: Int = 0) {
             tabBarMinimized = false
             currentTab = tab
         }
+    }
+
+    // Sincronização bidirecional entre currentTab e HorizontalPager principal
+    LaunchedEffect(currentTab) {
+        if (mainPagerState.currentPage != currentTab.ordinal) {
+            mainPagerState.animateScrollToPage(currentTab.ordinal)
+        }
+    }
+    LaunchedEffect(mainPagerState) {
+        snapshotFlow { mainPagerState.settledPage }
+            .distinctUntilChanged()
+            .collect { settled ->
+                val target = MainTab.entries.getOrNull(settled) ?: return@collect
+                if (target != currentTab) {
+                    navHaptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    tabBarMinimized = false
+                    currentTab = target
+                }
+            }
     }
 
     fun refreshCurrentTab() {
@@ -351,20 +356,16 @@ fun App(initialTab: Int = 0) {
                 courseSubTab = result.courseSubTab ?: 0
             }
             GlobalSearchResultKind.VIRTUAL_COURSE -> {
-                currentTab = MainTab.VIRTUAL
-                selectedVirtualCourseId = result.virtualCourseId
-                virtualCourseSubTab = 0
+                result.virtualCourseId?.let { openVirtualCourse(it, subTab = 0) }
             }
             GlobalSearchResultKind.VIRTUAL_ASSIGNMENT -> {
-                currentTab = MainTab.VIRTUAL
-                selectedVirtualCourseId = result.virtualCourseId
-                virtualCourseSubTab = 1
-                selectedVirtualAssignment = result.virtualAssignment
+                result.virtualAssignment?.let { openVirtualAssignment(it) }
+                    ?: result.virtualCourseId?.let { openVirtualCourse(it, subTab = 0) }
             }
             GlobalSearchResultKind.VIRTUAL_ANNOUNCEMENT -> {
                 currentTab = MainTab.VIRTUAL
                 selectedVirtualCourseId = result.virtualCourseId
-                virtualCourseSubTab = 2
+                virtualCourseSubTab = 3 // Mais (Avisos)
                 selectedVirtualAnnouncement = result.virtualAnnouncement
             }
             GlobalSearchResultKind.VIRTUAL_MATERIAL -> {
@@ -378,9 +379,7 @@ fun App(initialTab: Int = 0) {
                         repo.openSalaVirtualWeb(topic.externalUrl.ifBlank { topic.url })
                     }
                     else -> {
-                        currentTab = MainTab.VIRTUAL
-                        selectedVirtualCourseId = result.virtualCourseId
-                        virtualCourseSubTab = 0
+                        result.virtualCourseId?.let { openVirtualCourse(it, subTab = 1) }
                     }
                 }
             }
@@ -778,1848 +777,882 @@ fun App(initialTab: Int = 0) {
         }
     }
 
+    val effectiveReport = state.report ?: state.dashboard?.currentReport ?: ReportCardResponse()
+    val gradeItems = state.grades?.items.orEmpty()
+    val mergedSubjects = remember(gradeItems, effectiveReport.items) {
+        mergeUnifiedSubjects(gradeItems, effectiveReport)
+    }
+    val subjectVirtualLinks = remember(mergedSubjects, state.virtualOverview, state.virtualCourseDetails) {
+        buildSubjectVirtualLinks(mergedSubjects, state.virtualOverview, state.virtualCourseDetails)
+    }
+    val riskySubjects = remember(mergedSubjects) {
+        mergedSubjects
+            .filter { it.report?.isFrequencyAtLimit() == true }
+            .sortedBy { it.report?.remainingAbsences ?: Int.MAX_VALUE }
+    }
+    val activeSubject = mergedSubjects.firstOrNull { it.code == selectedSubjectCode }
+    val unreadCount = state.notifications.count { it.readAt == null }
+    val allowMainSwipe = !hasAnyOverlay && !(currentTab == MainTab.VIRTUAL && selectedVirtualCourseId != null)
+
+    val renderTabPager: @Composable () -> Unit = {
+        HorizontalPager(
+            state = mainPagerState,
+            beyondViewportPageCount = 1,
+            userScrollEnabled = allowMainSwipe,
+            modifier = Modifier.fillMaxSize()
+        ) { pageIndex ->
+            when (MainTab.entries.getOrElse(pageIndex) { MainTab.SEMESTER }) {
+                MainTab.SEMESTER -> SemesterScreen(
+                    dashboard = state.dashboard,
+                    periods = state.dashboard?.gradePeriods.orEmpty(),
+                    selectedPeriodId = state.selectedGradePeriodId,
+                    grades = gradeItems,
+                    report = effectiveReport,
+                    unreadNotifications = state.notifications.filter { it.readAt == null },
+                    selectedSubjectCode = selectedSubjectCode,
+                    showRiskyAttendance = showRiskyAttendanceModal,
+                    onSelectPeriod = { id ->
+                        selectedSubjectCode = null
+                        showRiskyAttendanceModal = false
+                        scope.launch { repo.selectSemesterPeriod(id) }
+                    },
+                    onOpenSubject = { code ->
+                        showRiskyAttendanceModal = false
+                        selectedSubjectCode = code
+                    },
+                    onCloseSubject = { selectedSubjectCode = null },
+                    onOpenRiskyAttendance = {
+                        selectedSubjectCode = null
+                        showRiskyAttendanceModal = true
+                    },
+                    onCloseRiskyAttendance = { showRiskyAttendanceModal = false },
+                    onOpenNotifications = { navigateToTab(MainTab.CENTRAL) },
+                    freqAlertThreshold = state.freqAlertThreshold,
+                    schedule = state.schedule,
+                    virtualOverview = state.virtualOverview,
+                    virtualCourseDetails = state.virtualCourseDetails,
+                    onOpenSearch = { showGlobalSearchModal = true },
+                    onOpenSchedule = {
+                        currentTab = MainTab.COURSE
+                        courseSubTab = 2
+                    },
+                    onOpenVirtualAssignment = ::openVirtualAssignment,
+                    onOpenVirtualCourse = { ou -> openVirtualCourse(ou, subTab = 0) },
+                    onOpenVirtualTab = { navigateToTab(MainTab.VIRTUAL) },
+                    loading = state.loading,
+                    listState = semesterListState,
+                    renderSheetsInPlace = false
+                )
+
+                MainTab.COURSE -> AcademicScreen(
+                    curriculum = state.curriculum,
+                    schedule = state.schedule,
+                    selectedSubTab = courseSubTab,
+                    onSelectSubTab = { courseSubTab = it },
+                    onOpenProxy = { path -> scope.launch { repo.openPortalLink(path, true) } },
+                    student = state.dashboard?.student ?: StudentInfo(),
+                    loading = state.loading,
+                    listState = courseListState
+                )
+
+                MainTab.VIRTUAL -> VirtualScreen(
+                    overview = state.virtualOverview,
+                    courseDetails = state.virtualCourseDetails,
+                    selectedCourseId = selectedVirtualCourseId,
+                    courseSubTab = virtualCourseSubTab,
+                    overviewTab = state.virtualOverviewTab,
+                    onSelectOverviewTab = { repo.setVirtualOverviewTab(it) },
+                    searchQuery = state.virtualSearchQuery,
+                    onSearchQueryChange = { repo.setVirtualSearchQuery(it) },
+                    selectedSemester = state.virtualSelectedSemester,
+                    onSelectSemester = { repo.setVirtualSelectedSemester(it) },
+                    assignmentFilterIndex = state.virtualAssignmentFilterIndex,
+                    onSelectAssignmentFilter = { repo.setVirtualAssignmentFilterIndex(it) },
+                    loading = state.virtualLoading,
+                    error = state.virtualError,
+                    onRefreshOverview = { scope.launch { repo.loadVirtualOverviewIfNeeded(force = true) } },
+                    onSelectCourse = { ou ->
+                        virtualCourseSubTab = 0
+                        selectedVirtualCourseId = ou
+                    },
+                    onBackToOverview = {
+                        selectedVirtualCourseId = null
+                        virtualCourseSubTab = 0
+                    },
+                    onSelectCourseSubTab = { virtualCourseSubTab = it },
+                    onRefreshCourse = { ou -> scope.launch { repo.loadVirtualCourse(ou, force = true) } },
+                    onSelectAssignment = { selectedVirtualAssignment = it },
+                    onSelectAnnouncement = { selectedVirtualAnnouncement = it },
+                    onViewD2LFile = { path, title, courseName, fileName ->
+                        scope.launch { repo.openD2LFile(path, title, courseName, fileName) }
+                    },
+                    onDownloadD2LFile = { path, fileName, courseName ->
+                        scope.launch { repo.downloadD2LFile(path, fileName, courseName) }
+                    },
+                    onDownloadBatch = { items ->
+                        scope.launch { repo.downloadD2LFilesBatch(items) }
+                    },
+                    onOpenWeb = { url -> repo.openSalaVirtualWeb(url) },
+                    downloadFolderLabel = state.downloadFolderLabel,
+                    onPickDownloadFolder = { scope.launch { repo.pickDownloadFolder() } },
+                    downloadingFileKey = state.downloadingFileKey,
+                    batchDownloadDone = state.batchDownloadDone,
+                    batchDownloadTotal = state.batchDownloadTotal,
+                    listState = virtualListState,
+                    selectedAssignment = selectedVirtualAssignment,
+                    selectedAnnouncement = selectedVirtualAnnouncement,
+                    onDismissAssignment = { selectedVirtualAssignment = null },
+                    onDismissAnnouncement = { selectedVirtualAnnouncement = null },
+                    renderSheetsInPlace = false
+                )
+
+                MainTab.CALENDAR -> CalendarScreen(
+                    userEvents = state.calendarEvents,
+                    virtualOverview = state.virtualOverview,
+                    virtualCourseDetails = state.virtualCourseDetails,
+                    selectedDate = selectedCalendarDate,
+                    onSelectDate = { selectedCalendarDate = it },
+                    onAddEvent = { date ->
+                        calendarDraftDate = date
+                        editingCalendarEvent = null
+                        showCalendarEditor = true
+                    },
+                    onEditEvent = { ev ->
+                        editingCalendarEvent = ev
+                        calendarDraftDate = null
+                        showCalendarEditor = true
+                    },
+                    onRequestDeleteEvent = { ev -> confirmDeleteCalendarEvent = ev },
+                    onOpenVirtualAssignment = ::openVirtualAssignment,
+                    onOpenWeb = { url -> repo.openSalaVirtualWeb(url) },
+                    loading = state.calendarLoading,
+                    listState = calendarListState
+                )
+
+                MainTab.CENTRAL -> CentralScreen(
+                    dashboard = state.dashboard,
+                    finance = state.finance,
+                    services = state.services,
+                    notifications = state.notifications,
+                    stylePreference = state.stylePreference,
+                    onSelectStyle = { repo.setStylePreference(it) },
+                    onOpenAva = { scope.launch { repo.openAvaSso() } },
+                    onOpenLink = { path, proxy -> scope.launch { repo.openPortalLink(path, proxy) } },
+                    onSyncNotifications = { scope.launch { repo.syncNotificationsNow() } },
+                    onMarkAllRead = { scope.launch { repo.markAllNotificationsRead() } },
+                    onTestNotification = { scope.launch { repo.sendTestNotification() } },
+                    freqAlertThreshold = state.freqAlertThreshold,
+                    onSelectFreqAlertThreshold = { repo.setFrequencyAlertThreshold(it) },
+                    virtualNotifyNewAssignment = state.virtualNotifyNewAssignment,
+                    onToggleVirtualNotifyNewAssignment = { scope.launch { repo.setVirtualNotifyNewAssignment(it) } },
+                    virtualDeadlineLeadHours = state.virtualDeadlineLeadHours,
+                    onToggleVirtualDeadlineLeadHour = { repo.toggleVirtualDeadlineLeadHour(it) },
+                    onAddCustomVirtualDeadlineHour = { repo.addVirtualDeadlineLeadHour(it) },
+                    downloadFolderLabel = state.downloadFolderLabel,
+                    onPickDownloadFolder = { scope.launch { repo.pickDownloadFolder() } },
+                    onResetDownloadFolder = { repo.clearDownloadFolder() },
+                    availableUpdate = availableUpdate,
+                    updateChecking = updateChecking,
+                    updateDownloading = updateDownloading,
+                    updateProgress = updateProgress,
+                    updateStatusMessage = updateStatusMessage,
+                    onCheckUpdate = { checkAppUpdate(manual = true) },
+                    onInstallUpdate = { installAppUpdate() },
+                    ignoringBatteryOptimizations = ignoringBatteryOptimizations,
+                    onRequestBackgroundBattery = { PlatformBridge.requestIgnoreBatteryOptimizations() },
+                    onLogout = { scope.launch { repo.logout() } },
+                    loading = state.loading,
+                    listState = centralListState,
+                    showAllNotifications = showAllNotificationsModal,
+                    onOpenAllNotifications = { showAllNotificationsModal = true },
+                    onCloseAllNotifications = { showAllNotificationsModal = false },
+                    renderSheetsInPlace = false,
+                    onRequestLogout = { confirmLogoutDialog = true }
+                )
+            }
+        }
+    }
+
+    val renderOverlays: @Composable () -> Unit = {
+        AppSheetsAndDialogsHost(
+            state = state,
+            mergedSubjects = mergedSubjects,
+            activeSubject = activeSubject,
+            activeSubjectVirtualLink = activeSubject?.let { subjectVirtualLinks[it.code] },
+            riskySubjects = riskySubjects,
+            selectedVirtualAssignment = selectedVirtualAssignment,
+            selectedVirtualAnnouncement = selectedVirtualAnnouncement,
+            showRiskyAttendanceModal = showRiskyAttendanceModal,
+            showAllNotificationsModal = showAllNotificationsModal,
+            showCalendarEditor = showCalendarEditor,
+            editingCalendarEvent = editingCalendarEvent,
+            calendarDraftDate = calendarDraftDate,
+            selectedCalendarDate = selectedCalendarDate,
+            calendarSubjectSuggestions = calendarSubjectSuggestions,
+            showGlobalSearchModal = showGlobalSearchModal,
+            confirmDeleteCalendarEvent = confirmDeleteCalendarEvent,
+            confirmLogoutDialog = confirmLogoutDialog,
+            showUpdateDialog = showUpdateDialog,
+            availableUpdate = availableUpdate,
+            updateDownloading = updateDownloading,
+            updateProgress = updateProgress,
+            updateStatusMessage = updateStatusMessage,
+            onViewD2LFile = { path, title, courseName, fileName ->
+                scope.launch { repo.openD2LFile(path, title, courseName, fileName) }
+            },
+            onDownloadD2LFile = { path, fileName, courseName ->
+                scope.launch { repo.downloadD2LFile(path, fileName, courseName) }
+            },
+            onDownloadBatch = { items ->
+                scope.launch { repo.downloadD2LFilesBatch(items) }
+            },
+            onOpenSalaVirtualWeb = { url -> repo.openSalaVirtualWeb(url) },
+            onDismissVirtualAssignment = { selectedVirtualAssignment = null },
+            onDismissVirtualAnnouncement = { selectedVirtualAnnouncement = null },
+            onDismissSubjectDetail = { selectedSubjectCode = null },
+            onOpenVirtualCourseFromSubject = { ou -> openVirtualCourse(ou, subTab = 0) },
+            onOpenVirtualAssignmentFromSubject = ::openVirtualAssignment,
+            onSelectRiskySubject = { code ->
+                showRiskyAttendanceModal = false
+                selectedSubjectCode = code
+            },
+            onDismissRiskyAttendance = { showRiskyAttendanceModal = false },
+            onDismissAllNotifications = { showAllNotificationsModal = false },
+            onSaveCalendarEvent = { input ->
+                scope.launch {
+                    val editing = editingCalendarEvent
+                    val ok = if (editing == null) {
+                        repo.createCalendarEvent(input)
+                    } else {
+                        repo.updateCalendarEvent(editing.id, input)
+                    }
+                    if (ok) {
+                        parseIsoDate(input.date)?.let { selectedCalendarDate = it }
+                        showCalendarEditor = false
+                        editingCalendarEvent = null
+                    }
+                }
+            },
+            onRequestDeleteCalendarEvent = { ev -> confirmDeleteCalendarEvent = ev },
+            onDismissCalendarEditor = {
+                showCalendarEditor = false
+                editingCalendarEvent = null
+            },
+            onSelectGlobalSearchResult = ::handleGlobalSearchResult,
+            onDismissGlobalSearch = { showGlobalSearchModal = false },
+            onConfirmDeleteCalendarEvent = { targetEvent ->
+                confirmDeleteCalendarEvent = null
+                scope.launch {
+                    if (repo.deleteCalendarEvent(targetEvent.id)) {
+                        if (editingCalendarEvent?.id == targetEvent.id) {
+                            showCalendarEditor = false
+                            editingCalendarEvent = null
+                        }
+                    }
+                }
+            },
+            onDismissDeleteCalendarEvent = { confirmDeleteCalendarEvent = null },
+            onConfirmLogout = {
+                confirmLogoutDialog = false
+                scope.launch { repo.logout() }
+            },
+            onDismissLogout = { confirmLogoutDialog = false },
+            onInstallAppUpdate = { installAppUpdate() },
+            onDismissUpdateDialog = { showUpdateDialog = false }
+        )
+    }
+
     CompositionLocalProvider(
         LocalPredictiveBackProgress provides { predictiveBackState },
         LocalBackOverlayController provides backOverlayController
     ) {
-    PortalTheme(stylePreference = state.stylePreference) {
-        val colors = LocalPortalColors.current
-        val style = LocalDesignStyle.current
+        PortalTheme(stylePreference = state.stylePreference) {
+            val colors = LocalPortalColors.current
+            val style = LocalDesignStyle.current
 
-        Box(modifier = Modifier.fillMaxSize()) {
-        when {
-            state.initializing -> SplashLoadingScreen()
-            !state.loggedIn -> LoginScreen(
-                initialServerUrl = state.serverUrl,
-                loading = state.loading,
-                error = state.error,
-                onLogin = { url, ra, pass, perfil ->
-                    scope.launch { repo.login(url, ra, pass, perfil) }
-                }
-            )
+            Box(modifier = Modifier.fillMaxSize()) {
+                when {
+                    state.initializing -> SplashLoadingScreen()
+                    !state.loggedIn -> LoginScreen(
+                        initialServerUrl = state.serverUrl,
+                        loading = state.loading,
+                        error = state.error,
+                        onLogin = { url, ra, pass, perfil ->
+                            scope.launch { repo.login(url, ra, pass, perfil) }
+                        }
+                    )
 
-            style != DesignStyle.APPLE -> {
-                // Material Design 3 (Material You leve e moderno, sem topBar duplicada)
-                val unreadCount = state.notifications.count { it.readAt == null }
-                val effectiveReport = state.report ?: state.dashboard?.currentReport ?: ReportCardResponse()
-                val gradeItems = state.grades?.items.orEmpty()
-                val mergedSubjects = remember(gradeItems, effectiveReport.items) {
-                    mergeUnifiedSubjects(gradeItems, effectiveReport)
-                }
-                val activeSubject = mergedSubjects.firstOrNull { it.code == selectedSubjectCode }
-                val riskySubjects = remember(mergedSubjects) {
-                    mergedSubjects
-                        .filter { it.report?.isFrequencyAtLimit() == true }
-                        .sortedBy { it.report?.remainingAbsences ?: Int.MAX_VALUE }
-                }
+                    style != DesignStyle.APPLE -> {
+                        // Material Design 3 (Material You)
+                        BoxWithConstraints(modifier = Modifier.fillMaxSize().background(colors.background)) {
+                            val isDesktop = maxWidth >= 720.dp
+                            val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
 
-                BoxWithConstraints(modifier = Modifier.fillMaxSize().background(colors.background)) {
-                    val isDesktop = maxWidth >= 720.dp
-                    val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-
-                    val topBar: @Composable () -> Unit = {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(colors.background)
-                                .then(if (!isDesktop) Modifier.padding(top = statusTop) else Modifier)
-                        ) {
-                            if (state.loading) {
-                                LinearProgressIndicator(
-                                    modifier = Modifier.fillMaxWidth().height(2.5.dp),
-                                    color = colors.accent,
-                                    trackColor = colors.accentSoft.copy(alpha = 0.5f)
-                                )
-                            }
-                            val banner = state.statusBanner ?: state.error
-                            if (!banner.isNullOrBlank()) {
-                                Row(
+                            val topBar: @Composable () -> Unit = {
+                                Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .background(if (state.error != null) colors.red.copy(alpha = 0.14f) else colors.accentSoft)
-                                        .clickable { repo.clearBanner() }
-                                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = banner,
-                                        color = if (state.error != null) colors.red else colors.accent,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("OK", color = colors.accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                }
-                            } else if (state.isOffline) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .background(colors.orange.copy(alpha = 0.14f))
-                                        .clickable { scope.launch { repo.refreshDashboard() } }
-                                        .padding(horizontal = 16.dp, vertical = 7.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = "Modo offline · ${formatOfflineAge(state.lastSyncAtMillis)}",
-                                        color = colors.orange,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("Atualizar", color = colors.orange, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                    }
-
-                    val refreshing = state.loading || state.virtualLoading || state.calendarLoading
-                    val bodyContent: @Composable () -> Unit = {
-                        val pullState = rememberPullToRefreshState()
-                        PullToRefreshBox(
-                            isRefreshing = refreshing,
-                            onRefresh = { refreshCurrentTab() },
-                            state = pullState,
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                        when (currentTab) {
-                            MainTab.SEMESTER -> SemesterScreen(
-                                dashboard = state.dashboard,
-                                periods = state.dashboard?.gradePeriods.orEmpty(),
-                                selectedPeriodId = state.selectedGradePeriodId,
-                                grades = state.grades?.items.orEmpty(),
-                                report = state.report ?: state.dashboard?.currentReport ?: ReportCardResponse(),
-                                unreadNotifications = state.notifications.filter { it.readAt == null },
-                                selectedSubjectCode = selectedSubjectCode,
-                                showRiskyAttendance = showRiskyAttendanceModal,
-                                onSelectPeriod = { id ->
-                                    selectedSubjectCode = null
-                                    showRiskyAttendanceModal = false
-                                    scope.launch { repo.selectSemesterPeriod(id) }
-                                },
-                                onOpenSubject = { code ->
-                                    showRiskyAttendanceModal = false
-                                    selectedSubjectCode = code
-                                },
-                                onCloseSubject = { selectedSubjectCode = null },
-                                onOpenRiskyAttendance = {
-                                    selectedSubjectCode = null
-                                    showRiskyAttendanceModal = true
-                                },
-                                onCloseRiskyAttendance = { showRiskyAttendanceModal = false },
-                                onOpenNotifications = { navigateToTab(MainTab.CENTRAL) },
-                                freqAlertThreshold = state.freqAlertThreshold,
-                                schedule = state.schedule,
-                                virtualOverview = state.virtualOverview,
-                                onOpenSearch = { showGlobalSearchModal = true },
-                                onOpenSchedule = {
-                                    currentTab = MainTab.COURSE
-                                    courseSubTab = 2
-                                },
-                                onOpenVirtualAssignment = { item ->
-                                    currentTab = MainTab.VIRTUAL
-                                    selectedVirtualCourseId = item.orgUnitId
-                                    virtualCourseSubTab = 1
-                                    selectedVirtualAssignment = item
-                                },
-                                loading = state.loading,
-                                listState = semesterListState,
-                                renderSheetsInPlace = false
-                            )
-
-                            MainTab.COURSE -> AcademicScreen(
-                                curriculum = state.curriculum,
-                                schedule = state.schedule,
-                                selectedSubTab = courseSubTab,
-                                onSelectSubTab = { courseSubTab = it },
-                                onOpenProxy = { path -> scope.launch { repo.openPortalLink(path, true) } },
-                                student = state.dashboard?.student ?: StudentInfo(),
-                                loading = state.loading,
-                                listState = courseListState
-                            )
-
-                            MainTab.VIRTUAL -> VirtualScreen(
-                                overview = state.virtualOverview,
-                                courseDetails = state.virtualCourseDetails,
-                                selectedCourseId = selectedVirtualCourseId,
-                                courseSubTab = virtualCourseSubTab,
-                                overviewTab = state.virtualOverviewTab,
-                                onSelectOverviewTab = { repo.setVirtualOverviewTab(it) },
-                                searchQuery = state.virtualSearchQuery,
-                                onSearchQueryChange = { repo.setVirtualSearchQuery(it) },
-                                selectedSemester = state.virtualSelectedSemester,
-                                onSelectSemester = { repo.setVirtualSelectedSemester(it) },
-                                assignmentFilterIndex = state.virtualAssignmentFilterIndex,
-                                onSelectAssignmentFilter = { repo.setVirtualAssignmentFilterIndex(it) },
-                                loading = state.virtualLoading,
-                                error = state.virtualError,
-                                onRefreshOverview = { scope.launch { repo.loadVirtualOverviewIfNeeded(force = true) } },
-                                onSelectCourse = { ou ->
-                                    virtualCourseSubTab = 0
-                                    selectedVirtualCourseId = ou
-                                },
-                                onBackToOverview = {
-                                    selectedVirtualCourseId = null
-                                    virtualCourseSubTab = 0
-                                },
-                                onSelectCourseSubTab = { virtualCourseSubTab = it },
-                                onRefreshCourse = { ou -> scope.launch { repo.loadVirtualCourse(ou, force = true) } },
-                                onSelectAssignment = { selectedVirtualAssignment = it },
-                                onSelectAnnouncement = { selectedVirtualAnnouncement = it },
-                                onViewD2LFile = { path, title, courseName, fileName ->
-                                    scope.launch { repo.openD2LFile(path, title, courseName, fileName) }
-                                },
-                                onDownloadD2LFile = { path, fileName, courseName ->
-                                    scope.launch { repo.downloadD2LFile(path, fileName, courseName) }
-                                },
-                                onDownloadBatch = { items ->
-                                    scope.launch { repo.downloadD2LFilesBatch(items) }
-                                },
-                                onOpenWeb = { url -> repo.openSalaVirtualWeb(url) },
-                                downloadFolderLabel = state.downloadFolderLabel,
-                                onPickDownloadFolder = { scope.launch { repo.pickDownloadFolder() } },
-                                downloadingFileKey = state.downloadingFileKey,
-                                batchDownloadDone = state.batchDownloadDone,
-                                batchDownloadTotal = state.batchDownloadTotal,
-                                listState = virtualListState,
-                                selectedAssignment = selectedVirtualAssignment,
-                                selectedAnnouncement = selectedVirtualAnnouncement,
-                                onDismissAssignment = { selectedVirtualAssignment = null },
-                                onDismissAnnouncement = { selectedVirtualAnnouncement = null },
-                                renderSheetsInPlace = false
-                            )
-
-                            MainTab.CALENDAR -> CalendarScreen(
-                                userEvents = state.calendarEvents,
-                                virtualOverview = state.virtualOverview,
-                                virtualCourseDetails = state.virtualCourseDetails,
-                                selectedDate = selectedCalendarDate,
-                                onSelectDate = { selectedCalendarDate = it },
-                                onAddEvent = { date ->
-                                    calendarDraftDate = date
-                                    editingCalendarEvent = null
-                                    showCalendarEditor = true
-                                },
-                                onEditEvent = { ev ->
-                                    editingCalendarEvent = ev
-                                    calendarDraftDate = null
-                                    showCalendarEditor = true
-                                },
-                                onRequestDeleteEvent = { ev -> confirmDeleteCalendarEvent = ev },
-                                onOpenVirtualAssignment = { item ->
-                                    currentTab = MainTab.VIRTUAL
-                                    selectedVirtualCourseId = item.orgUnitId
-                                    virtualCourseSubTab = 1
-                                    selectedVirtualAssignment = item
-                                },
-                                onOpenWeb = { url -> repo.openSalaVirtualWeb(url) },
-                                loading = state.calendarLoading,
-                                listState = calendarListState
-                            )
-
-                            MainTab.CENTRAL -> CentralScreen(
-                                dashboard = state.dashboard,
-                                finance = state.finance,
-                                services = state.services,
-                                notifications = state.notifications,
-                                stylePreference = state.stylePreference,
-                                onSelectStyle = { repo.setStylePreference(it) },
-                                onOpenAva = { scope.launch { repo.openAvaSso() } },
-                                onOpenLink = { path, proxy -> scope.launch { repo.openPortalLink(path, proxy) } },
-                                onSyncNotifications = { scope.launch { repo.syncNotificationsNow() } },
-                                onMarkAllRead = { scope.launch { repo.markAllNotificationsRead() } },
-                                onTestNotification = { scope.launch { repo.sendTestNotification() } },
-                                freqAlertThreshold = state.freqAlertThreshold,
-                                onSelectFreqAlertThreshold = { repo.setFrequencyAlertThreshold(it) },
-                                virtualNotifyNewAssignment = state.virtualNotifyNewAssignment,
-                                onToggleVirtualNotifyNewAssignment = { scope.launch { repo.setVirtualNotifyNewAssignment(it) } },
-                                virtualDeadlineLeadHours = state.virtualDeadlineLeadHours,
-                                onToggleVirtualDeadlineLeadHour = { repo.toggleVirtualDeadlineLeadHour(it) },
-                                onAddCustomVirtualDeadlineHour = { repo.addVirtualDeadlineLeadHour(it) },
-                                downloadFolderLabel = state.downloadFolderLabel,
-                                onPickDownloadFolder = { scope.launch { repo.pickDownloadFolder() } },
-                                onResetDownloadFolder = { repo.clearDownloadFolder() },
-                                availableUpdate = availableUpdate,
-                                updateChecking = updateChecking,
-                                updateDownloading = updateDownloading,
-                                updateProgress = updateProgress,
-                                updateStatusMessage = updateStatusMessage,
-                                onCheckUpdate = { checkAppUpdate(manual = true) },
-                                onInstallUpdate = { installAppUpdate() },
-                                ignoringBatteryOptimizations = ignoringBatteryOptimizations,
-                                onRequestBackgroundBattery = { PlatformBridge.requestIgnoreBatteryOptimizations() },
-                                onLogout = { scope.launch { repo.logout() } },
-                                loading = state.loading,
-                                listState = centralListState,
-                                onOpenAllNotifications = { showAllNotificationsModal = true },
-                                renderSheetsInPlace = false,
-                                onRequestLogout = { confirmLogoutDialog = true }
-                            )
-                        }
-                        }
-                    }
-
-                    val navItemColors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = colors.accent,
-                        selectedTextColor = colors.accent,
-                        indicatorColor = colors.accentSoft,
-                        unselectedIconColor = colors.textSecondary,
-                        unselectedTextColor = colors.textSecondary
-                    )
-                    val railItemColors = NavigationRailItemDefaults.colors(
-                        selectedIconColor = colors.accent,
-                        selectedTextColor = colors.accent,
-                        indicatorColor = colors.accentSoft,
-                        unselectedIconColor = colors.textSecondary,
-                        unselectedTextColor = colors.textSecondary
-                    )
-
-                    if (isDesktop) {
-                        Row(modifier = Modifier.fillMaxSize()) {
-                            NavigationRail(containerColor = colors.surface, contentColor = colors.textPrimary) {
-                                Spacer(Modifier.height(14.dp))
-                                IconButton(
-                                    onClick = {
-                                        navHaptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        showGlobalSearchModal = true
-                                    },
-                                    modifier = Modifier.pointerHoverIcon(PointerIcon.Hand)
-                                ) {
-                                    Icon(
-                                        imageVector = PortalIcons.Search,
-                                        contentDescription = "Busca global (Ctrl+K)",
-                                        tint = colors.accent
-                                    )
-                                }
-                                IconButton(
-                                    onClick = {
-                                        navHaptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        refreshCurrentTab()
-                                    },
-                                    modifier = Modifier.pointerHoverIcon(PointerIcon.Hand)
-                                ) {
-                                    if (refreshing) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(18.dp),
-                                            strokeWidth = 2.dp,
-                                            color = colors.accent
-                                        )
-                                    } else {
-                                        Icon(
-                                            imageVector = PortalIcons.Refresh,
-                                            contentDescription = "Atualizar",
-                                            tint = colors.textPrimary
-                                        )
-                                    }
-                                }
-                                Spacer(Modifier.height(6.dp))
-                                PortalDivider(Modifier.width(40.dp))
-                                Spacer(Modifier.height(8.dp))
-                                MainTab.entries.forEach { tab ->
-                                    val selected = tab == currentTab
-                                    NavigationRailItem(
-                                        selected = selected,
-                                        onClick = { navigateToTab(tab) },
-                                        colors = railItemColors,
-                                        icon = {
-                                            BadgedBox(
-                                                badge = {
-                                                    if (tab == MainTab.CENTRAL && unreadCount > 0) {
-                                                        Badge(containerColor = colors.red, contentColor = Color.White) {
-                                                            Text(if (unreadCount > 9) "9+" else unreadCount.toString())
-                                                        }
-                                                    }
-                                                }
-                                            ) {
-                                                Icon(if (selected) tab.selectedIcon else tab.icon, contentDescription = tab.label)
-                                            }
-                                        },
-                                        label = {
-                                            Text(
-                                                tab.label,
-                                                fontSize = 10.5.sp,
-                                                maxLines = 1,
-                                                softWrap = false,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
-                                    )
-                                }
-                            }
-                            Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                                topBar()
-                                Box(modifier = Modifier.weight(1f)) { bodyContent() }
-                            }
-                        }
-                    } else {
-                        Scaffold(
-                            containerColor = colors.background,
-                            topBar = topBar,
-                            bottomBar = {
-                                NavigationBar(containerColor = colors.surface, tonalElevation = 0.dp) {
-                                    MainTab.entries.forEach { tab ->
-                                        val selected = tab == currentTab
-                                        NavigationBarItem(
-                                            selected = selected,
-                                            onClick = { navigateToTab(tab) },
-                                            colors = navItemColors,
-                                            icon = {
-                                                BadgedBox(
-                                                    badge = {
-                                                        if (tab == MainTab.CENTRAL && unreadCount > 0) {
-                                                            Badge(containerColor = colors.red, contentColor = Color.White) {
-                                                                Text(if (unreadCount > 9) "9+" else unreadCount.toString())
-                                                            }
-                                                        }
-                                                    }
-                                                ) {
-                                                    Icon(if (selected) tab.selectedIcon else tab.icon, contentDescription = tab.label)
-                                                }
-                                            },
-                                            label = {
-                                                Text(
-                                                    tab.label,
-                                                    fontSize = 10.5.sp,
-                                                    maxLines = 1,
-                                                    softWrap = false,
-                                                    overflow = TextOverflow.Ellipsis,
-                                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
-                                                )
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        ) { innerPadding ->
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(innerPadding)
-                                    .predictiveBackSurfaceTransform(
-                                        readBack = { if (!hasAnyOverlay) predictiveBackState else PredictiveBackState() },
-                                        slideDp = 42f,
-                                        verticalSlideDp = 0f,
-                                        scaleDrop = 0.055f,
-                                        pivotY = 0.5f
-                                    )
-                            ) {
-                                bodyContent()
-                            }
-                        }
-                    }
-
-                    // Camada raiz de Sheets e Alertas (cobre a NavigationBar)
-                    when {
-                        state.activeDocumentViewer != null -> Unit
-                        selectedVirtualAssignment != null -> VirtualAssignmentSheet(
-                            assignment = selectedVirtualAssignment!!,
-                            onViewD2LFile = { path, title, courseName, fileName ->
-                                scope.launch { repo.openD2LFile(path, title, courseName, fileName) }
-                            },
-                            onDownloadD2LFile = { path, fileName, courseName ->
-                                scope.launch { repo.downloadD2LFile(path, fileName, courseName) }
-                            },
-                            onDownloadBatch = { items ->
-                                scope.launch { repo.downloadD2LFilesBatch(items) }
-                            },
-                            downloadingFileKey = state.downloadingFileKey,
-                            onOpenWeb = { url -> repo.openSalaVirtualWeb(url) },
-                            onDismiss = { selectedVirtualAssignment = null }
-                        )
-                        selectedVirtualAnnouncement != null -> VirtualAnnouncementSheet(
-                            announcement = selectedVirtualAnnouncement!!,
-                            onViewD2LFile = { path, title, courseName, fileName ->
-                                scope.launch { repo.openD2LFile(path, title, courseName, fileName) }
-                            },
-                            onDownloadD2LFile = { path, fileName, courseName ->
-                                scope.launch { repo.downloadD2LFile(path, fileName, courseName) }
-                            },
-                            onDownloadBatch = { items ->
-                                scope.launch { repo.downloadD2LFilesBatch(items) }
-                            },
-                            downloadingFileKey = state.downloadingFileKey,
-                            onDismiss = { selectedVirtualAnnouncement = null }
-                        )
-                        activeSubject != null -> AppleSubjectDetailSheet(
-                            subject = activeSubject,
-                            freqAlertThreshold = state.freqAlertThreshold,
-                            onDismiss = { selectedSubjectCode = null }
-                        )
-                        showRiskyAttendanceModal && riskySubjects.isNotEmpty() -> AppleAttendanceLimitSheet(
-                            subjects = riskySubjects,
-                            onSelectSubject = { code ->
-                                showRiskyAttendanceModal = false
-                                selectedSubjectCode = code
-                            },
-                            onDismiss = { showRiskyAttendanceModal = false }
-                        )
-                        showAllNotificationsModal -> AppleAllNotificationsSheet(
-                            notifications = state.notifications,
-                            onDismiss = { showAllNotificationsModal = false }
-                        )
-                        showCalendarEditor -> CalendarEventEditorSheet(
-                            existing = editingCalendarEvent,
-                            initialDate = calendarDraftDate ?: selectedCalendarDate,
-                            subjectSuggestions = calendarSubjectSuggestions,
-                            saving = state.calendarSaving,
-                            onSave = { input ->
-                                scope.launch {
-                                    val editing = editingCalendarEvent
-                                    val ok = if (editing == null) {
-                                        repo.createCalendarEvent(input)
-                                    } else {
-                                        repo.updateCalendarEvent(editing.id, input)
-                                    }
-                                    if (ok) {
-                                        parseIsoDate(input.date)?.let { selectedCalendarDate = it }
-                                        showCalendarEditor = false
-                                        editingCalendarEvent = null
-                                    }
-                                }
-                            },
-                            onRequestDelete = editingCalendarEvent?.let { ev ->
-                                { confirmDeleteCalendarEvent = ev }
-                            },
-                            onDismiss = {
-                                showCalendarEditor = false
-                                editingCalendarEvent = null
-                            }
-                        )
-                        showGlobalSearchModal -> GlobalSearchSheet(
-                            subjects = mergedSubjects,
-                            schedule = state.schedule,
-                            curriculum = state.curriculum,
-                            virtualOverview = state.virtualOverview,
-                            virtualCourseDetails = state.virtualCourseDetails,
-                            calendarEvents = state.calendarEvents,
-                            onSelectResult = ::handleGlobalSearchResult,
-                            onDismiss = { showGlobalSearchModal = false }
-                        )
-                    }
-
-                    confirmDeleteCalendarEvent?.let { targetEvent ->
-                        AlertDialog(
-                            onDismissRequest = { confirmDeleteCalendarEvent = null },
-                            containerColor = colors.surface,
-                            titleContentColor = colors.textPrimary,
-                            textContentColor = colors.textSecondary,
-                            title = { Text("Excluir evento?", fontWeight = FontWeight.Bold) },
-                            text = { Text("Deseja remover \"${targetEvent.title}\" do seu calendário?") },
-                            confirmButton = {
-                                TextButton(
-                                    onClick = {
-                                        confirmDeleteCalendarEvent = null
-                                        scope.launch {
-                                            if (repo.deleteCalendarEvent(targetEvent.id)) {
-                                                if (editingCalendarEvent?.id == targetEvent.id) {
-                                                    showCalendarEditor = false
-                                                    editingCalendarEvent = null
-                                                }
-                                            }
-                                        }
-                                    }
-                                ) {
-                                    Text("Excluir", color = colors.red, fontWeight = FontWeight.SemiBold)
-                                }
-                            },
-                            dismissButton = {
-                                TextButton(onClick = { confirmDeleteCalendarEvent = null }) {
-                                    Text("Cancelar", color = colors.textSecondary)
-                                }
-                            }
-                        )
-                    }
-
-                    if (confirmLogoutDialog) {
-                        AppleAlert(
-                            title = "Sair da conta?",
-                            message = "Sua sessão salva será removida deste dispositivo.",
-                            confirmText = "Sair",
-                            confirmDestructive = true,
-                            onConfirm = {
-                                confirmLogoutDialog = false
-                                scope.launch { repo.logout() }
-                            },
-                            onDismiss = { confirmLogoutDialog = false }
-                        )
-                    }
-
-                    if (showUpdateDialog && availableUpdate != null) {
-                        val upd = availableUpdate!!
-                        AlertDialog(
-                            onDismissRequest = { if (!updateDownloading) showUpdateDialog = false },
-                            containerColor = colors.surface,
-                            titleContentColor = colors.textPrimary,
-                            textContentColor = colors.textSecondary,
-                            title = { Text("Atualização disponível (v${upd.latestVersion})", fontWeight = FontWeight.Bold) },
-                            text = {
-                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("Versão instalada: v${upd.currentVersion} → Nova: v${upd.latestVersion}")
-                                    if (upd.releaseName.isNotBlank()) {
-                                        Text(upd.releaseName, color = colors.textPrimary, fontWeight = FontWeight.Medium)
-                                    }
-                                    if (upd.releaseNotes.isNotBlank()) {
-                                        Text(upd.releaseNotes, fontSize = 12.5.sp)
-                                    }
-                                    if (updateDownloading) {
-                                        LinearProgressIndicator(
-                                            progress = { updateProgress.coerceIn(0f, 1f) },
-                                            modifier = Modifier.fillMaxWidth(),
-                                            color = colors.accent,
-                                            trackColor = colors.accentSoft
-                                        )
-                                        Text("Baixando APK (${(updateProgress * 100).toInt()}%)...", fontSize = 12.sp)
-                                    } else if (!updateStatusMessage.isNullOrBlank() && updateStatusMessage!!.contains("Permita", ignoreCase = true)) {
-                                        Text(updateStatusMessage!!, color = colors.orange, fontSize = 12.5.sp)
-                                    }
-                                }
-                            },
-                            confirmButton = {
-                                TextButton(
-                                    onClick = { installAppUpdate() },
-                                    enabled = !updateDownloading
-                                ) {
-                                    Text(
-                                        if (updateDownloading) "Baixando..." else "Atualizar agora",
-                                        color = colors.accent,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                }
-                            },
-                            dismissButton = {
-                                TextButton(
-                                    onClick = { showUpdateDialog = false },
-                                    enabled = !updateDownloading
-                                ) {
-                                    Text("Depois", color = colors.textSecondary)
-                                }
-                            }
-                        )
-                    }
-                }
-            }
-
-            else -> {
-                // Modo Apple Liquid Glass
-                val unreadCount = state.notifications.count { it.readAt == null }
-                val hazeState = rememberHazeState()
-                val glassEnabled = remember(state.stylePreference) {
-                    PlatformBridge.capabilities().supportsAppleEffects
-                }
-                val activeListState = activeListStateFor(currentTab)
-
-                val collapseProgress by remember(activeListState) {
-                    derivedStateOf {
-                        if (activeListState.firstVisibleItemIndex > 0) 1f
-                        else (activeListState.firstVisibleItemScrollOffset / 110f).coerceIn(0f, 1f)
-                    }
-                }
-                val smoothCollapseState = animateFloatAsState(collapseProgress, tween(120))
-
-                // Auto-expande a tab bar quando estiver no topo da lista ou ao trocar de aba
-                val atTop by remember(activeListState) {
-                    derivedStateOf {
-                        activeListState.firstVisibleItemIndex == 0 && activeListState.firstVisibleItemScrollOffset < 24
-                    }
-                }
-                LaunchedEffect(atTop) {
-                    if (atTop) tabBarMinimized = false
-                }
-
-                var scrollAccumulator by remember { mutableFloatStateOf(0f) }
-                val tabScrollConnection = remember(activeListState) {
-                    object : NestedScrollConnection {
-                        override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                            val dy = available.y
-                            if (dy < -4f) {
-                                scrollAccumulator = (scrollAccumulator + dy).coerceAtMost(0f)
-                                if (scrollAccumulator < -40f && !atTop) {
-                                    tabBarMinimized = true
-                                }
-                            } else if (dy > 4f) {
-                                scrollAccumulator = (scrollAccumulator + dy).coerceAtLeast(0f)
-                                if (scrollAccumulator > 24f) {
-                                    tabBarMinimized = false
-                                }
-                            }
-                            return Offset.Zero
-                        }
-                    }
-                }
-
-                val activeReport = state.report ?: state.dashboard?.currentReport ?: ReportCardResponse()
-                val activeGrades = state.grades?.items.orEmpty()
-                val mergedSubjects = remember(activeGrades, activeReport.items) {
-                    mergeUnifiedSubjects(activeGrades, activeReport)
-                }
-                val riskySubjects = remember(mergedSubjects) {
-                    mergedSubjects
-                        .filter { it.report?.isFrequencyAtLimit() == true }
-                        .sortedBy { it.report?.remainingAbsences ?: Int.MAX_VALUE }
-                }
-                val activeSubject = mergedSubjects.firstOrNull { it.code == selectedSubjectCode }
-                val hasActiveSheet = activeSubject != null ||
-                    (showRiskyAttendanceModal && riskySubjects.isNotEmpty()) ||
-                    showAllNotificationsModal ||
-                    showCalendarEditor
-
-                BoxWithConstraints(modifier = Modifier.fillMaxSize().background(colors.background)) {
-                    val isDesktop = maxWidth >= 840.dp
-                    val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-                    val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-                    val appleInsets = PaddingValues(
-                        top = statusTop + 60.dp,
-                        bottom = if (isDesktop) 36.dp else (navBottom + 94.dp)
-                    )
-
-                    val reduceMotion = remember { PlatformBridge.isReduceMotionEnabled() }
-                    val bgScale by animateFloatAsState(
-                        targetValue = if (!isDesktop && hasActiveSheet && !reduceMotion) 0.94f else 1f,
-                        animationSpec = AppleMotion.sheet
-                    )
-                    val bgCorner by animateDpAsState(
-                        targetValue = if (!isDesktop && hasActiveSheet) 28.dp else 0.dp,
-                        animationSpec = AppleMotion.dpSheet
-                    )
-
-                    CompositionLocalProvider(
-                        LocalHazeState provides hazeState,
-                        LocalGlassEnabled provides glassEnabled,
-                        LocalAppleContentInsets provides appleInsets
-                    ) {
-                        Box(modifier = Modifier.fillMaxSize().background(Color.Black.takeIf { colors.isDark } ?: colors.background)) {
-                            // CAMADA 1 + 2 dentro do card stack scale no mobile
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .graphicsLayer {
-                                        val s = bgScale.coerceIn(0.85f, 1f)
-                                        scaleX = s
-                                        scaleY = s
-                                    }
-                                    .predictiveBackSurfaceTransform(
-                                        readBack = { if (!hasAnyOverlay) predictiveBackState else PredictiveBackState() },
-                                        slideDp = 42f,
-                                        verticalSlideDp = 0f,
-                                        scaleDrop = 0.055f,
-                                        pivotY = 0.5f
-                                    )
-                                    .clip(RoundedCornerShape(bgCorner.coerceAtLeast(0.dp)))
-                            ) {
-                                // CAMADA 1: Conteúdo edge-to-edge (fonte do Liquid Glass)
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .hazeSource(hazeState)
                                         .background(colors.background)
+                                        .then(if (!isDesktop) Modifier.padding(top = statusTop) else Modifier)
                                 ) {
-                                    // Brilho ambiente muito sutil no fundo para dar profundidade ao vidro
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .background(
-                                                Brush.radialGradient(
-                                                    colors = listOf(
-                                                        colors.accent.copy(alpha = if (colors.isDark) 0.06f else 0.045f),
-                                                        Color.Transparent
-                                                    ),
-                                                    center = Offset(220f, 120f),
-                                                    radius = 900f
-                                                )
+                                    if (state.loading) {
+                                        LinearProgressIndicator(
+                                            modifier = Modifier.fillMaxWidth().height(2.5.dp),
+                                            color = colors.accent,
+                                            trackColor = colors.accentSoft.copy(alpha = 0.5f)
+                                        )
+                                    }
+                                    val banner = state.statusBanner ?: state.error
+                                    if (!banner.isNullOrBlank()) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .background(if (state.error != null) colors.red.copy(alpha = 0.14f) else colors.accentSoft)
+                                                .clickable { repo.clearBanner() }
+                                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = banner,
+                                                color = if (state.error != null) colors.red else colors.accent,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                modifier = Modifier.weight(1f)
                                             )
-                                    )
+                                            Spacer(Modifier.width(8.dp))
+                                            Text("OK", color = colors.accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    } else if (state.isOffline) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .background(colors.orange.copy(alpha = 0.14f))
+                                                .clickable { scope.launch { repo.refreshDashboard() } }
+                                                .padding(horizontal = 16.dp, vertical = 7.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = "Modo offline · ${formatOfflineAge(state.lastSyncAtMillis)}",
+                                                color = colors.orange,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            Spacer(Modifier.width(8.dp))
+                                            Text("Atualizar", color = colors.orange, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
 
-                                    val contentBody: @Composable () -> Unit = {
-                                        AnimatedContent(
-                                            targetState = currentTab,
-                                            transitionSpec = {
-                                                (fadeIn(tween(180)) + scaleIn(
-                                                    initialScale = 0.985f,
-                                                    animationSpec = tween(180)
-                                                )) togetherWith fadeOut(tween(130))
-                                            }
-                                        ) { tab ->
-                                            when (tab) {
-                                                MainTab.SEMESTER -> SemesterScreen(
-                                                    dashboard = state.dashboard,
-                                                    periods = state.dashboard?.gradePeriods.orEmpty(),
-                                                    selectedPeriodId = state.selectedGradePeriodId,
-                                                    grades = activeGrades,
-                                                    report = activeReport,
-                                                    unreadNotifications = state.notifications.filter { it.readAt == null },
-                                                    selectedSubjectCode = selectedSubjectCode,
-                                                    showRiskyAttendance = showRiskyAttendanceModal,
-                                                    onSelectPeriod = { id ->
-                                                        selectedSubjectCode = null
-                                                        showRiskyAttendanceModal = false
-                                                        scope.launch { repo.selectSemesterPeriod(id) }
-                                                    },
-                                                    onOpenSubject = { code ->
-                                                        showRiskyAttendanceModal = false
-                                                        selectedSubjectCode = code
-                                                    },
-                                                    onCloseSubject = { selectedSubjectCode = null },
-                                                    onOpenRiskyAttendance = {
-                                                        selectedSubjectCode = null
-                                                        showRiskyAttendanceModal = true
-                                                    },
-                                                    onCloseRiskyAttendance = { showRiskyAttendanceModal = false },
-                                                    onOpenNotifications = { navigateToTab(MainTab.CENTRAL) },
-                                                    freqAlertThreshold = state.freqAlertThreshold,
-                                                    schedule = state.schedule,
-                                                    virtualOverview = state.virtualOverview,
-                                                    onOpenSearch = { showGlobalSearchModal = true },
-                                                    onOpenSchedule = {
-                                                        currentTab = MainTab.COURSE
-                                                        courseSubTab = 2
-                                                    },
-                                                    onOpenVirtualAssignment = { item ->
-                                                        currentTab = MainTab.VIRTUAL
-                                                        selectedVirtualCourseId = item.orgUnitId
-                                                        virtualCourseSubTab = 1
-                                                        selectedVirtualAssignment = item
-                                                    },
-                                                    loading = state.loading,
-                                                    listState = semesterListState,
-                                                    renderSheetsInPlace = false
+                            val refreshing = state.loading || state.virtualLoading || state.calendarLoading
+                            val bodyContent: @Composable () -> Unit = {
+                                val pullState = rememberPullToRefreshState()
+                                PullToRefreshBox(
+                                    isRefreshing = refreshing,
+                                    onRefresh = { refreshCurrentTab() },
+                                    state = pullState,
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    renderTabPager()
+                                }
+                            }
+
+                            val navItemColors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = colors.accent,
+                                selectedTextColor = colors.accent,
+                                indicatorColor = colors.accentSoft,
+                                unselectedIconColor = colors.textSecondary,
+                                unselectedTextColor = colors.textSecondary
+                            )
+                            val railItemColors = NavigationRailItemDefaults.colors(
+                                selectedIconColor = colors.accent,
+                                selectedTextColor = colors.accent,
+                                indicatorColor = colors.accentSoft,
+                                unselectedIconColor = colors.textSecondary,
+                                unselectedTextColor = colors.textSecondary
+                            )
+
+                            if (isDesktop) {
+                                Row(modifier = Modifier.fillMaxSize()) {
+                                    NavigationRail(containerColor = colors.surface, contentColor = colors.textPrimary) {
+                                        Spacer(Modifier.height(14.dp))
+                                        IconButton(
+                                            onClick = {
+                                                navHaptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                showGlobalSearchModal = true
+                                            },
+                                            modifier = Modifier.pointerHoverIcon(PointerIcon.Hand)
+                                        ) {
+                                            Icon(
+                                                imageVector = PortalIcons.Search,
+                                                contentDescription = "Busca global (Ctrl+K)",
+                                                tint = colors.accent
+                                            )
+                                        }
+                                        IconButton(
+                                            onClick = {
+                                                navHaptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                refreshCurrentTab()
+                                            },
+                                            modifier = Modifier.pointerHoverIcon(PointerIcon.Hand)
+                                        ) {
+                                            if (refreshing) {
+                                                CircularProgressIndicator(
+                                                    modifier = Modifier.size(18.dp),
+                                                    strokeWidth = 2.dp,
+                                                    color = colors.accent
                                                 )
-
-                                                MainTab.COURSE -> AcademicScreen(
-                                                    curriculum = state.curriculum,
-                                                    schedule = state.schedule,
-                                                    selectedSubTab = courseSubTab,
-                                                    onSelectSubTab = { courseSubTab = it },
-                                                    onOpenProxy = { path -> scope.launch { repo.openPortalLink(path, true) } },
-                                                    student = state.dashboard?.student ?: StudentInfo(),
-                                                    loading = state.loading,
-                                                    listState = courseListState
-                                                )
-
-                                                MainTab.VIRTUAL -> VirtualScreen(
-                                                    overview = state.virtualOverview,
-                                                    courseDetails = state.virtualCourseDetails,
-                                                    selectedCourseId = selectedVirtualCourseId,
-                                                    courseSubTab = virtualCourseSubTab,
-                                                    overviewTab = state.virtualOverviewTab,
-                                                    onSelectOverviewTab = { repo.setVirtualOverviewTab(it) },
-                                                    searchQuery = state.virtualSearchQuery,
-                                                    onSearchQueryChange = { repo.setVirtualSearchQuery(it) },
-                                                    selectedSemester = state.virtualSelectedSemester,
-                                                    onSelectSemester = { repo.setVirtualSelectedSemester(it) },
-                                                    assignmentFilterIndex = state.virtualAssignmentFilterIndex,
-                                                    onSelectAssignmentFilter = { repo.setVirtualAssignmentFilterIndex(it) },
-                                                    loading = state.virtualLoading,
-                                                    error = state.virtualError,
-                                                    onRefreshOverview = { scope.launch { repo.loadVirtualOverviewIfNeeded(force = true) } },
-                                                    onSelectCourse = { ou ->
-                                                        virtualCourseSubTab = 0
-                                                        selectedVirtualCourseId = ou
-                                                    },
-                                                    onBackToOverview = {
-                                                        selectedVirtualCourseId = null
-                                                        virtualCourseSubTab = 0
-                                                    },
-                                                    onSelectCourseSubTab = { virtualCourseSubTab = it },
-                                                    onRefreshCourse = { ou -> scope.launch { repo.loadVirtualCourse(ou, force = true) } },
-                                                    onSelectAssignment = { selectedVirtualAssignment = it },
-                                                    onSelectAnnouncement = { selectedVirtualAnnouncement = it },
-                                                    onViewD2LFile = { path, title, courseName, fileName ->
-                                                        scope.launch { repo.openD2LFile(path, title, courseName, fileName) }
-                                                    },
-                                                    onDownloadD2LFile = { path, fileName, courseName ->
-                                                        scope.launch { repo.downloadD2LFile(path, fileName, courseName) }
-                                                    },
-                                                    onDownloadBatch = { items ->
-                                                        scope.launch { repo.downloadD2LFilesBatch(items) }
-                                                    },
-                                                    onOpenWeb = { url -> repo.openSalaVirtualWeb(url) },
-                                                    downloadFolderLabel = state.downloadFolderLabel,
-                                                    onPickDownloadFolder = { scope.launch { repo.pickDownloadFolder() } },
-                                                    downloadingFileKey = state.downloadingFileKey,
-                                                    batchDownloadDone = state.batchDownloadDone,
-                                                    batchDownloadTotal = state.batchDownloadTotal,
-                                                    listState = virtualListState,
-                                                    renderSheetsInPlace = false
-                                                )
-
-                                                MainTab.CALENDAR -> CalendarScreen(
-                                                    userEvents = state.calendarEvents,
-                                                    virtualOverview = state.virtualOverview,
-                                                    virtualCourseDetails = state.virtualCourseDetails,
-                                                    selectedDate = selectedCalendarDate,
-                                                    onSelectDate = { selectedCalendarDate = it },
-                                                    onAddEvent = { date ->
-                                                        calendarDraftDate = date
-                                                        editingCalendarEvent = null
-                                                        showCalendarEditor = true
-                                                    },
-                                                    onEditEvent = { ev ->
-                                                        editingCalendarEvent = ev
-                                                        calendarDraftDate = null
-                                                        showCalendarEditor = true
-                                                    },
-                                                    onRequestDeleteEvent = { ev -> confirmDeleteCalendarEvent = ev },
-                                                    onOpenVirtualAssignment = { item ->
-                                                        currentTab = MainTab.VIRTUAL
-                                                        selectedVirtualCourseId = item.orgUnitId
-                                                        virtualCourseSubTab = 1
-                                                        selectedVirtualAssignment = item
-                                                    },
-                                                    onOpenWeb = { url -> repo.openSalaVirtualWeb(url) },
-                                                    loading = state.calendarLoading,
-                                                    listState = calendarListState
-                                                )
-
-                                                MainTab.CENTRAL -> CentralScreen(
-                                                    dashboard = state.dashboard,
-                                                    finance = state.finance,
-                                                    services = state.services,
-                                                    notifications = state.notifications,
-                                                    stylePreference = state.stylePreference,
-                                                    onSelectStyle = { repo.setStylePreference(it) },
-                                                    onOpenAva = { scope.launch { repo.openAvaSso() } },
-                                                    onOpenLink = { path, proxy -> scope.launch { repo.openPortalLink(path, proxy) } },
-                                                    onSyncNotifications = { scope.launch { repo.syncNotificationsNow() } },
-                                                    onMarkAllRead = { scope.launch { repo.markAllNotificationsRead() } },
-                                                    onTestNotification = { scope.launch { repo.sendTestNotification() } },
-                                                    freqAlertThreshold = state.freqAlertThreshold,
-                                                    onSelectFreqAlertThreshold = { repo.setFrequencyAlertThreshold(it) },
-                                                    virtualNotifyNewAssignment = state.virtualNotifyNewAssignment,
-                                                    onToggleVirtualNotifyNewAssignment = { scope.launch { repo.setVirtualNotifyNewAssignment(it) } },
-                                                    virtualDeadlineLeadHours = state.virtualDeadlineLeadHours,
-                                                    onToggleVirtualDeadlineLeadHour = { repo.toggleVirtualDeadlineLeadHour(it) },
-                                                    onAddCustomVirtualDeadlineHour = { repo.addVirtualDeadlineLeadHour(it) },
-                                                    downloadFolderLabel = state.downloadFolderLabel,
-                                                    onPickDownloadFolder = { scope.launch { repo.pickDownloadFolder() } },
-                                                    onResetDownloadFolder = { repo.clearDownloadFolder() },
-                                                    availableUpdate = availableUpdate,
-                                                    updateChecking = updateChecking,
-                                                    updateDownloading = updateDownloading,
-                                                    updateProgress = updateProgress,
-                                                    updateStatusMessage = updateStatusMessage,
-                                                    onCheckUpdate = { checkAppUpdate(manual = true) },
-                                                    onInstallUpdate = { installAppUpdate() },
-                                                    ignoringBatteryOptimizations = ignoringBatteryOptimizations,
-                                                    onRequestBackgroundBattery = { PlatformBridge.requestIgnoreBatteryOptimizations() },
-                                                    onLogout = { scope.launch { repo.logout() } },
-                                                    loading = state.loading,
-                                                    listState = centralListState,
-                                                    showAllNotifications = showAllNotificationsModal,
-                                                    onOpenAllNotifications = { showAllNotificationsModal = true },
-                                                    onCloseAllNotifications = { showAllNotificationsModal = false },
-                                                    renderSheetsInPlace = false,
-                                                    onRequestLogout = { confirmLogoutDialog = true }
+                                            } else {
+                                                Icon(
+                                                    imageVector = PortalIcons.Refresh,
+                                                    contentDescription = "Atualizar",
+                                                    tint = colors.textPrimary
                                                 )
                                             }
                                         }
-                                    }
-
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .padding(start = if (isDesktop) 248.dp else 0.dp)
-                                            .nestedScroll(tabScrollConnection)
-                                    ) {
-                                        if (isDesktop) {
-                                            contentBody()
-                                        } else {
-                                            val pullState = rememberPullToRefreshState()
-                                            val refreshing = when (currentTab) {
-                                                MainTab.VIRTUAL -> state.virtualLoading && state.virtualOverview != null
-                                                MainTab.CALENDAR -> state.calendarLoading
-                                                else -> state.loading && state.dashboard != null
-                                            }
-                                            PullToRefreshBox(
-                                                isRefreshing = refreshing,
-                                                onRefresh = { refreshCurrentTab() },
-                                                state = pullState,
-                                                indicator = {
-                                                    val fraction = pullState.distanceFraction.coerceIn(0f, 1f)
-                                                    if (refreshing || fraction > 0.08f) {
-                                                        Box(
-                                                            modifier = Modifier
-                                                                .align(Alignment.TopCenter)
-                                                                .padding(top = statusTop + 56.dp + (28.dp * fraction))
-                                                        ) {
-                                                            GlassSurface(
-                                                                modifier = Modifier.size(38.dp),
-                                                                shape = CircleShape,
-                                                                shadowElevation = 10.dp
-                                                            ) {
-                                                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                                                    AppleActivityIndicator(size = 18.dp, color = colors.textPrimary)
+                                        Spacer(Modifier.height(6.dp))
+                                        PortalDivider(Modifier.width(40.dp))
+                                        Spacer(Modifier.height(8.dp))
+                                        MainTab.entries.forEach { tab ->
+                                            val selected = tab == currentTab
+                                            NavigationRailItem(
+                                                selected = selected,
+                                                onClick = { navigateToTab(tab) },
+                                                colors = railItemColors,
+                                                icon = {
+                                                    BadgedBox(
+                                                        badge = {
+                                                            if (tab == MainTab.CENTRAL && unreadCount > 0) {
+                                                                Badge(containerColor = colors.red, contentColor = Color.White) {
+                                                                    Text(if (unreadCount > 9) "9+" else unreadCount.toString())
                                                                 }
                                                             }
                                                         }
+                                                    ) {
+                                                        Icon(if (selected) tab.selectedIcon else tab.icon, contentDescription = tab.label)
                                                     }
+                                                },
+                                                label = {
+                                                    Text(
+                                                        tab.label,
+                                                        fontSize = 10.5.sp,
+                                                        maxLines = 1,
+                                                        softWrap = false,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
                                                 }
-                                            ) {
-                                                contentBody()
+                                            )
+                                        }
+                                    }
+                                    Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                                        topBar()
+                                        Box(modifier = Modifier.weight(1f)) { bodyContent() }
+                                    }
+                                }
+                            } else {
+                                Scaffold(
+                                    containerColor = colors.background,
+                                    topBar = topBar,
+                                    bottomBar = {
+                                        NavigationBar(containerColor = colors.surface, tonalElevation = 0.dp) {
+                                            MainTab.entries.forEach { tab ->
+                                                val selected = tab == currentTab
+                                                NavigationBarItem(
+                                                    selected = selected,
+                                                    onClick = { navigateToTab(tab) },
+                                                    colors = navItemColors,
+                                                    icon = {
+                                                        BadgedBox(
+                                                            badge = {
+                                                                if (tab == MainTab.CENTRAL && unreadCount > 0) {
+                                                                    Badge(containerColor = colors.red, contentColor = Color.White) {
+                                                                        Text(if (unreadCount > 9) "9+" else unreadCount.toString())
+                                                                    }
+                                                                }
+                                                            }
+                                                        ) {
+                                                            Icon(if (selected) tab.selectedIcon else tab.icon, contentDescription = tab.label)
+                                                        }
+                                                    },
+                                                    label = {
+                                                        Text(
+                                                            tab.label,
+                                                            fontSize = 10.5.sp,
+                                                            maxLines = 1,
+                                                            softWrap = false,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
+                                                        )
+                                                    }
+                                                )
                                             }
                                         }
                                     }
-                                }
-
-                                // CAMADA 2: Controles de vidro flutuantes
-
-                                // Nav bar no topo com Scroll Edge Effect + botões em vidro
-                                Box(
-                                    modifier = Modifier
-                                        .align(Alignment.TopCenter)
-                                        .padding(start = if (isDesktop) 248.dp else 0.dp)
-                                        .fillMaxWidth()
-                                ) {
-                                    GlassEdgeBarBackdrop(
-                                        collapseProgress = { smoothCollapseState.value },
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(statusTop + 62.dp)
-                                    )
-                                    AppleNavBar(
-                                        title = currentTab.label,
-                                        collapseProgress = { smoothCollapseState.value },
-                                        statusTop = statusTop,
-                                        unreadCount = unreadCount,
-                                        isDesktop = isDesktop,
-                                        loading = state.loading ||
-                                            (currentTab == MainTab.VIRTUAL && state.virtualLoading) ||
-                                            (currentTab == MainTab.CALENDAR && state.calendarLoading),
-                                        onOpenNotifications = { navigateToTab(MainTab.CENTRAL) },
-                                        onRefresh = { refreshCurrentTab() }
-                                    )
-                                }
-
-                                // Toast flutuante para status/erro
-                                val banner = state.statusBanner ?: state.error
-                                AppleToastHost(
-                                    message = banner,
-                                    isError = state.error != null,
-                                    topOffset = statusTop + 62.dp,
-                                    startOffset = if (isDesktop) 248.dp else 0.dp,
-                                    onDismiss = { repo.clearBanner() },
-                                    modifier = Modifier.align(Alignment.TopCenter)
-                                )
-                                if (banner.isNullOrBlank() && state.isOffline) {
+                                ) { innerPadding ->
                                     Box(
                                         modifier = Modifier
-                                            .align(Alignment.TopCenter)
-                                            .padding(
-                                                top = statusTop + 62.dp,
-                                                start = (if (isDesktop) 248.dp else 0.dp) + 16.dp,
-                                                end = 16.dp
+                                            .fillMaxSize()
+                                            .padding(innerPadding)
+                                            .predictiveBackSurfaceTransform(
+                                                readBack = { if (!hasAnyOverlay) predictiveBackState else PredictiveBackState() },
+                                                slideDp = 42f,
+                                                verticalSlideDp = 0f,
+                                                scaleDrop = 0.055f,
+                                                pivotY = 0.5f
                                             )
                                     ) {
-                                        GlassSurface(
+                                        bodyContent()
+                                    }
+                                }
+                            }
+
+                            renderOverlays()
+                        }
+                    }
+
+                    else -> {
+                        // Modo Apple Liquid Glass
+                        val hazeState = rememberHazeState()
+                        val glassEnabled = remember(state.stylePreference) {
+                            PlatformBridge.capabilities().supportsAppleEffects
+                        }
+                        val activeListState = activeListStateFor(currentTab)
+
+                        val collapseProgress by remember(activeListState) {
+                            derivedStateOf {
+                                if (activeListState.firstVisibleItemIndex > 0) 1f
+                                else (activeListState.firstVisibleItemScrollOffset / 110f).coerceIn(0f, 1f)
+                            }
+                        }
+                        val smoothCollapseState = animateFloatAsState(collapseProgress, tween(120))
+
+                        val atTop by remember(activeListState) {
+                            derivedStateOf {
+                                activeListState.firstVisibleItemIndex == 0 && activeListState.firstVisibleItemScrollOffset < 24
+                            }
+                        }
+                        LaunchedEffect(atTop) {
+                            if (atTop) tabBarMinimized = false
+                        }
+
+                        var scrollAccumulator by remember { mutableFloatStateOf(0f) }
+                        val tabScrollConnection = remember(activeListState) {
+                            object : NestedScrollConnection {
+                                override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                                    val dy = available.y
+                                    if (dy < -4f) {
+                                        scrollAccumulator = (scrollAccumulator + dy).coerceAtMost(0f)
+                                        if (scrollAccumulator < -40f && !atTop) {
+                                            tabBarMinimized = true
+                                        }
+                                    } else if (dy > 4f) {
+                                        scrollAccumulator = (scrollAccumulator + dy).coerceAtLeast(0f)
+                                        if (scrollAccumulator > 24f) {
+                                            tabBarMinimized = false
+                                        }
+                                    }
+                                    return Offset.Zero
+                                }
+                            }
+                        }
+
+                        val hasActiveSheet = activeSubject != null ||
+                            (showRiskyAttendanceModal && riskySubjects.isNotEmpty()) ||
+                            showAllNotificationsModal ||
+                            showCalendarEditor
+
+                        BoxWithConstraints(modifier = Modifier.fillMaxSize().background(colors.background)) {
+                            val isDesktop = maxWidth >= 840.dp
+                            val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+                            val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+                            val appleInsets = PaddingValues(
+                                top = statusTop + 60.dp,
+                                bottom = if (isDesktop) 36.dp else (navBottom + 94.dp)
+                            )
+
+                            val reduceMotion = remember { PlatformBridge.isReduceMotionEnabled() }
+                            val bgScale by animateFloatAsState(
+                                targetValue = if (!isDesktop && hasActiveSheet && !reduceMotion) 0.94f else 1f,
+                                animationSpec = AppleMotion.sheet
+                            )
+                            val bgCorner by animateDpAsState(
+                                targetValue = if (!isDesktop && hasActiveSheet) 28.dp else 0.dp,
+                                animationSpec = AppleMotion.dpSheet
+                            )
+                            val pagerProgress by remember(mainPagerState) {
+                                derivedStateOf {
+                                    mainPagerState.currentPage + mainPagerState.currentPageOffsetFraction
+                                }
+                            }
+
+                            CompositionLocalProvider(
+                                LocalHazeState provides hazeState,
+                                LocalGlassEnabled provides glassEnabled,
+                                LocalAppleContentInsets provides appleInsets
+                            ) {
+                                Box(modifier = Modifier.fillMaxSize().background(Color.Black.takeIf { colors.isDark } ?: colors.background)) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .graphicsLayer {
+                                                val s = bgScale.coerceIn(0.85f, 1f)
+                                                scaleX = s
+                                                scaleY = s
+                                            }
+                                            .predictiveBackSurfaceTransform(
+                                                readBack = { if (!hasAnyOverlay) predictiveBackState else PredictiveBackState() },
+                                                slideDp = 42f,
+                                                verticalSlideDp = 0f,
+                                                scaleDrop = 0.055f,
+                                                pivotY = 0.5f
+                                            )
+                                            .clip(RoundedCornerShape(bgCorner.coerceAtLeast(0.dp)))
+                                    ) {
+                                        // CAMADA 1: Conteúdo edge-to-edge (fonte do Liquid Glass)
+                                        Box(
                                             modifier = Modifier
-                                                .clip(CircleShape)
-                                                .pointerHoverIcon(PointerIcon.Hand)
-                                                .clickable { scope.launch { repo.refreshDashboard() } },
-                                            shape = CircleShape,
-                                            shadowElevation = 6.dp
+                                                .fillMaxSize()
+                                                .hazeSource(hazeState)
+                                                .background(colors.background)
                                         ) {
-                                            Row(
-                                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .background(
+                                                        Brush.radialGradient(
+                                                            colors = listOf(
+                                                                colors.accent.copy(alpha = if (colors.isDark) 0.06f else 0.045f),
+                                                                Color.Transparent
+                                                            ),
+                                                            center = Offset(220f, 120f),
+                                                            radius = 900f
+                                                        )
+                                                    )
+                                            )
+
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .padding(start = if (isDesktop) 248.dp else 0.dp)
+                                                    .nestedScroll(tabScrollConnection)
                                             ) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(7.dp)
-                                                        .clip(CircleShape)
-                                                        .background(colors.orange)
-                                                )
-                                                Text(
-                                                    text = "Modo offline · ${formatOfflineAge(state.lastSyncAtMillis)}",
-                                                    color = colors.textPrimary,
-                                                    style = LocalAppleTypography.current.caption1,
-                                                    fontWeight = FontWeight.Medium
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Sidebar flutuante desktop (macOS Tahoe)
-                                if (isDesktop) {
-                                    AppleDesktopSidebar(
-                                        currentTab = currentTab,
-                                        studentName = state.dashboard?.student?.name,
-                                        studentRa = state.dashboard?.student?.ra,
-                                        unreadCount = unreadCount,
-                                        onSelect = { navigateToTab(it) },
-                                        onOpenSearch = { showGlobalSearchModal = true },
-                                        modifier = Modifier.align(Alignment.CenterStart)
-                                    )
-                                } else {
-                                    // Tab bar Liquid Glass mobile
-                                    AppleLiquidGlassTabBar(
-                                        currentTab = currentTab,
-                                        minimized = tabBarMinimized,
-                                        navBottom = navBottom,
-                                        onSelect = { navigateToTab(it) },
-                                        modifier = Modifier.align(Alignment.BottomCenter)
-                                    )
-                                }
-                            }
-
-                            // CAMADA 3: Sheets e Alertas (acima de tudo, com acesso ao hazeSource)
-                            when {
-                                state.activeDocumentViewer != null -> Unit
-                                selectedVirtualAssignment != null -> VirtualAssignmentSheet(
-                                    assignment = selectedVirtualAssignment!!,
-                                    onViewD2LFile = { path, title, courseName, fileName ->
-                                        scope.launch { repo.openD2LFile(path, title, courseName, fileName) }
-                                    },
-                                    onDownloadD2LFile = { path, fileName, courseName ->
-                                        scope.launch { repo.downloadD2LFile(path, fileName, courseName) }
-                                    },
-                                    onDownloadBatch = { items ->
-                                        scope.launch { repo.downloadD2LFilesBatch(items) }
-                                    },
-                                    downloadingFileKey = state.downloadingFileKey,
-                                    onOpenWeb = { url -> repo.openSalaVirtualWeb(url) },
-                                    onDismiss = { selectedVirtualAssignment = null }
-                                )
-                                selectedVirtualAnnouncement != null -> VirtualAnnouncementSheet(
-                                    announcement = selectedVirtualAnnouncement!!,
-                                    onViewD2LFile = { path, title, courseName, fileName ->
-                                        scope.launch { repo.openD2LFile(path, title, courseName, fileName) }
-                                    },
-                                    onDownloadD2LFile = { path, fileName, courseName ->
-                                        scope.launch { repo.downloadD2LFile(path, fileName, courseName) }
-                                    },
-                                    onDownloadBatch = { items ->
-                                        scope.launch { repo.downloadD2LFilesBatch(items) }
-                                    },
-                                    downloadingFileKey = state.downloadingFileKey,
-                                    onDismiss = { selectedVirtualAnnouncement = null }
-                                )
-                                activeSubject != null -> AppleSubjectDetailSheet(
-                                    subject = activeSubject,
-                                    freqAlertThreshold = state.freqAlertThreshold,
-                                    onDismiss = { selectedSubjectCode = null }
-                                )
-                                showRiskyAttendanceModal && riskySubjects.isNotEmpty() -> AppleAttendanceLimitSheet(
-                                    subjects = riskySubjects,
-                                    onSelectSubject = { code ->
-                                        showRiskyAttendanceModal = false
-                                        selectedSubjectCode = code
-                                    },
-                                    onDismiss = { showRiskyAttendanceModal = false }
-                                )
-                                showAllNotificationsModal -> AppleAllNotificationsSheet(
-                                    notifications = state.notifications,
-                                    onDismiss = { showAllNotificationsModal = false }
-                                )
-                                showCalendarEditor -> CalendarEventEditorSheet(
-                                    existing = editingCalendarEvent,
-                                    initialDate = calendarDraftDate ?: selectedCalendarDate,
-                                    subjectSuggestions = calendarSubjectSuggestions,
-                                    saving = state.calendarSaving,
-                                    onSave = { input ->
-                                        scope.launch {
-                                            val editing = editingCalendarEvent
-                                            val ok = if (editing == null) {
-                                                repo.createCalendarEvent(input)
-                                            } else {
-                                                repo.updateCalendarEvent(editing.id, input)
-                                            }
-                                            if (ok) {
-                                                parseIsoDate(input.date)?.let { selectedCalendarDate = it }
-                                                showCalendarEditor = false
-                                                editingCalendarEvent = null
-                                            }
-                                        }
-                                    },
-                                    onRequestDelete = editingCalendarEvent?.let { ev ->
-                                        { confirmDeleteCalendarEvent = ev }
-                                    },
-                                    onDismiss = {
-                                        showCalendarEditor = false
-                                        editingCalendarEvent = null
-                                    }
-                                )
-                                showGlobalSearchModal -> GlobalSearchSheet(
-                                    subjects = mergedSubjects,
-                                    schedule = state.schedule,
-                                    curriculum = state.curriculum,
-                                    virtualOverview = state.virtualOverview,
-                                    virtualCourseDetails = state.virtualCourseDetails,
-                                    calendarEvents = state.calendarEvents,
-                                    onSelectResult = ::handleGlobalSearchResult,
-                                    onDismiss = { showGlobalSearchModal = false }
-                                )
-                            }
-
-                            confirmDeleteCalendarEvent?.let { targetEvent ->
-                                AppleAlert(
-                                    title = "Excluir evento?",
-                                    message = "Deseja remover \"${targetEvent.title}\" do seu calendário?",
-                                    confirmText = "Excluir",
-                                    confirmDestructive = true,
-                                    onConfirm = {
-                                        confirmDeleteCalendarEvent = null
-                                        scope.launch {
-                                            if (repo.deleteCalendarEvent(targetEvent.id)) {
-                                                if (editingCalendarEvent?.id == targetEvent.id) {
-                                                    showCalendarEditor = false
-                                                    editingCalendarEvent = null
+                                                if (isDesktop) {
+                                                    renderTabPager()
+                                                } else {
+                                                    val pullState = rememberPullToRefreshState()
+                                                    val refreshing = when (currentTab) {
+                                                        MainTab.VIRTUAL -> state.virtualLoading && state.virtualOverview != null
+                                                        MainTab.CALENDAR -> state.calendarLoading
+                                                        else -> state.loading && state.dashboard != null
+                                                    }
+                                                    PullToRefreshBox(
+                                                        isRefreshing = refreshing,
+                                                        onRefresh = { refreshCurrentTab() },
+                                                        state = pullState,
+                                                        indicator = {
+                                                            val fraction = pullState.distanceFraction.coerceIn(0f, 1f)
+                                                            if (refreshing || fraction > 0.08f) {
+                                                                Box(
+                                                                    modifier = Modifier
+                                                                        .align(Alignment.TopCenter)
+                                                                        .padding(top = statusTop + 56.dp + (28.dp * fraction))
+                                                                ) {
+                                                                    GlassSurface(
+                                                                        modifier = Modifier.size(38.dp),
+                                                                        shape = CircleShape,
+                                                                        shadowElevation = 10.dp
+                                                                    ) {
+                                                                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                                                            AppleActivityIndicator(size = 18.dp, color = colors.textPrimary)
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    ) {
+                                                        renderTabPager()
+                                                    }
                                                 }
                                             }
                                         }
-                                    },
-                                    onDismiss = { confirmDeleteCalendarEvent = null }
-                                )
-                            }
 
-                            if (confirmLogoutDialog) {
-                                AppleAlert(
-                                    title = "Sair da conta?",
-                                    message = "Sua sessão salva será removida deste dispositivo.",
-                                    confirmText = "Sair",
-                                    confirmDestructive = true,
-                                    onConfirm = {
-                                        confirmLogoutDialog = false
-                                        scope.launch { repo.logout() }
-                                    },
-                                    onDismiss = { confirmLogoutDialog = false }
-                                )
-                            }
-
-                            if (showUpdateDialog && availableUpdate != null) {
-                                val upd = availableUpdate!!
-                                AppleAlert(
-                                    title = "Atualização disponível (v${upd.latestVersion})",
-                                    message = buildString {
-                                        append("Versão instalada: v${upd.currentVersion} → v${upd.latestVersion}")
-                                        if (upd.releaseName.isNotBlank()) append("\n${upd.releaseName}")
-                                        if (upd.releaseNotes.isNotBlank()) append("\n\n${upd.releaseNotes}")
-                                    },
-                                    confirmText = if (updateDownloading) "Baixando..." else "Atualizar",
-                                    dismissText = "Depois",
-                                    confirmEnabled = !updateDownloading,
-                                    dismissEnabled = !updateDownloading,
-                                    onConfirm = { installAppUpdate() },
-                                    onDismiss = { showUpdateDialog = false },
-                                    extraContent = if (updateDownloading) {
-                                        {
-                                            AppleProgressBar(progress = updateProgress, color = colors.accent)
-                                            Spacer(Modifier.height(4.dp))
-                                            Text(
-                                                text = "Baixando APK (${(updateProgress * 100).toInt()}%)…",
-                                                color = colors.textSecondary,
-                                                style = LocalAppleTypography.current.caption1
+                                        // CAMADA 2: Controles de vidro flutuantes
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.TopCenter)
+                                                .padding(start = if (isDesktop) 248.dp else 0.dp)
+                                                .fillMaxWidth()
+                                        ) {
+                                            GlassEdgeBarBackdrop(
+                                                collapseProgress = { smoothCollapseState.value },
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(statusTop + 62.dp)
+                                            )
+                                            AppleNavBar(
+                                                title = currentTab.label,
+                                                collapseProgress = { smoothCollapseState.value },
+                                                statusTop = statusTop,
+                                                unreadCount = unreadCount,
+                                                isDesktop = isDesktop,
+                                                loading = state.loading ||
+                                                    (currentTab == MainTab.VIRTUAL && state.virtualLoading) ||
+                                                    (currentTab == MainTab.CALENDAR && state.calendarLoading),
+                                                onOpenNotifications = { navigateToTab(MainTab.CENTRAL) },
+                                                onRefresh = { refreshCurrentTab() }
                                             )
                                         }
-                                    } else if (!updateStatusMessage.isNullOrBlank() && updateStatusMessage!!.contains("Permita", ignoreCase = true)) {
-                                        {
-                                            Text(
-                                                text = updateStatusMessage!!,
-                                                color = colors.orange,
-                                                style = LocalAppleTypography.current.caption1
+
+                                        val banner = state.statusBanner ?: state.error
+                                        AppleToastHost(
+                                            message = banner,
+                                            isError = state.error != null,
+                                            topOffset = statusTop + 62.dp,
+                                            startOffset = if (isDesktop) 248.dp else 0.dp,
+                                            onDismiss = { repo.clearBanner() },
+                                            modifier = Modifier.align(Alignment.TopCenter)
+                                        )
+                                        if (banner.isNullOrBlank() && state.isOffline) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .align(Alignment.TopCenter)
+                                                    .padding(
+                                                        top = statusTop + 62.dp,
+                                                        start = (if (isDesktop) 248.dp else 0.dp) + 16.dp,
+                                                        end = 16.dp
+                                                    )
+                                            ) {
+                                                GlassSurface(
+                                                    modifier = Modifier
+                                                        .clip(CircleShape)
+                                                        .pointerHoverIcon(PointerIcon.Hand)
+                                                        .clickable { scope.launch { repo.refreshDashboard() } },
+                                                    shape = CircleShape,
+                                                    shadowElevation = 6.dp
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                    ) {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .size(7.dp)
+                                                                .clip(CircleShape)
+                                                                .background(colors.orange)
+                                                        )
+                                                        Text(
+                                                            text = "Modo offline · ${formatOfflineAge(state.lastSyncAtMillis)}",
+                                                            color = colors.textPrimary,
+                                                            style = LocalAppleTypography.current.caption1,
+                                                            fontWeight = FontWeight.Medium
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        if (isDesktop) {
+                                            AppleDesktopSidebar(
+                                                currentTab = currentTab,
+                                                studentName = state.dashboard?.student?.name,
+                                                studentRa = state.dashboard?.student?.ra,
+                                                unreadCount = unreadCount,
+                                                onSelect = { navigateToTab(it) },
+                                                onOpenSearch = { showGlobalSearchModal = true },
+                                                modifier = Modifier.align(Alignment.CenterStart)
+                                            )
+                                        } else {
+                                            AppleLiquidGlassTabBar(
+                                                currentTab = currentTab,
+                                                pagerProgress = pagerProgress,
+                                                minimized = tabBarMinimized,
+                                                navBottom = navBottom,
+                                                onSelect = { navigateToTab(it) },
+                                                modifier = Modifier.align(Alignment.BottomCenter)
                                             )
                                         }
-                                    } else null
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
+                                    }
 
-        if (showBatteryOptDialog) {
-            AppleAlert(
-                title = "Notificações com app fechado",
-                message = "Para receber alertas de novas notas, materiais e atividades da Sala Virtual mesmo com o aplicativo fechado, permita que o UNICEP Portal rode sem restrição de bateria.",
-                confirmText = "Permitir",
-                dismissText = "Agora não",
-                onConfirm = {
-                    showBatteryOptDialog = false
-                    PlatformBridge.requestIgnoreBatteryOptimizations()
-                },
-                onDismiss = { showBatteryOptDialog = false }
-            )
-        }
-
-        state.documentLoadingLabel?.let { label ->
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.42f))
-                    .clickable(enabled = false) {},
-                contentAlignment = Alignment.Center
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(18.dp),
-                    color = colors.surface,
-                    shadowElevation = 8.dp
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(22.dp),
-                            color = colors.accent,
-                            strokeWidth = 2.5.dp
-                        )
-                        Column {
-                            Text(
-                                text = "Abrindo arquivo...",
-                                color = colors.textPrimary,
-                                style = LocalAppleTypography.current.headline
-                            )
-                            Text(
-                                text = label,
-                                color = colors.textSecondary,
-                                style = LocalAppleTypography.current.caption1
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        state.activeDocumentViewer?.let { viewer ->
-            PlatformDocumentViewer(
-                title = viewer.title,
-                courseName = viewer.courseName,
-                fileName = viewer.fileName,
-                mimeType = viewer.mimeType,
-                bytes = viewer.bytes,
-                fallbackUrl = viewer.fallbackUrl,
-                downloading = state.downloadingFileKey == viewer.path,
-                onDownload = { scope.launch { repo.downloadActiveDocument() } },
-                onClose = { repo.closeDocumentViewer() }
-            )
-        }
-        }
-    }
-    }
-}
-
-@Composable
-private fun AppleNavBar(
-    title: String,
-    collapseProgress: () -> Float,
-    statusTop: Dp,
-    unreadCount: Int,
-    isDesktop: Boolean,
-    loading: Boolean,
-    onOpenNotifications: () -> Unit,
-    onRefresh: () -> Unit
-) {
-    val colors = LocalPortalColors.current
-    val appleType = LocalAppleTypography.current
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = statusTop, start = 16.dp, end = 16.dp)
-            .height(52.dp)
-    ) {
-        Text(
-            text = title,
-            color = colors.textPrimary,
-            style = appleType.headline,
-            modifier = Modifier
-                .align(Alignment.Center)
-                .graphicsLayer { alpha = collapseProgress().coerceIn(0f, 1f) }
-        )
-
-        Row(
-            modifier = Modifier.align(Alignment.CenterEnd),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            if (isDesktop) {
-                GlassButton(
-                    onClick = onRefresh,
-                    size = 40.dp,
-                    contentDescription = "Atualizar"
-                ) {
-                    if (loading) {
-                        AppleActivityIndicator(size = 18.dp, color = colors.accent)
-                    } else {
-                        Icon(
-                            imageVector = PortalIcons.Refresh,
-                            contentDescription = "Atualizar",
-                            tint = colors.textPrimary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-            }
-
-            Box {
-                GlassButton(
-                    onClick = onOpenNotifications,
-                    size = 40.dp,
-                    contentDescription = "Notificações"
-                ) {
-                    Icon(
-                        imageVector = PortalIcons.Bell,
-                        contentDescription = "Central e Notificações",
-                        tint = colors.textPrimary,
-                        modifier = Modifier.size(19.dp)
-                    )
-                }
-                if (unreadCount > 0) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(top = 4.dp, end = 4.dp)
-                            .size(9.dp)
-                            .clip(CircleShape)
-                            .background(colors.red)
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun AppleToastHost(
-    message: String?,
-    isError: Boolean,
-    topOffset: Dp,
-    startOffset: Dp,
-    onDismiss: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val colors = LocalPortalColors.current
-    val appleType = LocalAppleTypography.current
-    val scope = rememberCoroutineScope()
-    var dragY by remember(message) { mutableFloatStateOf(0f) }
-
-    LaunchedEffect(message, isError) {
-        if (!message.isNullOrBlank() && !isError) {
-            delay(4000)
-            onDismiss()
-        }
-    }
-
-    AnimatedVisibility(
-        visible = !message.isNullOrBlank(),
-        modifier = modifier.padding(top = topOffset, start = startOffset + 16.dp, end = 16.dp),
-        enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(AppleMotion.standard),
-        exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(AppleMotion.standard)
-    ) {
-        GlassSurface(
-            modifier = Modifier
-                .widthIn(max = 420.dp)
-                .offset(y = (dragY / 3f).dp)
-                .clip(CircleShape)
-                .pointerHoverIcon(PointerIcon.Hand)
-                .draggable(
-                    orientation = Orientation.Vertical,
-                    state = rememberDraggableState { delta ->
-                        dragY = (dragY + delta).coerceAtMost(20f)
-                    },
-                    onDragStopped = {
-                        if (dragY < -28f) onDismiss() else scope.launch { dragY = 0f }
-                    }
-                )
-                .clickable { onDismiss() },
-            shape = CircleShape,
-            shadowElevation = 16.dp
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(
-                    imageVector = if (isError) PortalIcons.Warning else PortalIcons.CheckCircle,
-                    contentDescription = null,
-                    tint = if (isError) colors.red else colors.green,
-                    modifier = Modifier.size(18.dp)
-                )
-                Text(
-                    text = message.orEmpty(),
-                    color = colors.textPrimary,
-                    style = appleType.subheadline,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun AppleLiquidGlassTabBar(
-    currentTab: MainTab,
-    minimized: Boolean,
-    navBottom: Dp,
-    onSelect: (MainTab) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val colors = LocalPortalColors.current
-    val appleType = LocalAppleTypography.current
-    val haptic = LocalHapticFeedback.current
-    val tabs = MainTab.entries
-    val selectedIndex = tabs.indexOf(currentTab).coerceAtLeast(0)
-
-    val barHeight by animateDpAsState(
-        targetValue = if (minimized) 48.dp else 62.dp,
-        animationSpec = AppleMotion.dpStandard
-    )
-    val horizontalPad by animateDpAsState(
-        targetValue = if (minimized) 44.dp else 12.dp,
-        animationSpec = AppleMotion.dpStandard
-    )
-
-    val safePad = horizontalPad.coerceAtLeast(0.dp)
-    val safeHeight = barHeight.coerceAtLeast(1.dp)
-
-    Box(
-        modifier = modifier
-            .padding(bottom = (navBottom + 12.dp).coerceAtLeast(0.dp), start = safePad, end = safePad)
-            .widthIn(max = 460.dp)
-            .fillMaxWidth()
-    ) {
-        GlassSurface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(safeHeight),
-            shape = CircleShape,
-            shadowElevation = 20.dp
-        ) {
-            BoxWithConstraints(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(4.dp)
-            ) {
-                val itemWidth = (maxWidth / tabs.size).coerceAtLeast(0.dp)
-                val lensOffset by animateDpAsState(
-                    targetValue = itemWidth * selectedIndex,
-                    animationSpec = AppleMotion.dpSnappy
-                )
-
-                // Lente deslizante atrás da aba ativa
-                Box(
-                    modifier = Modifier
-                        .offset(x = lensOffset)
-                        .width(itemWidth)
-                        .fillMaxHeight()
-                        .clip(CircleShape)
-                        .background(colors.glassLens)
-                )
-
-                Row(modifier = Modifier.fillMaxSize()) {
-                    tabs.forEach { tab ->
-                        val isSelected = tab == currentTab
-                        val interactionSource = remember { MutableInteractionSource() }
-                        val pressed by interactionSource.collectIsPressedAsState()
-                        val itemScale by animateFloatAsState(
-                            targetValue = if (pressed) 0.93f else 1f,
-                            animationSpec = AppleMotion.press
-                        )
-                        val safeItemScale = itemScale.coerceIn(0.8f, 1.2f)
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                                .graphicsLayer { scaleX = safeItemScale; scaleY = safeItemScale }
-                                .clip(CircleShape)
-                                .pointerHoverIcon(PointerIcon.Hand)
-                                .semantics {
-                                    role = Role.Tab
-                                    this.selected = isSelected
+                                    // CAMADA 3: Sheets e Alertas (acima de tudo, com acesso ao hazeSource)
+                                    renderOverlays()
                                 }
-                                .clickable(
-                                    interactionSource = interactionSource,
-                                    indication = null
-                                ) {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    onSelect(tab)
-                                },
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            Icon(
-                                imageVector = if (isSelected) tab.selectedIcon else tab.icon,
-                                contentDescription = tab.label,
-                                tint = if (isSelected) colors.accent else colors.textPrimary,
-                                modifier = Modifier.size(if (minimized) 21.dp else 22.dp)
-                            )
-                            AnimatedVisibility(
-                                visible = !minimized,
-                                enter = fadeIn(tween(150)),
-                                exit = fadeOut(tween(110))
-                            ) {
-                                Text(
-                                    text = tab.label,
-                                    color = if (isSelected) colors.accent else colors.textPrimary,
-                                    style = appleType.caption2.copy(fontSize = 10.5.sp),
-                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(top = 2.dp)
-                                )
                             }
                         }
                     }
                 }
-            }
-        }
-    }
-}
 
-@Composable
-private fun AppleDesktopSidebar(
-    currentTab: MainTab,
-    studentName: String?,
-    studentRa: String?,
-    unreadCount: Int,
-    onSelect: (MainTab) -> Unit,
-    onOpenSearch: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val colors = LocalPortalColors.current
-    val appleType = LocalAppleTypography.current
-    val shape = RoundedCornerShape(22.dp)
-
-    GlassSurface(
-        modifier = modifier
-            .padding(8.dp)
-            .width(232.dp)
-            .fillMaxHeight(),
-        shape = shape,
-        shadowElevation = 18.dp
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(28.dp)
-                            .clip(RoundedCornerShape(7.dp))
-                            .background(Brush.linearGradient(listOf(colors.accent, colors.indigo))),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = PortalIcons.Academic,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                    Text(
-                        text = "UNICEP Portal",
-                        color = colors.textPrimary,
-                        style = appleType.headline,
-                        maxLines = 1
+                if (showBatteryOptDialog) {
+                    AppleAlert(
+                        title = "Notificações com app fechado",
+                        message = "Para receber alertas de novas notas, materiais e atividades da Sala Virtual mesmo com o aplicativo fechado, permita que o UNICEP Portal rode sem restrição de bateria.",
+                        confirmText = "Permitir",
+                        dismissText = "Agora não",
+                        onConfirm = {
+                            showBatteryOptDialog = false
+                            PlatformBridge.requestIgnoreBatteryOptimizations()
+                        },
+                        onDismiss = { showBatteryOptDialog = false }
                     )
                 }
 
-                val searchInteraction = remember { MutableInteractionSource() }
-                val searchHovered by searchInteraction.collectIsHoveredAsState()
-                val searchPressed by searchInteraction.collectIsPressedAsState()
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(36.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(
-                            when {
-                                searchPressed -> colors.systemFill
-                                searchHovered -> colors.tertiaryFill.copy(alpha = 0.9f)
-                                else -> colors.tertiaryFill
-                            }
-                        )
-                        .pointerHoverIcon(PointerIcon.Hand)
-                        .hoverable(searchInteraction)
-                        .clickable(
-                            interactionSource = searchInteraction,
-                            indication = null,
-                            onClick = onOpenSearch
-                        )
-                        .padding(horizontal = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            imageVector = PortalIcons.Search,
-                            contentDescription = "Busca global",
-                            tint = colors.textSecondary,
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Text(
-                            text = "Buscar...",
-                            color = colors.textSecondary,
-                            style = appleType.footnote
-                        )
-                    }
+                state.documentLoadingLabel?.let { label ->
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(colors.systemFill)
-                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.42f))
+                            .clickable(enabled = false) {},
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = "Ctrl K",
-                            color = colors.textSecondary,
-                            style = appleType.caption2,
-                            fontSize = 10.5.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(6.dp))
-
-                MainTab.entries.forEach { tab ->
-                    val isSelected = tab == currentTab
-                    val interactionSource = remember { MutableInteractionSource() }
-                    val hovered by interactionSource.collectIsHoveredAsState()
-                    val pressed by interactionSource.collectIsPressedAsState()
-                    val rowBg = when {
-                        isSelected -> colors.glassLens
-                        pressed -> colors.systemFill
-                        hovered -> colors.systemFill.copy(alpha = 0.45f)
-                        else -> Color.Transparent
-                    }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(38.dp)
-                            .clip(RoundedCornerShape(11.dp))
-                            .background(rowBg)
-                            .pointerHoverIcon(PointerIcon.Hand)
-                            .hoverable(interactionSource)
-                            .semantics {
-                                role = Role.Tab
-                                this.selected = isSelected
-                            }
-                            .clickable(
-                                interactionSource = interactionSource,
-                                indication = null
-                            ) { onSelect(tab) }
-                            .padding(horizontal = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = if (isSelected) tab.selectedIcon else tab.icon,
-                                contentDescription = null,
-                                tint = if (isSelected) colors.accent else colors.textSecondary,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(Modifier.width(10.dp))
-                            Text(
-                                text = tab.label,
-                                color = colors.textPrimary,
-                                style = appleType.subheadline,
-                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium
-                            )
-                        }
-                        if (tab == MainTab.CENTRAL && unreadCount > 0) {
-                            Box(
-                                modifier = Modifier
-                                    .widthIn(min = 20.dp)
-                                    .clip(CircleShape)
-                                    .background(colors.red)
-                                    .padding(horizontal = 6.dp, vertical = 2.dp),
-                                contentAlignment = Alignment.Center
+                        Surface(
+                            shape = RoundedCornerShape(18.dp),
+                            color = colors.surface,
+                            shadowElevation = 8.dp
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                Text(
-                                    text = if (unreadCount > 9) "9+" else unreadCount.toString(),
-                                    color = Color.White,
-                                    fontSize = 10.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(22.dp),
+                                    color = colors.accent,
+                                    strokeWidth = 2.5.dp
                                 )
+                                Column {
+                                    Text(
+                                        text = "Abrindo arquivo...",
+                                        color = colors.textPrimary,
+                                        style = LocalAppleTypography.current.headline
+                                    )
+                                    Text(
+                                        text = label,
+                                        color = colors.textSecondary,
+                                        style = LocalAppleTypography.current.caption1
+                                    )
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            if (!studentName.isNullOrBlank() || !studentRa.isNullOrBlank()) {
-                val shortName = studentName.orEmpty().toDisplayTitle().ifBlank { "Aluno" }
-                val initials = remember(studentName) { initialsFromName(studentName) }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .pointerHoverIcon(PointerIcon.Hand)
-                        .clickable { onSelect(MainTab.CENTRAL) }
-                        .padding(horizontal = 8.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(34.dp)
-                            .clip(CircleShape)
-                            .background(Brush.linearGradient(listOf(colors.accent, colors.indigo))),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = initials,
-                            color = Color.White,
-                            style = appleType.caption1,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = shortName,
-                            color = colors.textPrimary,
-                            style = appleType.footnote,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (!studentRa.isNullOrBlank()) {
-                            Text(
-                                text = "RA $studentRa",
-                                color = colors.textSecondary,
-                                style = appleType.caption1,
-                                maxLines = 1
-                            )
-                        }
-                    }
+                state.activeDocumentViewer?.let { viewer ->
+                    PlatformDocumentViewer(
+                        title = viewer.title,
+                        courseName = viewer.courseName,
+                        fileName = viewer.fileName,
+                        mimeType = viewer.mimeType,
+                        bytes = viewer.bytes,
+                        fallbackUrl = viewer.fallbackUrl,
+                        downloading = state.downloadingFileKey == viewer.path,
+                        onDownload = { scope.launch { repo.downloadActiveDocument() } },
+                        onClose = { repo.closeDocumentViewer() }
+                    )
                 }
             }
         }
-    }
-}
-
-private fun formatOfflineAge(lastSyncAtMillis: Long?): String {
-    if (lastSyncAtMillis == null || lastSyncAtMillis <= 0L) return "Dados em cache"
-    val diffMs = (me.muriloscolari.unicep.platform.PlatformBridge.currentTimeMillis() - lastSyncAtMillis).coerceAtLeast(0L)
-    val mins = diffMs / 60_000L
-    return when {
-        mins < 1L -> "Atualizado agora há pouco"
-        mins < 60L -> "Atualizado há ${mins} min"
-        mins < 24L * 60L -> "Atualizado há ${mins / 60L}h"
-        else -> "Atualizado há ${mins / (24L * 60L)}d"
     }
 }

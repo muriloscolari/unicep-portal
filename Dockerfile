@@ -2,12 +2,17 @@
 
 # Stage 1: Compila o frontend Compose Multiplatform Web (Wasm)
 FROM eclipse-temurin:21-jdk AS web-builder
-RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 brotli gzip && rm -rf /var/lib/apt/lists/*
 WORKDIR /src/app
 COPY app/ .
 RUN --mount=type=cache,target=/root/.gradle/caches \
     --mount=type=cache,target=/root/.gradle/wrapper \
-    chmod +x ./gradlew && ./gradlew :composeApp:wasmJsBrowserDistribution -PwebOnly=true --no-daemon
+    chmod +x ./gradlew && ./gradlew :composeApp:wasmJsBrowserDistribution -PwebOnly=true --no-daemon \
+    && DIST=/src/app/composeApp/build/dist/wasmJs/productionExecutable \
+    && rm -f "$DIST"/*.map \
+    && find "$DIST" -maxdepth 1 -type f \( -name '*.wasm' -o -name '*.js' -o -name '*.svg' -o -name '*.html' \) \
+        -exec brotli -f -k -q 6 {} \; \
+        -exec gzip -f -k -9 {} \;
 
 # Stage 2: Compila o backend em Go (estático, sem CGO)
 FROM golang:1.24-alpine AS go-builder

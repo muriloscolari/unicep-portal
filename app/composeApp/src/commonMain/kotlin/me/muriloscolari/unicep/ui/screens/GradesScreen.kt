@@ -1,15 +1,12 @@
 package me.muriloscolari.unicep.ui.screens
 
 import androidx.compose.animation.animateContentSize
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
@@ -28,24 +25,17 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -71,20 +61,22 @@ import me.muriloscolari.unicep.data.api.ReportCardResponse
 import me.muriloscolari.unicep.data.api.ScheduleResponse
 import me.muriloscolari.unicep.data.api.StudentInfo
 import me.muriloscolari.unicep.data.api.VirtualAssignmentItem
+import me.muriloscolari.unicep.data.api.VirtualCourseDetailResponse
 import me.muriloscolari.unicep.data.api.VirtualOverviewResponse
+import me.muriloscolari.unicep.data.repo.SubjectVirtualLink
+import me.muriloscolari.unicep.data.repo.buildSubjectVirtualLinks
 import me.muriloscolari.unicep.data.repo.buildTodaySummary
+import me.muriloscolari.unicep.data.repo.collectAllPendingVirtualAssignments
 import me.muriloscolari.unicep.platform.DesignStyle
 import me.muriloscolari.unicep.platform.PlatformBridge
 import me.muriloscolari.unicep.platform.PlatformVerticalScrollbar
-import me.muriloscolari.unicep.platform.PortalHapticType
 import me.muriloscolari.unicep.platform.buildGradesExportData
-import me.muriloscolari.unicep.ui.designsystem.ExportActionModal
 import me.muriloscolari.unicep.ui.designsystem.AppleEmptyState
 import me.muriloscolari.unicep.ui.designsystem.AppleProgressBar
-import me.muriloscolari.unicep.ui.designsystem.AppleSheet
 import me.muriloscolari.unicep.ui.designsystem.AppleSkeletonBox
 import me.muriloscolari.unicep.ui.designsystem.CardStyle
 import me.muriloscolari.unicep.ui.designsystem.CopyTextButton
+import me.muriloscolari.unicep.ui.designsystem.ExportActionModal
 import me.muriloscolari.unicep.ui.designsystem.GlassMenu
 import me.muriloscolari.unicep.ui.designsystem.GlassMenuItem
 import me.muriloscolari.unicep.ui.designsystem.GlassSurface
@@ -98,56 +90,13 @@ import me.muriloscolari.unicep.ui.designsystem.PortalDivider
 import me.muriloscolari.unicep.ui.designsystem.PortalIcons
 import me.muriloscolari.unicep.ui.designsystem.PortalListRow
 import me.muriloscolari.unicep.ui.designsystem.PortalSectionHeader
-import me.muriloscolari.unicep.ui.designsystem.PortalSegmentedControl
 import me.muriloscolari.unicep.ui.designsystem.PortalStatusDot
 import me.muriloscolari.unicep.ui.designsystem.PortalTextButton
 import me.muriloscolari.unicep.ui.designsystem.ProgressRing
 import me.muriloscolari.unicep.ui.designsystem.SelectableRichText
 import me.muriloscolari.unicep.ui.designsystem.appleScrollBoundaryHaptics
-import me.muriloscolari.unicep.ui.designsystem.predictiveBackScrimAlpha
-import me.muriloscolari.unicep.ui.designsystem.predictiveBackSurfaceTransform
-import me.muriloscolari.unicep.ui.designsystem.LocalPredictiveBackProgress
 import me.muriloscolari.unicep.ui.designsystem.tabularNumberStyle
 import me.muriloscolari.unicep.ui.util.toDisplayTitle
-import kotlin.math.roundToInt
-
-data class UnifiedSubject(
-    val code: String,
-    val name: String,
-    val grade: PartialGradeItem?,
-    val report: ReportCardItem?
-)
-
-fun mergeUnifiedSubjects(
-    grades: List<PartialGradeItem>,
-    report: ReportCardResponse
-): List<UnifiedSubject> {
-    val gradeMap = grades.associateBy { it.code }
-    val reportMap = report.items.associateBy { it.code }
-    val orderedCodes = (grades.map { it.code } + report.items.map { it.code }).distinct()
-    return orderedCodes.map { code ->
-        val g = gradeMap[code]
-        val r = reportMap[code]
-        UnifiedSubject(
-            code = code,
-            name = g?.name?.takeIf { it.isNotBlank() } ?: r?.name.orEmpty(),
-            grade = g,
-            report = r
-        )
-    }
-}
-
-fun ReportCardItem.isFrequencyAtLimit(): Boolean = hours > 0 && remainingAbsences <= 3
-
-private fun UnifiedSubject.numericAverage(): Double? =
-    grade?.average?.value ?: report?.finalAverageValue
-
-private fun UnifiedSubject.isAtRisk(): Boolean {
-    val freqRisk = report?.isFrequencyAtLimit() == true
-    val avg = numericAverage()
-    val gradeRisk = grade?.belowPassing == true || (avg != null && avg < 6.0)
-    return freqRisk || gradeRisk
-}
 
 @Composable
 fun SemesterScreen(
@@ -168,9 +117,12 @@ fun SemesterScreen(
     freqAlertThreshold: Int = 80,
     schedule: ScheduleResponse? = null,
     virtualOverview: VirtualOverviewResponse? = null,
+    virtualCourseDetails: Map<Long, VirtualCourseDetailResponse> = emptyMap(),
     onOpenSearch: () -> Unit = {},
     onOpenSchedule: () -> Unit = {},
     onOpenVirtualAssignment: (VirtualAssignmentItem) -> Unit = {},
+    onOpenVirtualCourse: (Long) -> Unit = {},
+    onOpenVirtualTab: () -> Unit = {},
     loading: Boolean = false,
     listState: LazyListState = rememberLazyListState(),
     renderSheetsInPlace: Boolean = true
@@ -186,6 +138,14 @@ fun SemesterScreen(
 
     val mergedSubjects = remember(grades, report.items) {
         mergeUnifiedSubjects(grades, report)
+    }
+
+    val subjectVirtualLinks = remember(mergedSubjects, virtualOverview, virtualCourseDetails) {
+        buildSubjectVirtualLinks(mergedSubjects, virtualOverview, virtualCourseDetails)
+    }
+
+    val pendingVirtualAssignments = remember(virtualOverview, virtualCourseDetails) {
+        collectAllPendingVirtualAssignments(virtualOverview, virtualCourseDetails)
     }
 
     val riskySubjects = remember(mergedSubjects) {
@@ -204,9 +164,10 @@ fun SemesterScreen(
     }
 
     val isApple = style == DesignStyle.APPLE
-    val orderedSubjects = remember(mergedSubjects) {
+    val orderedSubjects = remember(mergedSubjects, subjectVirtualLinks) {
         mergedSubjects.sortedWith(
             compareByDescending<UnifiedSubject> { it.isAtRisk() }
+                .thenByDescending { subjectVirtualLinks[it.code]?.pendingAssignments?.isNotEmpty() == true }
                 .thenBy { it.name.toDisplayTitle() }
         )
     }
@@ -265,97 +226,25 @@ fun SemesterScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                if (isApple) {
-                                    GlassSurface(
-                                        modifier = Modifier
-                                            .size(34.dp)
-                                            .clip(CircleShape)
-                                            .pointerHoverIcon(PointerIcon.Hand)
-                                            .clickable {
-                                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                onOpenSearch()
-                                            },
-                                        shape = CircleShape,
-                                        shadowElevation = 8.dp
-                                    ) {
-                                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                            Icon(
-                                                imageVector = PortalIcons.Search,
-                                                contentDescription = "Busca global",
-                                                tint = colors.accent,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        }
+                                SemesterHeaderIconButton(
+                                    isApple = isApple,
+                                    icon = PortalIcons.Search,
+                                    contentDescription = "Busca global",
+                                    onClick = {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        onOpenSearch()
                                     }
-                                } else {
-                                    Surface(
-                                        modifier = Modifier
-                                            .size(36.dp)
-                                            .clip(CircleShape)
-                                            .pointerHoverIcon(PointerIcon.Hand)
-                                            .clickable {
-                                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                onOpenSearch()
-                                            },
-                                        shape = CircleShape,
-                                        color = colors.surfaceSecondary
-                                    ) {
-                                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                            Icon(
-                                                imageVector = PortalIcons.Search,
-                                                contentDescription = "Busca global",
-                                                tint = colors.accent,
-                                                modifier = Modifier.size(17.dp)
-                                            )
-                                        }
-                                    }
-                                }
+                                )
                                 if (mergedSubjects.isNotEmpty()) {
-                                    if (isApple) {
-                                        GlassSurface(
-                                            modifier = Modifier
-                                                .size(34.dp)
-                                                .clip(CircleShape)
-                                                .pointerHoverIcon(PointerIcon.Hand)
-                                                .clickable {
-                                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                    showExportSheet = true
-                                                },
-                                            shape = CircleShape,
-                                            shadowElevation = 8.dp
-                                        ) {
-                                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                                Icon(
-                                                    imageVector = PortalIcons.Share,
-                                                    contentDescription = "Exportar resumo do semestre",
-                                                    tint = colors.accent,
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                            }
+                                    SemesterHeaderIconButton(
+                                        isApple = isApple,
+                                        icon = PortalIcons.Share,
+                                        contentDescription = "Exportar resumo do semestre",
+                                        onClick = {
+                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            showExportSheet = true
                                         }
-                                    } else {
-                                        Surface(
-                                            modifier = Modifier
-                                                .size(36.dp)
-                                                .clip(CircleShape)
-                                                .pointerHoverIcon(PointerIcon.Hand)
-                                                .clickable {
-                                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                    showExportSheet = true
-                                                },
-                                            shape = CircleShape,
-                                            color = colors.surfaceSecondary
-                                        ) {
-                                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                                Icon(
-                                                    imageVector = PortalIcons.Share,
-                                                    contentDescription = "Exportar resumo do semestre",
-                                                    tint = colors.accent,
-                                                    modifier = Modifier.size(17.dp)
-                                                )
-                                            }
-                                        }
-                                    }
+                                    )
                                 }
                                 if (periods.isNotEmpty()) {
                                     val currentLabel = periods.getOrNull(selectedIdx)?.label?.let { shortenPeriod(it) } ?: "Período"
@@ -487,7 +376,7 @@ fun SemesterScreen(
                         else -> colors.green
                     }
                     val avgText = overallAverage?.let { formatOneDecimal(it) } ?: "—"
-                    val pendingCount = mergedSubjects.count { it.numericAverage() == null }
+                    val pendingGradesCount = mergedSubjects.count { it.numericAverage() == null }
 
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Row(
@@ -520,7 +409,7 @@ fun SemesterScreen(
                                     iconTint = colors.indigo,
                                     value = "${mergedSubjects.size}",
                                     valueColor = colors.textPrimary,
-                                    label = if (pendingCount > 0) "Disciplinas · $pendingCount sem nota" else "Disciplinas"
+                                    label = if (pendingGradesCount > 0) "Disciplinas · $pendingGradesCount sem nota" else "Disciplinas"
                                 )
                             }
                         }
@@ -555,9 +444,9 @@ fun SemesterScreen(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        if (pendingCount > 0) {
+                                        if (pendingGradesCount > 0) {
                                             Text(
-                                                text = "$pendingCount sem nota",
+                                                text = "$pendingGradesCount sem nota",
                                                 color = colors.textSecondary,
                                                 style = appleType.footnote
                                             )
@@ -571,6 +460,17 @@ fun SemesterScreen(
                                 }
                             }
                         }
+                    }
+                }
+
+                // Atividades pendentes da Sala Virtual integradas na tela principal
+                if (pendingVirtualAssignments.isNotEmpty()) {
+                    item(key = "pending_virtual_assignments") {
+                        PendingVirtualAssignmentsCard(
+                            assignments = pendingVirtualAssignments,
+                            onOpenAssignment = onOpenVirtualAssignment,
+                            onOpenVirtualTab = onOpenVirtualTab
+                        )
                     }
                 }
 
@@ -655,6 +555,7 @@ fun SemesterScreen(
                             Box(modifier = Modifier.weight(1f)) {
                                 AppleSubjectCard(
                                     subject = pair[0],
+                                    virtualLink = subjectVirtualLinks[pair[0].code],
                                     onClick = { onOpenSubject(pair[0].code) }
                                 )
                             }
@@ -662,6 +563,7 @@ fun SemesterScreen(
                                 Box(modifier = Modifier.weight(1f)) {
                                     AppleSubjectCard(
                                         subject = pair[1],
+                                        virtualLink = subjectVirtualLinks[pair[1].code],
                                         onClick = { onOpenSubject(pair[1].code) }
                                     )
                                 }
@@ -674,6 +576,7 @@ fun SemesterScreen(
                     items(orderedSubjects, key = { it.code }) { subject ->
                         AppleSubjectCard(
                             subject = subject,
+                            virtualLink = subjectVirtualLinks[subject.code],
                             onClick = { onOpenSubject(subject.code) }
                         )
                     }
@@ -731,6 +634,15 @@ fun SemesterScreen(
                 activeSubject != null -> AppleSubjectDetailSheet(
                     subject = activeSubject,
                     freqAlertThreshold = freqAlertThreshold,
+                    virtualLink = subjectVirtualLinks[activeSubject.code],
+                    onOpenVirtualCourse = { ou ->
+                        onCloseSubject()
+                        onOpenVirtualCourse(ou)
+                    },
+                    onOpenVirtualAssignment = { item ->
+                        onCloseSubject()
+                        onOpenVirtualAssignment(item)
+                    },
                     onDismiss = onCloseSubject
                 )
                 showRiskyAttendance && riskySubjects.isNotEmpty() -> AppleAttendanceLimitSheet(
@@ -752,6 +664,212 @@ fun SemesterScreen(
                 ),
                 onDismiss = { showExportSheet = false }
             )
+        }
+    }
+}
+
+@Composable
+private fun SemesterHeaderIconButton(
+    isApple: Boolean,
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit
+) {
+    val colors = LocalPortalColors.current
+    if (isApple) {
+        GlassSurface(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .pointerHoverIcon(PointerIcon.Hand)
+                .clickable(onClick = onClick),
+            shape = CircleShape,
+            shadowElevation = 8.dp
+        ) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = contentDescription,
+                    tint = colors.accent,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+    } else {
+        Surface(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .pointerHoverIcon(PointerIcon.Hand)
+                .clickable(onClick = onClick),
+            shape = CircleShape,
+            color = colors.surfaceSecondary
+        ) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = contentDescription,
+                    tint = colors.accent,
+                    modifier = Modifier.size(17.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PendingVirtualAssignmentsCard(
+    assignments: List<VirtualAssignmentItem>,
+    onOpenAssignment: (VirtualAssignmentItem) -> Unit,
+    onOpenVirtualTab: () -> Unit
+) {
+    val colors = LocalPortalColors.current
+    val appleType = LocalAppleTypography.current
+    val haptics = LocalHapticFeedback.current
+    var expanded by remember { mutableStateOf(false) }
+    val visibleItems = if (expanded) assignments else assignments.take(4)
+
+    PortalCard(
+        modifier = Modifier.fillMaxWidth().animateContentSize(),
+        cardStyle = CardStyle.Grouped,
+        contentPadding = PaddingValues(0.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = PortalIcons.Virtual,
+                    contentDescription = null,
+                    tint = colors.orange,
+                    modifier = Modifier.size(17.dp)
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Atividades a entregar",
+                        color = colors.textPrimary,
+                        style = appleType.headline,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "Pendências da Sala Virtual",
+                        color = colors.textSecondary,
+                        style = appleType.caption1,
+                        maxLines = 1
+                    )
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                PortalBadge(
+                    text = if (assignments.size == 1) "1 pendente" else "${assignments.size} pendentes",
+                    color = colors.orange
+                )
+                Text(
+                    text = "Virtual",
+                    color = colors.accent,
+                    style = appleType.footnote,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .pointerHoverIcon(PointerIcon.Hand)
+                        .clickable {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onOpenVirtualTab()
+                        }
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                )
+            }
+        }
+
+        PortalDivider()
+
+        visibleItems.forEachIndexed { idx, item ->
+            if (idx > 0) PortalDivider(Modifier.padding(start = 16.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pointerHoverIcon(PointerIcon.Hand)
+                    .clickable {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onOpenAssignment(item)
+                    }
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(colors.orange)
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = item.name,
+                        color = colors.textPrimary,
+                        style = appleType.subheadline,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    val dueLabel = formatIsoDateTime(item.dueDate.ifBlank { item.endDate }, item.dueAtMillis)
+                    val meta = listOfNotNull(
+                        item.orgUnitName.takeIf { it.isNotBlank() }?.toDisplayTitle(),
+                        dueLabel.takeIf { it.isNotBlank() }?.let { "Até $it" }
+                    ).joinToString(" · ")
+                    if (meta.isNotBlank()) {
+                        Text(
+                            text = meta,
+                            color = colors.textSecondary,
+                            style = appleType.caption1,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                Icon(
+                    imageVector = PortalIcons.ChevronRight,
+                    contentDescription = null,
+                    tint = colors.tertiaryLabel,
+                    modifier = Modifier.size(15.dp)
+                )
+            }
+        }
+
+        if (assignments.size > 4) {
+            PortalDivider()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pointerHoverIcon(PointerIcon.Hand)
+                    .clickable {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        expanded = !expanded
+                    }
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (expanded) "Mostrar menos" else "Ver todas (${assignments.size})",
+                    color = colors.accent,
+                    style = appleType.footnote,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
         }
     }
 }
@@ -821,6 +939,7 @@ private fun SummaryWidgetCard(
 @Composable
 private fun AppleSubjectCard(
     subject: UnifiedSubject,
+    virtualLink: SubjectVirtualLink? = null,
     onClick: () -> Unit
 ) {
     val colors = LocalPortalColors.current
@@ -852,6 +971,7 @@ private fun AppleSubjectCard(
     }
 
     val freqRisk = report?.isFrequencyAtLimit() == true
+    val pendingAssignments = virtualLink?.pendingAssignments.orEmpty()
 
     PortalCard(
         modifier = Modifier.fillMaxWidth(),
@@ -949,11 +1069,53 @@ private fun AppleSubjectCard(
             Spacer(Modifier.height(12.dp))
             AppleAttendanceBlock(report = report)
         }
+
+        if (pendingAssignments.isNotEmpty()) {
+            val nextAssignment = pendingAssignments.first()
+            val nextDue = formatIsoDateTime(
+                nextAssignment.dueDate.ifBlank { nextAssignment.endDate },
+                nextAssignment.dueAtMillis
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(colors.orange.copy(alpha = 0.12f))
+                    .padding(horizontal = 10.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp)
+            ) {
+                Icon(
+                    imageVector = PortalIcons.Virtual,
+                    contentDescription = null,
+                    tint = colors.orange,
+                    modifier = Modifier.size(14.dp)
+                )
+                Text(
+                    text = buildString {
+                        append(
+                            if (pendingAssignments.size == 1) "1 atividade pendente"
+                            else "${pendingAssignments.size} atividades pendentes"
+                        )
+                        if (nextDue.isNotBlank()) {
+                            append(" · Próx. $nextDue")
+                        }
+                    },
+                    color = colors.orange,
+                    style = appleType.caption1,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
     }
 }
 
 @Composable
-private fun AppleAttendanceBlock(report: ReportCardItem) {
+internal fun AppleAttendanceBlock(report: ReportCardItem) {
     val colors = LocalPortalColors.current
     val appleType = LocalAppleTypography.current
     val ratio = if (report.maxAbsences > 0) {
@@ -1031,1048 +1193,4 @@ private fun ExpandableNoticeCard(notice: String) {
             CopyTextButton(textToCopy = notice)
         }
     }
-}
-
-@Composable
-fun AppleAttendanceLimitSheet(
-    subjects: List<UnifiedSubject>,
-    onSelectSubject: (String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    val colors = LocalPortalColors.current
-    val appleType = LocalAppleTypography.current
-    val countLabel = if (subjects.size == 1) "1 disciplina" else "${subjects.size} disciplinas"
-
-    AppleSheet(
-        title = "Frequência no limite",
-        subtitle = "$countLabel com até 3 faltas restantes",
-        onDismiss = onDismiss
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            subjects.forEach { subject ->
-                val report = subject.report ?: return@forEach
-                val badgeColor = if (report.remainingAbsences <= 0) colors.red else colors.orange
-                val badgeText = when {
-                    report.remainingAbsences < 0 -> "Excedeu ${-report.remainingAbsences}"
-                    report.remainingAbsences == 0 -> "Sem margem"
-                    report.remainingAbsences == 1 -> "Resta 1 falta"
-                    else -> "Restam ${report.remainingAbsences} faltas"
-                }
-
-                PortalCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = { onSelectSubject(subject.code) },
-                    cardStyle = CardStyle.Plain,
-                    contentPadding = PaddingValues(14.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.Top
-                    ) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                            Text(
-                                text = subject.name.toDisplayTitle(),
-                                color = colors.textPrimary,
-                                style = appleType.headline
-                            )
-                            Text(
-                                text = listOfNotNull(
-                                    subject.code,
-                                    report.classGroup.takeIf { it.isNotBlank() },
-                                    "${report.hours}h"
-                                ).joinToString(" · "),
-                                color = colors.textSecondary,
-                                style = appleType.footnote
-                            )
-                        }
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            PortalBadge(badgeText, badgeColor)
-                            Icon(
-                                imageVector = PortalIcons.ChevronRight,
-                                contentDescription = null,
-                                tint = colors.tertiaryLabel,
-                                modifier = Modifier.size(14.dp)
-                            )
-                        }
-                    }
-
-                    if (report.maxAbsences > 0) {
-                        Spacer(Modifier.height(10.dp))
-                        AppleAttendanceBlock(report = report)
-                    }
-                    if (report.updatedAt.isNotBlank()) {
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            text = "Atualizado em ${report.updatedAt}",
-                            color = colors.tertiaryLabel,
-                            style = appleType.caption1
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun AppleSubjectDetailSheet(
-    subject: UnifiedSubject,
-    onDismiss: () -> Unit,
-    freqAlertThreshold: Int = 80
-) {
-    val colors = LocalPortalColors.current
-    val appleType = LocalAppleTypography.current
-    val grade = subject.grade
-    val report = subject.report
-    val slots = remember(grade) { buildEvalSlots(grade) }
-
-    var targetAvg by remember { mutableFloatStateOf(6.0f) }
-    val sim = remember(slots, targetAvg) { computeNeededGrade(slots, targetAvg = targetAvg.toDouble()) }
-
-    val avgVal = subject.numericAverage()
-    val avgText = grade?.average?.display?.takeIf { it.isNotBlank() }
-        ?: report?.finalAverage?.takeIf { it.isNotBlank() }
-        ?: "—"
-    val belowPassing = grade?.belowPassing == true || (avgVal != null && avgVal < 6.0)
-    val avgColor = when {
-        avgVal == null -> colors.tertiaryLabel
-        belowPassing -> colors.red
-        else -> colors.green
-    }
-    val isFinal = !report?.finalAverage.isNullOrBlank() && grade?.average?.display.isNullOrBlank()
-
-    AppleSheet(
-        title = subject.name.toDisplayTitle(),
-        subtitle = listOfNotNull(
-            subject.code,
-            report?.classGroup?.takeIf { it.isNotBlank() }
-        ).joinToString(" · "),
-        onDismiss = onDismiss,
-        desktopMaxWidth = 640.dp
-    ) {
-        // Hero com ProgressRing 88dp
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 18.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(18.dp)
-        ) {
-            ProgressRing(
-                progress = ((avgVal ?: 0.0) / 10.0).toFloat().coerceIn(0f, 1f),
-                color = avgColor,
-                size = 88.dp,
-                strokeWidth = 7.dp,
-                trackColor = colors.systemFill
-            ) {
-                Text(
-                    text = avgText,
-                    color = if (avgVal == null) colors.textSecondary else colors.textPrimary,
-                    style = tabularNumberStyle(appleType.title1)
-                )
-            }
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = if (isFinal) "Média final" else "Média parcial",
-                    color = colors.textPrimary,
-                    style = appleType.headline
-                )
-                val statusLabel = report?.statusLabel?.takeIf { it.isNotBlank() } ?: "Cursando"
-                val statusColor = when {
-                    statusLabel.contains("aprov", ignoreCase = true) -> colors.green
-                    statusLabel.contains("reprov", ignoreCase = true) -> colors.red
-                    belowPassing -> colors.orange
-                    else -> colors.accent
-                }
-                PortalStatusDot(text = statusLabel, color = statusColor, tintText = true)
-                if (report != null && report.hours > 0) {
-                    Text(
-                        text = "${report.hours}h de carga horária",
-                        color = colors.textSecondary,
-                        style = appleType.footnote
-                    )
-                }
-            }
-        }
-
-        // Avaliações em lista agrupada
-        PortalSectionHeader("Avaliações")
-        if (slots.isEmpty()) {
-            PortalCard(
-                modifier = Modifier.fillMaxWidth(),
-                cardStyle = CardStyle.Plain
-            ) {
-                Text(
-                    text = "Aguardando lançamento de notas ou pesos nesta disciplina.",
-                    color = colors.textSecondary,
-                    style = appleType.subheadline
-                )
-            }
-        } else {
-            PortalCard(
-                modifier = Modifier.fillMaxWidth(),
-                cardStyle = CardStyle.Plain,
-                contentPadding = PaddingValues(0.dp)
-            ) {
-                SelectionContainer {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        slots.forEachIndexed { idx, slot ->
-                            if (idx > 0) PortalDivider(Modifier.padding(start = 16.dp))
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column {
-                                    Text(
-                                        text = slot.label,
-                                        color = colors.textPrimary,
-                                        style = appleType.body
-                                    )
-                                    if (slot.weightDisplay.isNotBlank()) {
-                                        Text(
-                                            text = "Peso ${slot.weightDisplay}%",
-                                            color = colors.textSecondary,
-                                            style = appleType.footnote
-                                        )
-                                    }
-                                }
-                                Text(
-                                    text = slot.gradeDisplay.ifBlank { "—" },
-                                    color = if (slot.gradeDisplay.isBlank()) colors.tertiaryLabel else colors.textPrimary,
-                                    style = tabularNumberStyle(appleType.headline)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Simulador interativo de meta
-        if (sim != null) {
-            Spacer(Modifier.height(16.dp))
-            PortalCard(
-                modifier = Modifier.fillMaxWidth(),
-                cardStyle = CardStyle.Tinted(colors.accent),
-                contentPadding = PaddingValues(14.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Icon(
-                            imageVector = PortalIcons.Sparkles,
-                            contentDescription = null,
-                            tint = colors.accent,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Text(
-                            text = "Simulador · Meta ${formatOneDecimal(targetAvg.toDouble())}",
-                            color = colors.accent,
-                            style = tabularNumberStyle(appleType.footnote),
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                }
-                Spacer(Modifier.height(6.dp))
-                SelectionContainer {
-                    Text(
-                        text = sim,
-                        color = colors.textPrimary,
-                        style = appleType.subheadline
-                    )
-                }
-                Spacer(Modifier.height(6.dp))
-                val sliderHaptics = LocalHapticFeedback.current
-                Slider(
-                    value = targetAvg,
-                    onValueChange = { raw ->
-                        val snapped = ((raw * 2f).roundToInt() / 2f).coerceIn(5.0f, 10.0f)
-                        if (snapped != targetAvg) {
-                            sliderHaptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            targetAvg = snapped
-                        }
-                    },
-                    valueRange = 5.0f..10.0f,
-                    steps = 9,
-                    colors = SliderDefaults.colors(
-                        thumbColor = Color.White,
-                        activeTrackColor = colors.accent,
-                        inactiveTrackColor = colors.systemFill
-                    )
-                )
-            }
-        }
-
-        // Frequência e Boletim
-        if (report != null) {
-            Spacer(Modifier.height(16.dp))
-            PortalSectionHeader("Frequência e boletim")
-            PortalCard(
-                modifier = Modifier.fillMaxWidth(),
-                cardStyle = CardStyle.Plain,
-                contentPadding = PaddingValues(16.dp)
-            ) {
-                SelectionContainer {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        if (report.maxAbsences > 0) {
-                            AppleAttendanceBlock(report = report)
-                            Spacer(Modifier.height(14.dp))
-                            PortalDivider()
-                            Spacer(Modifier.height(14.dp))
-                        }
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            AppleDetailMetric(
-                                label = "Faltas",
-                                value = "${report.absences}/${if (report.maxAbsences > 0) report.maxAbsences else "—"}",
-                                modifier = Modifier.weight(1f)
-                            )
-                            AppleDetailMetric(
-                                label = "Restam",
-                                value = if (report.maxAbsences > 0) "${report.remainingAbsences.coerceAtLeast(0)}" else "—",
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                        Spacer(Modifier.height(12.dp))
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            AppleDetailMetric(
-                                label = "Frequência",
-                                value = report.freqPercent?.let { "${it.toInt()}%" } ?: "—",
-                                modifier = Modifier.weight(1f)
-                            )
-                            AppleDetailMetric(
-                                label = "Carga horária",
-                                value = "${report.hours}h",
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                        if (report.updatedAt.isNotBlank()) {
-                            Spacer(Modifier.height(10.dp))
-                            Text(
-                                text = "Faltas atualizadas em ${report.updatedAt}",
-                                color = colors.tertiaryLabel,
-                                style = appleType.caption1
-                            )
-                        }
-                    }
-                }
-            }
-            if (report.hours > 0) {
-                Spacer(Modifier.height(14.dp))
-                AttendanceSimulatorSection(
-                    report = report,
-                    thresholdPercent = freqAlertThreshold,
-                    isApple = true
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun AppleDetailMetric(label: String, value: String, modifier: Modifier = Modifier) {
-    val colors = LocalPortalColors.current
-    val appleType = LocalAppleTypography.current
-    Column(modifier = modifier) {
-        Text(label, color = colors.textSecondary, style = appleType.caption1)
-        Spacer(Modifier.height(2.dp))
-        Text(
-            text = value,
-            color = colors.textPrimary,
-            style = tabularNumberStyle(appleType.headline)
-        )
-    }
-}
-
-// --- Material 3 Preserved Components ---
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun MaterialSubjectCard(
-    subject: UnifiedSubject,
-    onClick: () -> Unit
-) {
-    val colors = LocalPortalColors.current
-    val grade = subject.grade
-    val report = subject.report
-
-    val avgText = grade?.average?.display?.takeIf { it.isNotBlank() }
-        ?: report?.finalAverage?.takeIf { it.isNotBlank() }
-        ?: "—"
-    val belowPassing = grade?.belowPassing == true ||
-        (report?.finalAverageValue != null && report.finalAverageValue < 6.0)
-    val avgColor = when {
-        avgText == "—" -> colors.textSecondary
-        belowPassing -> colors.red
-        else -> colors.green
-    }
-
-    val slots = remember(grade) { buildEvalSlots(grade) }
-
-    PortalCard(
-        modifier = Modifier.fillMaxWidth(),
-        onClick = onClick
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Top
-        ) {
-            Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
-                Text(
-                    text = subject.name,
-                    color = colors.textPrimary,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = listOfNotNull(
-                        subject.code,
-                        report?.classGroup?.takeIf { it.isNotBlank() },
-                        report?.statusLabel?.takeIf { it.isNotBlank() }
-                    ).joinToString(" • "),
-                    color = colors.textSecondary,
-                    fontSize = 12.sp
-                )
-            }
-            PortalBadge("Média $avgText", avgColor)
-        }
-
-        if (slots.isNotEmpty()) {
-            Spacer(Modifier.height(10.dp))
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                slots.forEach { slot ->
-                    Column(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(colors.surfaceSecondary.copy(alpha = 0.65f))
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = slot.label,
-                            color = colors.textSecondary,
-                            fontSize = 10.5.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Text(
-                            text = slot.gradeDisplay.ifBlank { "—" },
-                            color = if (slot.gradeDisplay.isBlank()) colors.textSecondary else colors.textPrimary,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                            style = tabularNumberStyle(MaterialTheme.typography.titleMedium)
-                        )
-                    }
-                }
-            }
-        }
-
-        if (report != null && report.maxAbsences > 0) {
-            Spacer(Modifier.height(12.dp))
-            MaterialAttendanceProgressBlock(report = report)
-        }
-    }
-}
-
-@Composable
-private fun MaterialAttendanceProgressBlock(report: ReportCardItem) {
-    val colors = LocalPortalColors.current
-    val ratio = (report.absences.toFloat() / report.maxAbsences.toFloat()).coerceIn(0f, 1f)
-    val barColor = when {
-        report.remainingAbsences <= 0 -> colors.red
-        ratio >= 0.75f || report.remainingAbsences <= 3 -> colors.orange
-        else -> colors.green
-    }
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = "Faltas: ${report.absences}/${report.maxAbsences}" +
-                (report.freqPercent?.let { " • ${it.toInt()}% freq." } ?: ""),
-            color = colors.textSecondary,
-            fontSize = 12.sp
-        )
-        Text(
-            text = when {
-                report.remainingAbsences < 0 -> "Excedeu ${-report.remainingAbsences}"
-                report.remainingAbsences == 0 -> "Sem margem"
-                else -> "Restam ${report.remainingAbsences}"
-            },
-            color = if (report.remainingAbsences <= 3) barColor else colors.textSecondary,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium
-        )
-    }
-    Spacer(Modifier.height(5.dp))
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(5.dp)
-            .clip(CircleShape)
-            .background(colors.surfaceSecondary)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(ratio)
-                .fillMaxHeight()
-                .clip(CircleShape)
-                .background(barColor)
-        )
-    }
-}
-
-@Composable
-internal fun PortalOverlayModal(
-    title: String,
-    subtitle: String?,
-    onDismiss: () -> Unit,
-    content: @Composable ColumnScope.() -> Unit
-) {
-    val colors = LocalPortalColors.current
-    val readBack = LocalPredictiveBackProgress.current
-    BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxSize()
-            .predictiveBackScrimAlpha(readBack)
-            .background(Color.Black.copy(alpha = 0.55f))
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onDismiss
-            )
-            .padding(16.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        val maxModalHeight = (maxHeight - 48.dp).coerceIn(360.dp, 760.dp)
-        val scrollState = rememberScrollState()
-        Surface(
-            modifier = Modifier
-                .widthIn(max = 640.dp)
-                .fillMaxWidth()
-                .heightIn(max = maxModalHeight)
-                .predictiveBackSurfaceTransform(
-                    readBack = readBack,
-                    slideDp = 0f,
-                    verticalSlideDp = 36f,
-                    scaleDrop = 0.08f,
-                    pivotY = 0.5f
-                )
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = {}
-                ),
-            shape = RoundedCornerShape(20.dp),
-            color = colors.surface,
-            border = BorderStroke(0.5.dp, colors.divider),
-            tonalElevation = 6.dp
-        ) {
-            Box(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(scrollState)
-                        .padding(20.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.Top
-                    ) {
-                        SelectionContainer(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                            Column {
-                                Text(title, color = colors.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                                if (!subtitle.isNullOrBlank()) {
-                                    Spacer(Modifier.height(2.dp))
-                                    Text(subtitle, color = colors.textSecondary, fontSize = 12.sp)
-                                }
-                            }
-                        }
-                        IconButton(
-                            onClick = onDismiss,
-                            modifier = Modifier.size(32.dp).pointerHoverIcon(PointerIcon.Hand)
-                        ) {
-                            Icon(PortalIcons.Close, contentDescription = "Fechar", tint = colors.textSecondary)
-                        }
-                    }
-                    Spacer(Modifier.height(14.dp))
-                    PortalDivider()
-                    Spacer(Modifier.height(14.dp))
-                    content()
-                }
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .padding(vertical = 8.dp, horizontal = 3.dp),
-                    contentAlignment = Alignment.CenterEnd
-                ) {
-                    PlatformVerticalScrollbar(
-                        scrollState = scrollState,
-                        modifier = Modifier.fillMaxHeight()
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun MaterialAttendanceLimitModal(
-    subjects: List<UnifiedSubject>,
-    onSelectSubject: (String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    val colors = LocalPortalColors.current
-    val countLabel = if (subjects.size == 1) "1 disciplina" else "${subjects.size} disciplinas"
-    PortalOverlayModal(
-        title = "Frequência no limite",
-        subtitle = "$countLabel com até 3 faltas restantes",
-        onDismiss = onDismiss
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            subjects.forEach { subject ->
-                val report = subject.report ?: return@forEach
-                val badgeColor = if (report.remainingAbsences <= 0) colors.red else colors.orange
-                val badgeText = when {
-                    report.remainingAbsences < 0 -> "Excedeu ${-report.remainingAbsences}"
-                    report.remainingAbsences == 0 -> "Sem margem"
-                    report.remainingAbsences == 1 -> "Resta 1 falta"
-                    else -> "Restam ${report.remainingAbsences} faltas"
-                }
-
-                PortalCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = { onSelectSubject(subject.code) },
-                    contentPadding = PaddingValues(14.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.Top
-                    ) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                            Text(subject.name, color = colors.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                            Text(
-                                text = listOfNotNull(
-                                    subject.code,
-                                    report.classGroup.takeIf { it.isNotBlank() },
-                                    "${report.hours}h"
-                                ).joinToString(" • "),
-                                color = colors.textSecondary,
-                                fontSize = 12.sp
-                            )
-                        }
-                        PortalBadge(badgeText, badgeColor)
-                    }
-                    if (report.maxAbsences > 0) {
-                        Spacer(Modifier.height(10.dp))
-                        MaterialAttendanceProgressBlock(report = report)
-                    } else {
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = "Faltas: ${report.absences}" + (report.freqPercent?.let { " • ${it.toInt()}% freq." } ?: ""),
-                            color = colors.textSecondary,
-                            fontSize = 12.sp
-                        )
-                    }
-                    if (report.updatedAt.isNotBlank()) {
-                        Spacer(Modifier.height(6.dp))
-                        Text("Atualizado em: ${report.updatedAt}", color = colors.textSecondary, fontSize = 11.sp)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun MaterialSubjectDetailModal(
-    subject: UnifiedSubject,
-    onDismiss: () -> Unit,
-    freqAlertThreshold: Int = 80
-) {
-    val colors = LocalPortalColors.current
-    val grade = subject.grade
-    val report = subject.report
-    val slots = remember(grade) { buildEvalSlots(grade) }
-    val sim = remember(slots) { computeNeededGrade(slots, targetAvg = 6.0) }
-
-    PortalOverlayModal(
-        title = subject.name,
-        subtitle = listOfNotNull(
-            subject.code,
-            report?.classGroup?.takeIf { it.isNotBlank() },
-            report?.statusLabel?.takeIf { it.isNotBlank() }
-        ).joinToString(" • "),
-        onDismiss = onDismiss
-    ) {
-        Text("Avaliações e Pesos", color = colors.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(8.dp))
-        if (slots.isEmpty()) {
-            Text("Aguardando lançamento de notas ou pesos nesta disciplina.", color = colors.textSecondary, fontSize = 13.sp)
-        } else {
-            SelectionContainer {
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    slots.forEach { slot ->
-                        Column(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(colors.surfaceSecondary.copy(alpha = 0.72f))
-                                .padding(horizontal = 12.dp, vertical = 8.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                text = if (slot.weightDisplay.isNotBlank()) "${slot.label} (${slot.weightDisplay}%)" else slot.label,
-                                color = colors.textSecondary,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                            Spacer(Modifier.height(2.dp))
-                            Text(
-                                text = slot.gradeDisplay.ifBlank { "—" },
-                                color = if (slot.gradeDisplay.isBlank()) colors.textSecondary else colors.textPrimary,
-                                fontSize = 17.sp,
-                                fontWeight = FontWeight.Bold,
-                                style = tabularNumberStyle(MaterialTheme.typography.titleMedium)
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        if (sim != null) {
-            Spacer(Modifier.height(14.dp))
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(colors.accentSoft)
-                    .padding(12.dp)
-            ) {
-                SelectionContainer {
-                    Column {
-                        Text("Simulador Automático (Meta 6,0)", color = colors.accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.height(3.dp))
-                        Text(sim, color = colors.textPrimary, fontSize = 13.sp)
-                    }
-                }
-            }
-        }
-
-        if (report != null) {
-            Spacer(Modifier.height(16.dp))
-            Text("Frequência e Boletim", color = colors.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(8.dp))
-            SelectionContainer {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        DetailMetric("Média Final", report.finalAverage.ifBlank { "—" })
-                        DetailMetric("Carga Horária", "${report.hours}h")
-                        DetailMetric("Faltas", "${report.absences}/${if (report.maxAbsences > 0) report.maxAbsences else "—"}")
-                        DetailMetric("Frequência", report.freqPercent?.let { "${it.toInt()}%" } ?: "—")
-                    }
-                    if (report.updatedAt.isNotBlank()) {
-                        Spacer(Modifier.height(8.dp))
-                        Text("Faltas atualizadas em: ${report.updatedAt}", color = colors.textSecondary, fontSize = 12.sp)
-                    }
-                }
-            }
-            if (report.hours > 0) {
-                Spacer(Modifier.height(14.dp))
-                AttendanceSimulatorSection(
-                    report = report,
-                    thresholdPercent = freqAlertThreshold,
-                    isApple = false
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun AttendanceSimulatorSection(
-    report: ReportCardItem,
-    thresholdPercent: Int,
-    isApple: Boolean
-) {
-    val colors = LocalPortalColors.current
-    val appleType = LocalAppleTypography.current
-    var extraAbsences by remember(report.code, report.absences) { mutableIntStateOf(0) }
-
-    val maxAbsences = if (report.maxAbsences > 0) report.maxAbsences else (report.hours * 0.25).toInt()
-    val simAbsences = report.absences + extraAbsences
-    val simRemaining = maxAbsences - simAbsences
-    val simFreq = if (extraAbsences == 0 && report.freqPercent != null) {
-        report.freqPercent.coerceIn(0.0, 100.0)
-    } else {
-        ((1.0 - (simAbsences.toDouble() / report.hours.toDouble())) * 100.0).coerceIn(0.0, 100.0)
-    }
-    val simFreqInt = simFreq.roundToInt()
-
-    val statusColor = when {
-        simRemaining < 0 || simFreq < 75.0 -> colors.red
-        (thresholdPercent > 0 && simFreq <= thresholdPercent.toDouble()) || simRemaining <= 3 -> colors.orange
-        else -> colors.green
-    }
-
-    fun applyDelta(delta: Int) {
-        val nextExtra = (extraAbsences + delta).coerceAtLeast(0)
-        if (nextExtra == extraAbsences) return
-        val prevRemaining = maxAbsences - (report.absences + extraAbsences)
-        val nextRemaining = maxAbsences - (report.absences + nextExtra)
-        extraAbsences = nextExtra
-        if (maxAbsences > 0 && prevRemaining >= 0 && nextRemaining < 0) {
-            PlatformBridge.performHaptic(PortalHapticType.BOUNDARY_THUD, 1f)
-        } else {
-            PlatformBridge.performHaptic(PortalHapticType.SELECTION)
-        }
-    }
-
-    PortalCard(
-        modifier = Modifier.fillMaxWidth(),
-        cardStyle = if (isApple) CardStyle.Tinted(statusColor) else CardStyle.Plain,
-        contentPadding = PaddingValues(14.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "E se eu faltar?",
-                    color = colors.textPrimary,
-                    style = if (isApple) appleType.headline else MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = if (extraAbsences == 0) {
-                        "Simule faltas futuras antes de acontecer"
-                    } else {
-                        "+$extraAbsences ${if (extraAbsences == 1) "falta simulada" else "faltas simuladas"}"
-                    },
-                    color = colors.textSecondary,
-                    style = appleType.caption1
-                )
-            }
-            if (extraAbsences > 0) {
-                Text(
-                    text = "Zerar",
-                    color = colors.accent,
-                    style = appleType.footnote,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable {
-                            PlatformBridge.performHaptic(PortalHapticType.SELECTION)
-                            extraAbsences = 0
-                        }
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                )
-            }
-        }
-
-        Spacer(Modifier.height(10.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Faltas sim.", color = colors.textSecondary, style = appleType.caption2)
-                Text(
-                    text = "$simAbsences/$maxAbsences",
-                    color = colors.textPrimary,
-                    style = tabularNumberStyle(appleType.headline),
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Restam", color = colors.textSecondary, style = appleType.caption2)
-                Text(
-                    text = if (simRemaining >= 0) "$simRemaining" else "Excedeu ${-simRemaining}",
-                    color = statusColor,
-                    style = tabularNumberStyle(appleType.headline),
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Frequência", color = colors.textSecondary, style = appleType.caption2)
-                Text(
-                    text = "$simFreqInt%",
-                    color = statusColor,
-                    style = tabularNumberStyle(appleType.headline),
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
-
-        Spacer(Modifier.height(10.dp))
-
-        val statusSummary = when {
-            simRemaining < 0 -> "Acima do limite de 25% — reprovação por falta."
-            simRemaining == 0 -> "No limite máximo (0 faltas restantes)."
-            thresholdPercent > 0 && simFreq <= thresholdPercent.toDouble() ->
-                "Abaixo/no alerta configurado ($thresholdPercent%)."
-            else -> "Dentro do limite seguro ($simRemaining faltas de folga)."
-        }
-        Text(
-            text = statusSummary,
-            color = statusColor,
-            style = appleType.caption1,
-            fontWeight = FontWeight.Medium
-        )
-
-        Spacer(Modifier.height(10.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            SimulatorStepButton(
-                label = "−1",
-                enabled = extraAbsences > 0,
-                modifier = Modifier.weight(1f),
-                onClick = { applyDelta(-1) }
-            )
-            SimulatorStepButton(
-                label = "+1 falta",
-                enabled = true,
-                modifier = Modifier.weight(1.3f),
-                onClick = { applyDelta(1) }
-            )
-            SimulatorStepButton(
-                label = "+2 faltas",
-                enabled = true,
-                modifier = Modifier.weight(1.3f),
-                onClick = { applyDelta(2) }
-            )
-        }
-    }
-}
-
-@Composable
-private fun SimulatorStepButton(
-    label: String,
-    enabled: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit
-) {
-    val colors = LocalPortalColors.current
-    val appleType = LocalAppleTypography.current
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (enabled) colors.surfaceSecondary else colors.surfaceSecondary.copy(alpha = 0.45f))
-            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(vertical = 8.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = label,
-            color = if (enabled) colors.textPrimary else colors.tertiaryLabel,
-            style = appleType.footnote,
-            fontWeight = FontWeight.SemiBold
-        )
-    }
-}
-
-@Composable
-private fun DetailMetric(label: String, value: String) {
-    val colors = LocalPortalColors.current
-    Column {
-        Text(label, color = colors.textSecondary, fontSize = 11.sp)
-        Text(
-            text = value,
-            color = colors.textPrimary,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Bold,
-            style = tabularNumberStyle(MaterialTheme.typography.titleMedium)
-        )
-    }
-}
-
-private data class EvalSlot(
-    val label: String,
-    val gradeDisplay: String,
-    val gradeValue: Double?,
-    val weightDisplay: String,
-    val weightValue: Double?
-)
-
-private fun buildEvalSlots(item: PartialGradeItem?): List<EvalSlot> {
-    if (item == null) return emptyList()
-    return buildList {
-        for (i in 0 until 4) {
-            val g = item.exams.getOrNull(i)
-            val w = item.examWeights.getOrNull(i)
-            if (!g?.display.isNullOrBlank() || !w?.display.isNullOrBlank()) {
-                add(EvalSlot("P${i + 1}", g?.display.orEmpty(), g?.value, w?.display.orEmpty(), w?.value))
-            }
-        }
-        for (i in 0 until 4) {
-            val g = item.works.getOrNull(i)
-            val w = item.workWeights.getOrNull(i)
-            if (!g?.display.isNullOrBlank() || !w?.display.isNullOrBlank()) {
-                add(EvalSlot("T${i + 1}", g?.display.orEmpty(), g?.value, w?.display.orEmpty(), w?.value))
-            }
-        }
-    }
-}
-
-private fun computeNeededGrade(slots: List<EvalSlot>, targetAvg: Double): String? {
-    val weightedSlots = slots.filter { (it.weightValue ?: 0.0) > 0.0 }
-    if (weightedSlots.isEmpty()) return null
-
-    val totalWeight = weightedSlots.sumOf { it.weightValue ?: 0.0 }
-    val earnedPoints = weightedSlots.sumOf { (it.gradeValue ?: 0.0) * (it.weightValue ?: 0.0) }
-    val missing = weightedSlots.filter { it.gradeValue == null }
-    if (missing.isEmpty()) return null
-
-    val remainingWeight = missing.sumOf { it.weightValue ?: 0.0 }
-    val needed = ((targetAvg * totalWeight) - earnedPoints) / remainingWeight
-    val rounded = ((needed * 100.0).roundToInt() / 100.0)
-    val formatted = rounded.toString().replace('.', ',')
-    val targetFmt = formatOneDecimal(targetAvg)
-    val labels = missing.joinToString(", ") { it.label }
-
-    return when {
-        needed <= 0.0 -> "Você já garantiu média ≥ $targetFmt mesmo tirando 0 em $labels."
-        needed > 10.0 -> "Precisaria de $formatted em $labels (acima de 10,0 com os pesos atuais)."
-        else -> "Precisa tirar em média $formatted nas avaliações restantes ($labels) para fechar com $targetFmt."
-    }
-}
-
-private fun formatOneDecimal(v: Double): String {
-    val tenths = (v * 10.0).roundToInt()
-    val whole = tenths / 10
-    val frac = kotlin.math.abs(tenths % 10)
-    return "$whole,$frac"
-}
-
-internal fun shortenPeriod(label: String): String {
-    return label
-        .replace("semestre de ", "")
-        .replace("º ", "/")
-        .trim()
 }
