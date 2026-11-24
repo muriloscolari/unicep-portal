@@ -729,7 +729,7 @@ actual object PlatformBridge {
 
     actual fun performHaptic(type: PortalHapticType, intensity: Float) {}
 
-    actual fun currentAppVersion(): String = "1.12.1"
+    actual fun currentAppVersion(): String = "1.12.2"
 
     actual suspend fun checkForAppUpdate(): AppUpdateInfo? = null
 

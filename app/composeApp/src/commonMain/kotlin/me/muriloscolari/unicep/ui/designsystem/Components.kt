@@ -166,6 +166,7 @@ fun PortalCard(
                 .then(shadowMod)
                 .clip(shape)
                 .background(baseColor)
+                .background(colors.systemFill.copy(alpha = overlayAlpha.coerceIn(0f, 1f)))
                 .then(
                     if (onClick != null) {
                         Modifier
@@ -182,7 +183,6 @@ fun PortalCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(colors.systemFill.copy(alpha = overlayAlpha.coerceIn(0f, 1f)))
                     .padding(contentPadding),
                 content = content
             )

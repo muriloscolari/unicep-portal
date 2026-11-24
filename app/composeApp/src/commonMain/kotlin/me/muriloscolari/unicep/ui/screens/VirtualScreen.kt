@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -539,26 +540,33 @@ private fun VirtualOverviewBody(
                             items = coursePairs,
                             key = { _, pair -> pair.joinToString("-") { it.orgUnitId.toString() } }
                         ) { _, pair ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                verticalAlignment = Alignment.Top
-                            ) {
-                                Box(modifier = Modifier.weight(1f)) {
-                                    VirtualCourseCard(
-                                        course = pair[0],
-                                        onClick = { onSelectCourse(pair[0].orgUnitId) }
-                                    )
-                                }
-                                if (pair.size > 1) {
-                                    Box(modifier = Modifier.weight(1f)) {
+                            if (pair.size == 1) {
+                                VirtualCourseCard(
+                                    course = pair[0],
+                                    onClick = { onSelectCourse(pair[0].orgUnitId) }
+                                )
+                            } else {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(IntrinsicSize.Max),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    verticalAlignment = Alignment.Top
+                                ) {
+                                    Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                                        VirtualCourseCard(
+                                            course = pair[0],
+                                            modifier = Modifier.fillMaxHeight(),
+                                            onClick = { onSelectCourse(pair[0].orgUnitId) }
+                                        )
+                                    }
+                                    Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
                                         VirtualCourseCard(
                                             course = pair[1],
+                                            modifier = Modifier.fillMaxHeight(),
                                             onClick = { onSelectCourse(pair[1].orgUnitId) }
                                         )
                                     }
-                                } else {
-                                    Spacer(modifier = Modifier.weight(1f))
                                 }
                             }
                         }
@@ -615,28 +623,36 @@ private fun VirtualOverviewBody(
                             items = assignmentPairs,
                             key = { _, pair -> pair.joinToString(",") { "${it.orgUnitId}-${it.id}" } }
                         ) { _, pair ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                verticalAlignment = Alignment.Top
-                            ) {
-                                Box(modifier = Modifier.weight(1f)) {
-                                    VirtualAssignmentCard(
-                                        assignment = pair[0],
-                                        showCourseName = true,
-                                        onClick = { onSelectAssignment(pair[0]) }
-                                    )
-                                }
-                                if (pair.size > 1) {
-                                    Box(modifier = Modifier.weight(1f)) {
+                            if (pair.size == 1) {
+                                VirtualAssignmentCard(
+                                    assignment = pair[0],
+                                    showCourseName = true,
+                                    onClick = { onSelectAssignment(pair[0]) }
+                                )
+                            } else {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(IntrinsicSize.Max),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    verticalAlignment = Alignment.Top
+                                ) {
+                                    Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                                        VirtualAssignmentCard(
+                                            assignment = pair[0],
+                                            showCourseName = true,
+                                            modifier = Modifier.fillMaxHeight(),
+                                            onClick = { onSelectAssignment(pair[0]) }
+                                        )
+                                    }
+                                    Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
                                         VirtualAssignmentCard(
                                             assignment = pair[1],
                                             showCourseName = true,
+                                            modifier = Modifier.fillMaxHeight(),
                                             onClick = { onSelectAssignment(pair[1]) }
                                         )
                                     }
-                                } else {
-                                    Spacer(modifier = Modifier.weight(1f))
                                 }
                             }
                         }
@@ -747,11 +763,12 @@ internal fun FilterChipPill(
 @Composable
 private fun VirtualCourseCard(
     course: VirtualCourseSummary,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     val colors = LocalPortalColors.current
     PortalCard(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         onClick = onClick
     ) {
         Row(
@@ -819,12 +836,13 @@ private fun VirtualCourseCard(
 internal fun VirtualAssignmentCard(
     assignment: VirtualAssignmentItem,
     showCourseName: Boolean,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     val colors = LocalPortalColors.current
     val badgeColor = assignmentStatusColor(assignment.status)
     PortalCard(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         onClick = onClick
     ) {
         Row(

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -549,28 +550,36 @@ fun SemesterScreen(
                 } else if (isWideGrid) {
                     val subjectPairs = orderedSubjects.chunked(2)
                     items(subjectPairs, key = { pair -> pair.joinToString("-") { it.code } }) { pair ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalAlignment = Alignment.Top
-                        ) {
-                            Box(modifier = Modifier.weight(1f)) {
-                                AppleSubjectCard(
-                                    subject = pair[0],
-                                    virtualLink = subjectVirtualLinks[pair[0].code],
-                                    onClick = { onOpenSubject(pair[0].code) }
-                                )
-                            }
-                            if (pair.size > 1) {
-                                Box(modifier = Modifier.weight(1f)) {
+                        if (pair.size == 1) {
+                            AppleSubjectCard(
+                                subject = pair[0],
+                                virtualLink = subjectVirtualLinks[pair[0].code],
+                                onClick = { onOpenSubject(pair[0].code) }
+                            )
+                        } else {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(IntrinsicSize.Max),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                                    AppleSubjectCard(
+                                        subject = pair[0],
+                                        virtualLink = subjectVirtualLinks[pair[0].code],
+                                        modifier = Modifier.fillMaxHeight(),
+                                        onClick = { onOpenSubject(pair[0].code) }
+                                    )
+                                }
+                                Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
                                     AppleSubjectCard(
                                         subject = pair[1],
                                         virtualLink = subjectVirtualLinks[pair[1].code],
+                                        modifier = Modifier.fillMaxHeight(),
                                         onClick = { onOpenSubject(pair[1].code) }
                                     )
                                 }
-                            } else {
-                                Spacer(modifier = Modifier.weight(1f))
                             }
                         }
                     }
@@ -599,7 +608,8 @@ fun SemesterScreen(
                                     subtitle = listOfNotNull(
                                         report.semesterComplementaryHours.takeIf { it.isNotBlank() },
                                         report.totalComplementaryHours.takeIf { it.isNotBlank() }
-                                    ).joinToString("\n"),
+                                    ).joinToString("\n")
+                                        .replace(Regex("""\(\s*h\)"""), "(0 h)"),
                                     leadingIcon = PortalIcons.Sparkles,
                                     leadingTint = colors.purple,
                                     showChevron = false
@@ -960,6 +970,7 @@ private fun SummaryWidgetCard(
 private fun AppleSubjectCard(
     subject: UnifiedSubject,
     virtualLink: SubjectVirtualLink? = null,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     val colors = LocalPortalColors.current
@@ -994,7 +1005,7 @@ private fun AppleSubjectCard(
     val pendingAssignments = virtualLink?.pendingAssignments.orEmpty()
 
     PortalCard(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         onClick = onClick,
         cardStyle = if (freqRisk) CardStyle.Tinted(if ((report?.remainingAbsences ?: 1) <= 0) colors.red else colors.orange) else CardStyle.Grouped,
         contentPadding = PaddingValues(16.dp)
