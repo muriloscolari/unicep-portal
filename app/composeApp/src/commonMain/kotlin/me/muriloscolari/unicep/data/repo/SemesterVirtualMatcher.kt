@@ -16,7 +16,7 @@ data class SubjectVirtualLink(
 private val matchStopWords = setOf(
     "de", "da", "do", "das", "dos", "e", "em", "para", "com", "a", "o", "as", "os",
     "no", "na", "nos", "nas", "ao", "aos", "por", "sem", "turma", "ead", "presencial",
-    "semestre", "modulo", "disciplina"
+    "semipresencial", "semestre", "modulo", "disciplina", "noturno", "diurno", "matutino", "vespertino"
 )
 
 private val discriminatorTokens = setOf(
@@ -24,17 +24,19 @@ private val discriminatorTokens = setOf(
     "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"
 )
 
-private val leadingSemesterOrCodeRegex = Regex("""^\s*(?:\d{4}[/-]\d+|\d+[/-]\d{4}|\d{5,})\s*[-–—:|]\s*""")
-private val trailingMetaRegex = Regex("""\s*(?:\(\s*(?:a\s+distancia|ead|presencial|semipresencial)\s*\)|[-–—]\s*turma\s+[a-z0-9]+)\s*$""")
+private val semesterPatternRegex = Regex("""\b(?:\d{4}[/.\-]\d{1,2}|\d{1,2}[/.\-]\d{4})\b""")
+private val longCodeRegex = Regex("""\b\d{5,}\b""")
+private val modalityNoiseRegex = Regex("""\b(?:a\s+distancia|ead|presencial|semipresencial|turma\s+[a-z0-9]+|noturno|diurno|matutino|vespertino)\b""")
 private val nonAlphaNumRegex = Regex("""[^a-z0-9]+""")
 
 internal fun cleanSubjectMatchName(raw: String): String {
     var norm = normalizeSearchText(raw)
     if (norm.isBlank()) return ""
-    norm = leadingSemesterOrCodeRegex.replace(norm, "")
-    norm = trailingMetaRegex.replace(norm, "")
-    norm = nonAlphaNumRegex.replace(norm, " ").trim()
-    return norm
+    norm = semesterPatternRegex.replace(norm, " ")
+    norm = longCodeRegex.replace(norm, " ")
+    norm = nonAlphaNumRegex.replace(norm, " ")
+    norm = modalityNoiseRegex.replace(norm, " ")
+    return norm.replace(Regex("""\s+"""), " ").trim()
 }
 
 private fun extractDiscriminators(cleanName: String): Set<String> =
@@ -78,9 +80,10 @@ private fun scoreCourseMatch(
 ): Double {
     val cleanCode = normalizeSearchText(subjectCode).replace(" ", "")
     val courseCodeNorm = normalizeSearchText(course.code).replace(" ", "")
+    val courseRawNorm = normalizeSearchText(course.name).replace(" ", "")
     val courseClean = cleanSubjectMatchName(course.name)
 
-    if (cleanCode.length >= 4 && (courseCodeNorm.contains(cleanCode) || courseClean.contains(cleanCode))) {
+    if (cleanCode.length >= 4 && (courseCodeNorm.contains(cleanCode) || courseRawNorm.contains(cleanCode))) {
         return 10.0
     }
     if (subjectClean.isBlank() || courseClean.isBlank()) return 0.0
@@ -95,7 +98,7 @@ private fun scoreCourseMatch(
 
     if (subjectClean.length >= 5 && courseClean.length >= 5) {
         val contained = courseClean.contains(subjectClean) || subjectClean.contains(courseClean)
-        if (contained && (subjectDiscriminators == courseDiscriminators)) {
+        if (contained && !discriminatorsConflict && (subjectDiscriminators == courseDiscriminators || subjectDiscriminators.isEmpty())) {
             val lenRatio = minOf(subjectClean.length, courseClean.length).toDouble() /
                 maxOf(subjectClean.length, courseClean.length).toDouble()
             return 7.0 + lenRatio
@@ -118,9 +121,9 @@ private fun scoreCourseMatch(
 
     return when {
         nonDiscCommon >= 2 && jaccard >= 0.5 -> 5.0 + jaccard
-        nonDiscCommon >= 2 && coverage >= 0.8 -> 4.0 + jaccard
+        nonDiscCommon >= 2 && coverage >= 0.75 -> 4.0 + jaccard
         nonDiscCommon == 1 && subjectTokens.size == 1 && courseTokens.size == 1 -> 6.0
-        nonDiscCommon == 1 && coverage >= 1.0 && common.first().length >= 6 -> 4.5
+        nonDiscCommon == 1 && coverage >= 1.0 && common.first().length >= 5 -> 4.5
         else -> 0.0
     }
 }
@@ -203,7 +206,6 @@ fun collectAllPendingVirtualAssignments(
         }
     }
 
-    // Course details are fresher than overview cache; reconcile per loaded course.
     courseDetails.forEach { (ou, detail) ->
         byKey.keys.removeAll { it.first == ou }
         val courseName = detail.course.name.ifBlank { overviewCourses[ou]?.name.orEmpty() }

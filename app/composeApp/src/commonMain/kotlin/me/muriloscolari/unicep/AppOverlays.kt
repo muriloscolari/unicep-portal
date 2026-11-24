@@ -72,6 +72,7 @@ internal fun AppSheetsAndDialogsHost(
     onDismissSubjectDetail: () -> Unit,
     onOpenVirtualCourseFromSubject: (Long) -> Unit,
     onOpenVirtualAssignmentFromSubject: (VirtualAssignmentItem) -> Unit,
+    onOpenVirtualTabFromSubject: () -> Unit,
     onSelectRiskySubject: (String) -> Unit,
     onDismissRiskyAttendance: () -> Unit,
     onDismissAllNotifications: () -> Unit,
@@ -116,6 +117,7 @@ internal fun AppSheetsAndDialogsHost(
             virtualLink = activeSubjectVirtualLink,
             onOpenVirtualCourse = onOpenVirtualCourseFromSubject,
             onOpenVirtualAssignment = onOpenVirtualAssignmentFromSubject,
+            onOpenVirtualTab = onOpenVirtualTabFromSubject,
             onDismiss = onDismissSubjectDetail
         )
         showRiskyAttendanceModal && riskySubjects.isNotEmpty() -> AppleAttendanceLimitSheet(

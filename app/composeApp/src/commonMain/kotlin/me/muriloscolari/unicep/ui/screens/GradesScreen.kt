@@ -463,11 +463,13 @@ fun SemesterScreen(
                     }
                 }
 
-                // Atividades pendentes da Sala Virtual integradas na tela principal
-                if (pendingVirtualAssignments.isNotEmpty()) {
+                // Integração Sala Virtual na tela principal (sempre visível após sincronizar)
+                if (virtualOverview != null) {
                     item(key = "pending_virtual_assignments") {
                         PendingVirtualAssignmentsCard(
                             assignments = pendingVirtualAssignments,
+                            totalCourses = virtualOverview.courses.size,
+                            totalAnnouncements = virtualOverview.announcements.size,
                             onOpenAssignment = onOpenVirtualAssignment,
                             onOpenVirtualTab = onOpenVirtualTab
                         )
@@ -643,6 +645,10 @@ fun SemesterScreen(
                         onCloseSubject()
                         onOpenVirtualAssignment(item)
                     },
+                    onOpenVirtualTab = {
+                        onCloseSubject()
+                        onOpenVirtualTab()
+                    },
                     onDismiss = onCloseSubject
                 )
                 showRiskyAttendance && riskySubjects.isNotEmpty() -> AppleAttendanceLimitSheet(
@@ -720,6 +726,8 @@ private fun SemesterHeaderIconButton(
 @Composable
 private fun PendingVirtualAssignmentsCard(
     assignments: List<VirtualAssignmentItem>,
+    totalCourses: Int,
+    totalAnnouncements: Int,
     onOpenAssignment: (VirtualAssignmentItem) -> Unit,
     onOpenVirtualTab: () -> Unit
 ) {
@@ -728,6 +736,7 @@ private fun PendingVirtualAssignmentsCard(
     val haptics = LocalHapticFeedback.current
     var expanded by remember { mutableStateOf(false) }
     val visibleItems = if (expanded) assignments else assignments.take(4)
+    val hasPending = assignments.isNotEmpty()
 
     PortalCard(
         modifier = Modifier.fillMaxWidth().animateContentSize(),
@@ -737,6 +746,11 @@ private fun PendingVirtualAssignmentsCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .pointerHoverIcon(PointerIcon.Hand)
+                .clickable {
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onOpenVirtualTab()
+                }
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
@@ -749,50 +763,56 @@ private fun PendingVirtualAssignmentsCard(
                 Icon(
                     imageVector = PortalIcons.Virtual,
                     contentDescription = null,
-                    tint = colors.orange,
+                    tint = if (hasPending) colors.orange else colors.green,
                     modifier = Modifier.size(17.dp)
                 )
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Atividades a entregar",
+                        text = if (hasPending) "Atividades a entregar" else "Sala Virtual em dia",
                         color = colors.textPrimary,
                         style = appleType.headline,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = "Pendências da Sala Virtual",
+                        text = if (hasPending) {
+                            "Pendências da Sala Virtual"
+                        } else {
+                            "Sem atividades pendentes · $totalCourses disciplinas · $totalAnnouncements avisos"
+                        },
                         color = colors.textSecondary,
                         style = appleType.caption1,
-                        maxLines = 1
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
             Spacer(Modifier.width(8.dp))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                PortalBadge(
-                    text = if (assignments.size == 1) "1 pendente" else "${assignments.size} pendentes",
-                    color = colors.orange
-                )
-                Text(
-                    text = "Virtual",
-                    color = colors.accent,
-                    style = appleType.footnote,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .pointerHoverIcon(PointerIcon.Hand)
-                        .clickable {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onOpenVirtualTab()
-                        }
-                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                if (hasPending) {
+                    PortalBadge(
+                        text = if (assignments.size == 1) "1 pendente" else "${assignments.size} pendentes",
+                        color = colors.orange
+                    )
+                } else {
+                    PortalBadge(
+                        text = "Virtual",
+                        color = colors.accent
+                    )
+                }
+                Icon(
+                    imageVector = PortalIcons.ChevronRight,
+                    contentDescription = "Abrir Sala Virtual",
+                    tint = colors.tertiaryLabel,
+                    modifier = Modifier.size(14.dp)
                 )
             }
         }
+
+        if (!hasPending) return@PortalCard
 
         PortalDivider()
 
@@ -1105,6 +1125,32 @@ private fun AppleSubjectCard(
                     color = colors.orange,
                     style = appleType.caption1,
                     fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        } else if (virtualLink?.course != null) {
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(colors.tertiaryGroupedBackground)
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp)
+            ) {
+                Icon(
+                    imageVector = PortalIcons.Virtual,
+                    contentDescription = null,
+                    tint = colors.accent,
+                    modifier = Modifier.size(14.dp)
+                )
+                Text(
+                    text = "Sala Virtual · Sem pendências",
+                    color = colors.textSecondary,
+                    style = appleType.caption1,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)

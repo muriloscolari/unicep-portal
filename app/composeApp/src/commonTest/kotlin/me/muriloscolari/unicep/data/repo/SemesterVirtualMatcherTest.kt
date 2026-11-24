@@ -70,8 +70,45 @@ class SemesterVirtualMatcherTest {
 
         val link = matchSubjectToVirtual(subject, overview)
         assertNotNull(link.course)
-        assertEquals(202L, link.course?.orgUnitId)
+        assertEquals(202L, link.course.orgUnitId)
         assertEquals(listOf(2L, 1L), link.pendingAssignments.map { it.id })
+    }
+
+    @Test
+    fun matchesSubjectsWithTrailingSemesterSuffixesAndAbbreviatedNames() {
+        val overview = VirtualOverviewResponse(
+            courses = listOf(
+                VirtualCourseSummary(
+                    orgUnitId = 401L,
+                    name = "EC - Eletrônica - 2/2026 (Noturno)",
+                    semesterName = "2/2026",
+                    isActive = true,
+                    canAccess = true
+                ),
+                VirtualCourseSummary(
+                    orgUnitId = 402L,
+                    name = "DESENVOLVIMENTO WEB - 2/2026",
+                    semesterName = "2/2026",
+                    isActive = true,
+                    canAccess = true
+                ),
+                VirtualCourseSummary(
+                    orgUnitId = 403L,
+                    name = "Modelagem de Sistemas (2/2026)",
+                    semesterName = "2/2026",
+                    isActive = true,
+                    canAccess = true
+                )
+            )
+        )
+
+        val eletronica = UnifiedSubject(code = "19280403", name = "ELETRÔNICA", grade = null, report = null)
+        val web = UnifiedSubject(code = "19280402", name = "DESENVOLVIMENTO DE SISTEMAS WEB", grade = null, report = null)
+        val modelagem = UnifiedSubject(code = "19280404", name = "MODELAGEM DE SISTEMAS", grade = null, report = null)
+
+        assertEquals(401L, matchSubjectToVirtual(eletronica, overview).course?.orgUnitId)
+        assertEquals(402L, matchSubjectToVirtual(web, overview).course?.orgUnitId)
+        assertEquals(403L, matchSubjectToVirtual(modelagem, overview).course?.orgUnitId)
     }
 
     @Test

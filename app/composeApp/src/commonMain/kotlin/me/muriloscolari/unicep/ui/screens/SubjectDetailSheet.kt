@@ -69,6 +69,7 @@ import me.muriloscolari.unicep.ui.designsystem.PortalCard
 import me.muriloscolari.unicep.ui.designsystem.PortalDivider
 import me.muriloscolari.unicep.ui.designsystem.PortalIcons
 import me.muriloscolari.unicep.ui.designsystem.PortalPrimaryButton
+import me.muriloscolari.unicep.ui.designsystem.PortalSecondaryButton
 import me.muriloscolari.unicep.ui.designsystem.PortalSectionHeader
 import me.muriloscolari.unicep.ui.designsystem.PortalStatusDot
 import me.muriloscolari.unicep.ui.designsystem.ProgressRing
@@ -170,7 +171,8 @@ fun AppleSubjectDetailSheet(
     freqAlertThreshold: Int = 80,
     virtualLink: SubjectVirtualLink? = null,
     onOpenVirtualCourse: ((Long) -> Unit)? = null,
-    onOpenVirtualAssignment: ((VirtualAssignmentItem) -> Unit)? = null
+    onOpenVirtualAssignment: ((VirtualAssignmentItem) -> Unit)? = null,
+    onOpenVirtualTab: (() -> Unit)? = null
 ) {
     val colors = LocalPortalColors.current
     val appleType = LocalAppleTypography.current
@@ -371,6 +373,16 @@ fun AppleSubjectDetailSheet(
                     }
                 )
             }
+            Spacer(Modifier.height(16.dp))
+        } else if (onOpenVirtualTab != null) {
+            PortalSecondaryButton(
+                text = "Abrir Sala Virtual",
+                onClick = {
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onOpenVirtualTab()
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
             Spacer(Modifier.height(16.dp))
         }
 

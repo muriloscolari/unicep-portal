@@ -1012,6 +1012,7 @@ fun App(initialTab: Int = 0) {
             onDismissSubjectDetail = { selectedSubjectCode = null },
             onOpenVirtualCourseFromSubject = { ou -> openVirtualCourse(ou, subTab = 0) },
             onOpenVirtualAssignmentFromSubject = ::openVirtualAssignment,
+            onOpenVirtualTabFromSubject = { navigateToTab(MainTab.VIRTUAL) },
             onSelectRiskySubject = { code ->
                 showRiskyAttendanceModal = false
                 selectedSubjectCode = code
