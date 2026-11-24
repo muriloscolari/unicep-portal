@@ -1,13 +1,10 @@
-# syntax=docker/dockerfile:1
-
 # Stage 1: Compila o frontend Compose Multiplatform Web (Wasm)
 FROM eclipse-temurin:21-jdk AS web-builder
 RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 brotli gzip && rm -rf /var/lib/apt/lists/*
 WORKDIR /src/app
 COPY app/ .
-RUN --mount=type=cache,target=/root/.gradle/caches \
-    --mount=type=cache,target=/root/.gradle/wrapper \
-    chmod +x ./gradlew && ./gradlew :composeApp:wasmJsBrowserDistribution -PwebOnly=true --no-daemon \
+RUN chmod +x ./gradlew \
+    && ./gradlew :composeApp:wasmJsBrowserDistribution -PwebOnly=true --no-daemon \
     && DIST=/src/app/composeApp/build/dist/wasmJs/productionExecutable \
     && rm -f "$DIST"/*.map \
     && find "$DIST" -maxdepth 1 -type f \( -name '*.wasm' -o -name '*.js' -o -name '*.svg' -o -name '*.html' \) \
@@ -18,12 +15,9 @@ RUN --mount=type=cache,target=/root/.gradle/caches \
 FROM golang:1.24-alpine AS go-builder
 WORKDIR /src/backend
 COPY backend/go.mod backend/go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod \
-    go mod download
+RUN go mod download
 COPY backend/ .
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
 
 # Stage 3: Imagem final enxuta
 FROM alpine:3.21
