@@ -208,7 +208,7 @@ fun App(initialTab: Int = 0) {
             updateChecking = false
             if (info != null) {
                 availableUpdate = info
-                updateStatusMessage = "Nova versão v${info.latestVersion} disponível no Forgejo."
+                updateStatusMessage = "Nova versão v${info.latestVersion} disponível."
                 showUpdateDialog = true
             } else if (manual) {
                 availableUpdate = null

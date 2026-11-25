@@ -56,8 +56,8 @@ fun ExportActionModal(
             ExportOptionCard(
                 icon = PortalIcons.Document,
                 tint = colors.accent,
-                title = if (isWeb) "Copiar texto formatado" else "Compartilhar texto",
-                subtitle = if (isWeb) "Copia um resumo pronto para WhatsApp ou Telegram" else "Enviar resumo formatado pelo Share Sheet",
+                title = if (isWeb) "Copiar texto" else "Compartilhar texto",
+                subtitle = if (isWeb) "Copia um resumo pronto para enviar" else "Enviar resumo por mensagem ou outro app",
                 onClick = {
                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     val ok = PlatformBridge.shareText(data.title, data.plainText)
@@ -74,8 +74,8 @@ fun ExportActionModal(
             ExportOptionCard(
                 icon = PortalIcons.Download,
                 tint = colors.green,
-                title = if (isWeb) "Baixar imagem (PNG)" else "Compartilhar imagem (PNG)",
-                subtitle = "Gera um card visual de alta resolução",
+                title = if (isWeb) "Baixar imagem" else "Compartilhar imagem",
+                subtitle = "Salva ou envia como imagem",
                 onClick = {
                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     val ok = PlatformBridge.exportPng(fileName, data)
@@ -93,7 +93,7 @@ fun ExportActionModal(
                 icon = PortalIcons.Share,
                 tint = colors.orange,
                 title = "Imprimir / Salvar PDF",
-                subtitle = if (isWeb) "Abre a impressão do navegador para salvar em PDF" else "Abre o gerenciador de impressão e PDF do Android",
+                subtitle = "Imprimir ou salvar como PDF",
                 onClick = {
                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     val ok = PlatformBridge.printDocument(data.title, data)

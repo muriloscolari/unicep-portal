@@ -98,7 +98,6 @@ import me.muriloscolari.unicep.ui.designsystem.PortalSectionHeader
 import me.muriloscolari.unicep.ui.designsystem.PortalSegmentedControl
 import me.muriloscolari.unicep.ui.designsystem.SelectableRichText
 import me.muriloscolari.unicep.ui.designsystem.appleScrollBoundaryHaptics
-import me.muriloscolari.unicep.ui.util.shouldDirectDownloadOnWeb
 import me.muriloscolari.unicep.ui.util.toDisplayTitle
 
 @Composable
@@ -374,7 +373,7 @@ internal fun VirtualCourseDetailBody(
                                             AppleEmptyState(
                                                 icon = PortalIcons.CheckCircle,
                                                 title = "Nenhuma atividade cadastrada",
-                                                subtitle = "Esta disciplina ainda não possui pastas de entrega no AVA."
+                                                subtitle = "Esta disciplina ainda não possui atividades."
                                             )
                                         }
                                     } else {
@@ -502,8 +501,8 @@ internal fun VirtualCourseDetailBody(
                                         item {
                                             AppleEmptyState(
                                                 icon = PortalIcons.Grades,
-                                                title = "Sem notas no AVA",
-                                                subtitle = "Itens avaliativos da Sala Virtual aparecerão aqui."
+                                                title = "Sem notas lançadas",
+                                                subtitle = "As notas da Sala Virtual aparecerão aqui."
                                             )
                                         }
                                     } else {
@@ -529,7 +528,7 @@ internal fun VirtualCourseDetailBody(
                                         }
                                     }
 
-                                    item { PortalSectionHeader(title = "Questionários (Somente Leitura)") }
+                                    item { PortalSectionHeader(title = "Questionários") }
                                     if (detail.quizzes.isEmpty()) {
                                         item {
                                             PortalCard {
@@ -864,7 +863,6 @@ private fun VirtualTopicRow(
     onOpenWeb: (String) -> Unit
 ) {
     val colors = LocalPortalColors.current
-    val isWeb = remember { PlatformBridge.capabilities().isWeb }
     val hasDownload = topic.downloadPath.isNotBlank()
     val inferredName = remember(topic) { inferTopicFileName(topic) }
     val request = remember(topic, courseName, inferredName) {
@@ -898,13 +896,6 @@ private fun VirtualTopicRow(
         "quiz" -> "Questionário"
         "discussion" -> "Fórum"
         else -> topic.typeIdentifier.ifBlank { "Recurso" }
-    }
-    val actionHint = when {
-        hasDownload && isWeb -> if (shouldDirectDownloadOnWeb(inferredName)) "clique para baixar" else "clique para abrir"
-        hasDownload -> "toque para abrir"
-        topic.externalUrl.isNotBlank() && isWeb -> "clique para abrir"
-        topic.externalUrl.isNotBlank() -> "toque para abrir"
-        else -> null
     }
 
     Row(
@@ -971,7 +962,7 @@ private fun VirtualTopicRow(
                 )
             }
             Text(
-                text = if (actionHint != null) "$typeLabel · $actionHint" else typeLabel,
+                text = typeLabel,
                 color = colors.textSecondary,
                 fontSize = 11.sp
             )

@@ -668,7 +668,7 @@ internal fun AppleDesktopSidebar(
 }
 
 internal fun formatOfflineAge(lastSyncAtMillis: Long?): String {
-    if (lastSyncAtMillis == null || lastSyncAtMillis <= 0L) return "Dados em cache"
+    if (lastSyncAtMillis == null || lastSyncAtMillis <= 0L) return "Dados salvos"
     val diffMs = (PlatformBridge.currentTimeMillis() - lastSyncAtMillis).coerceAtLeast(0L)
     val mins = diffMs / 60_000L
     return when {

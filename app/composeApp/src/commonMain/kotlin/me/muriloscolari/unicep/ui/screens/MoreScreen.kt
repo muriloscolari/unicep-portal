@@ -269,8 +269,8 @@ fun CentralScreen(
                         PortalSectionHeader("Acesso rápido")
                         PortalCard(contentPadding = PaddingValues(0.dp)) {
                             PortalListRow(
-                                title = "UnicepVirtual (D2L SSO)",
-                                subtitle = "Ambiente virtual de aprendizagem",
+                                title = "UnicepVirtual",
+                                subtitle = "Abrir no navegador",
                                 leadingIcon = PortalIcons.Globe,
                                 leadingTint = colors.indigo,
                                 onClick = onOpenAva,
@@ -342,11 +342,11 @@ fun CentralScreen(
                             if (PlatformBridge.supportsBackgroundBatterySettings()) {
                                 PortalDivider(Modifier.padding(start = 58.dp))
                                 PortalListRow(
-                                    title = "Modo de bateria no Android",
+                                    title = "Uso de bateria",
                                     subtitle = if (ignoringBatteryOptimizations) {
-                                        "Sem restrição (consome mais bateria em standby). Toque para mudar para Otimizado."
+                                        "Toque para mudar para Otimizado"
                                     } else {
-                                        "Otimizado pelo Android (recomendado para economizar bateria em standby)"
+                                        "Recomendado para economizar bateria"
                                     },
                                     leadingIcon = PortalIcons.Bell,
                                     leadingTint = if (ignoringBatteryOptimizations) colors.orange else colors.green,
@@ -369,16 +369,11 @@ fun CentralScreen(
                                 )
                             }
                         }
-                        PortalSectionFooter(
-                            text = when {
-                                capabilities.isWeb ->
-                                    "Verificamos novas notas e Sala Virtual automaticamente a cada 5 minutos no servidor."
-                                bgSyncIntervalMinutes <= 0 ->
-                                    "Sincronização automática em segundo plano desativada. Atualizações são verificadas ao abrir o app."
-                                else ->
-                                    "Sincronizamos em segundo plano via WorkManager respeitando o modo economia/standby do Android."
-                            }
-                        )
+                        if (capabilities.isWeb) {
+                            PortalSectionFooter(
+                                text = "Atualizações verificadas automaticamente a cada 5 minutos."
+                            )
+                        }
                     }
                 }
 
@@ -506,13 +501,11 @@ fun CentralScreen(
                                 onSelect = { onSelectStyle(styleOptions[it]) }
                             )
                         }
-                        PortalSectionFooter(
-                            text = if (capabilities.fallbackReason != null && stylePreference == DesignStylePreference.AUTO) {
-                                "Auto selecionaria Material 3 (${capabilities.fallbackReason}). Modo Apple forçado usa fallback sólido sem desfoque."
-                            } else {
-                                "Liquid Glass com tipografia Inter, células agrupadas sem bordas e navegação flutuante."
-                            }
-                        )
+                        if (capabilities.fallbackReason != null && stylePreference == DesignStylePreference.AUTO) {
+                            PortalSectionFooter(
+                                text = "Modo automático usando Material 3 neste aparelho."
+                            )
+                        }
                     }
                 }
 
@@ -559,7 +552,7 @@ fun CentralScreen(
                                     }
                                 } else {
                                     PortalListRow(
-                                        title = if (updateChecking) "Verificando no Forgejo…" else "Verificar atualizações",
+                                        title = if (updateChecking) "Verificando…" else "Verificar atualizações",
                                         subtitle = updateStatusMessage,
                                         leadingIcon = PortalIcons.Refresh,
                                         leadingTint = colors.accent,
@@ -730,9 +723,9 @@ private fun BackgroundSyncIntervalRow(
         Spacer(Modifier.height(2.dp))
         Text(
             text = if (selectedIntervalMinutes <= 0) {
-                "Economia máxima: verifica atualizações somente ao abrir o aplicativo"
+                "Verifica apenas ao abrir o app"
             } else {
-                "WorkManager sem alarme WAKEUP a cada ${formatBackgroundSyncIntervalLabel(selectedIntervalMinutes)} (agrupado em standby)"
+                "A cada ${formatBackgroundSyncIntervalLabel(selectedIntervalMinutes)}"
             },
             color = colors.textSecondary,
             style = appleType.footnote
@@ -801,9 +794,9 @@ private fun FrequencyThresholdRow(
         Spacer(Modifier.height(2.dp))
         Text(
             text = if (selectedThreshold <= 0) {
-                "Notificações de queda de frequência desativadas"
+                "Desativado"
             } else {
-                "Notificar quando alguma disciplina cair para ≤ $selectedThreshold%"
+                "Avisar com frequência ≤ $selectedThreshold%"
             },
             color = colors.textSecondary,
             style = appleType.footnote
@@ -874,7 +867,7 @@ private fun VirtualAlertsSettingsRow(
         ) {
             Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                 Text(
-                    text = "Sala Virtual · Atividades, materiais e avisos",
+                    text = "Novidades da Sala Virtual",
                     color = colors.textPrimary,
                     style = appleType.body,
                     fontWeight = FontWeight.Medium
@@ -882,9 +875,9 @@ private fun VirtualAlertsSettingsRow(
                 Spacer(Modifier.height(2.dp))
                 Text(
                     text = if (notifyNewAssignment) {
-                        "Notificar em segundo plano quando o professor postar atividade, material, questionário ou aviso"
+                        "Atividades, materiais, questionários e avisos"
                     } else {
-                        "Alertas de novas postagens na Sala Virtual desativados nesta conta"
+                        "Desativado"
                     },
                     color = colors.textSecondary,
                     style = appleType.footnote
@@ -901,7 +894,7 @@ private fun VirtualAlertsSettingsRow(
 
         Column(modifier = Modifier.fillMaxWidth()) {
             Text(
-                text = "Lembrete antes do prazo (não enviadas)",
+                text = "Lembrete de prazos",
                 color = colors.textPrimary,
                 style = appleType.body,
                 fontWeight = FontWeight.Medium
@@ -909,7 +902,7 @@ private fun VirtualAlertsSettingsRow(
             Spacer(Modifier.height(2.dp))
             Text(
                 text = if (selectedLeadHours.isEmpty()) {
-                    "Nenhum lembrete de prazo selecionado"
+                    "Nenhum selecionado"
                 } else {
                     "Avisar " + selectedLeadHours.sorted().joinToString(", ") { formatLeadHoursLabel(it) } + " antes"
                 },
@@ -1030,14 +1023,14 @@ private fun DownloadFolderSettingsRow(
             .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
         Text(
-            text = "Pasta de downloads (Sala Virtual)",
+            text = "Pasta de downloads",
             color = colors.textPrimary,
             style = appleType.body,
             fontWeight = FontWeight.Medium
         )
         Spacer(Modifier.height(2.dp))
         Text(
-            text = "Salva automaticamente em: $folderLabel/<Disciplina>/",
+            text = "$folderLabel/<Disciplina>",
             color = colors.textSecondary,
             style = appleType.footnote
         )

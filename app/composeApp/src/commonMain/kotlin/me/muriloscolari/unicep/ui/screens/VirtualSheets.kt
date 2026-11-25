@@ -56,8 +56,6 @@ import me.muriloscolari.unicep.ui.designsystem.PortalListRow
 import me.muriloscolari.unicep.ui.designsystem.PortalSecondaryButton
 import me.muriloscolari.unicep.ui.designsystem.PortalSectionHeader
 import me.muriloscolari.unicep.ui.designsystem.SelectableRichText
-import me.muriloscolari.unicep.ui.util.isInAppPreviewSupported
-import me.muriloscolari.unicep.ui.util.shouldDirectDownloadOnWeb
 import me.muriloscolari.unicep.ui.util.toDisplayTitle
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -517,17 +515,10 @@ private fun AttachmentRow(
     onDownload: () -> Unit
 ) {
     val colors = LocalPortalColors.current
-    val isWeb = remember { PlatformBridge.capabilities().isWeb }
-    val sizeLabel = formatBytes(attachment.size)
-    val actionHint = if (isWeb) {
-        if (shouldDirectDownloadOnWeb(attachment.fileName)) "Clique para baixar" else "Clique para abrir"
-    } else {
-        if (isInAppPreviewSupported(attachment.fileName)) "Toque para abrir" else "Toque para baixar ou abrir"
-    }
-    val subtitle = if (sizeLabel.isNotBlank()) "$sizeLabel · $actionHint" else actionHint
+    val sizeLabel = formatBytes(attachment.size).takeIf { it.isNotBlank() }
     PortalListRow(
         title = attachment.fileName,
-        subtitle = subtitle,
+        subtitle = sizeLabel,
         leadingIcon = PortalIcons.Document,
         leadingTint = colors.accent,
         trailing = {

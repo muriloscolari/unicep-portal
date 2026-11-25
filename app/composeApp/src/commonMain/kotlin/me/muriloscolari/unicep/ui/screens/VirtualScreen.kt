@@ -312,12 +312,6 @@ private fun VirtualOverviewBody(
                         color = colors.textPrimary,
                         style = if (style == DesignStyle.APPLE) appleType.largeTitle else MaterialTheme.typography.headlineLarge
                     )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        text = "UnicepVirtual · Consulta passiva (somente leitura)",
-                        color = colors.textSecondary,
-                        style = if (style == DesignStyle.APPLE) appleType.footnote else MaterialTheme.typography.bodySmall
-                    )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     IconButton(
@@ -614,7 +608,7 @@ private fun VirtualOverviewBody(
                             AppleEmptyState(
                                 icon = PortalIcons.CheckCircle,
                                 title = "Nenhuma atividade por aqui",
-                                subtitle = "As tarefas das disciplinas ativas aparecerão aqui em modo somente leitura."
+                                subtitle = "Nenhuma atividade pendente ou avaliada no momento."
                             )
                         }
                     } else if (isWideGrid) {

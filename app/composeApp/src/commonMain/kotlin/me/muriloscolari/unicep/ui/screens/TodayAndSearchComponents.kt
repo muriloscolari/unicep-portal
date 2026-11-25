@@ -224,7 +224,7 @@ fun TodayOverviewCard(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "Sem aulas exibidas no portal agora (comum em fins de semana).",
+                        text = "Nenhuma aula programada para agora.",
                         color = colors.textSecondary,
                         style = appleType.footnote,
                         modifier = Modifier.weight(1f)
@@ -625,24 +625,21 @@ fun GlobalSearchSheet(
                     contentPadding = PaddingValues(16.dp)
                 ) {
                     Text(
-                        text = "Busca instantânea offline",
+                        text = "Pesquisar no portal",
                         color = colors.textPrimary,
                         style = appleType.headline
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        text = "Digite pelo menos 2 caracteres para pesquisar nos dados já carregados e cacheados no dispositivo.",
+                        text = "Digite pelo menos 2 caracteres para buscar disciplinas, horários, atividades ou avisos.",
                         color = colors.textSecondary,
                         style = appleType.footnote
                     )
                     Spacer(Modifier.height(10.dp))
                     val virtualCount = virtualOverview?.courses?.size ?: 0
                     val assignCount = virtualOverview?.upcomingAssignments?.size ?: 0
-                    val materialCount = virtualCourseDetails.values.sumOf { d ->
-                        d.modules.sumOf { it.topics.size }
-                    }
                     Text(
-                        text = "${subjects.size} disciplinas · $virtualCount salas virtuais · $assignCount tarefas · $materialCount materiais em cache",
+                        text = "${subjects.size} disciplinas · $virtualCount salas virtuais · $assignCount tarefas",
                         color = colors.accent,
                         style = appleType.caption1,
                         fontWeight = FontWeight.Medium

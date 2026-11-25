@@ -497,7 +497,7 @@ fun AcademicScreen(
                                     AppleEmptyState(
                                         icon = PortalIcons.Calendar,
                                         title = "Sem aulas exibidas",
-                                        subtitle = "O quadro de horários retornou vazio no portal neste momento (comum fora do horário letivo ou fins de semana)."
+                                        subtitle = "Nenhum horário disponível no momento."
                                     )
                                 }
                             } else if (parsedEntries.isNotEmpty() && parsedEntries.any { it.dayOfWeekIso > 0 }) {

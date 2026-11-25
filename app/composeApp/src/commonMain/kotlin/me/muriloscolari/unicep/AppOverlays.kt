@@ -215,7 +215,7 @@ internal fun AppSheetsAndDialogsHost(
                         AppleProgressBar(progress = updateProgress, color = colors.accent)
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            text = "Baixando APK (${(updateProgress * 100).toInt()}%)…",
+                            text = "Baixando atualização (${(updateProgress * 100).toInt()}%)…",
                             color = colors.textSecondary,
                             style = LocalAppleTypography.current.caption1
                         )
@@ -253,7 +253,7 @@ internal fun AppSheetsAndDialogsHost(
                                 color = colors.accent,
                                 trackColor = colors.accentSoft
                             )
-                            Text("Baixando APK (${(updateProgress * 100).toInt()}%)...", fontSize = 12.sp)
+                            Text("Baixando atualização (${(updateProgress * 100).toInt()}%)...", fontSize = 12.sp)
                         } else if (!updateStatusMessage.isNullOrBlank() && updateStatusMessage.contains("Permita", ignoreCase = true)) {
                             Text(updateStatusMessage, color = colors.orange, fontSize = 12.5.sp)
                         }

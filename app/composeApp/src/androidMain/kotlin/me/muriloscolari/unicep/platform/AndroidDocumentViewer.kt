@@ -802,7 +802,7 @@ private fun UnsupportedDocumentFallback(
                 color = colors.textPrimary
             )
             Text(
-                text = "Tamanho: $sizeLabel • Este formato não possui pré-visualização nativa embutida.",
+                text = "$sizeLabel • Não é possível visualizar este formato aqui.",
                 style = appleType.footnote,
                 color = colors.textSecondary
             )
@@ -815,7 +815,7 @@ private fun UnsupportedDocumentFallback(
             ) {
                 Icon(PortalIcons.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Baixar na pasta configurada")
+                Text("Baixar arquivo")
             }
             OutlinedButton(
                 onClick = onOpenExternal,

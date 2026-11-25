@@ -226,7 +226,7 @@ fun SplashLoadingScreen() {
                     Icon(PortalIcons.Academic, contentDescription = null, tint = Color.White, modifier = Modifier.size(30.dp))
                 }
                 CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp, color = colors.accent)
-                Text("Conectando automaticamente...", color = colors.textSecondary, fontSize = 13.sp)
+                Text("Entrando…", color = colors.textSecondary, fontSize = 13.sp)
             }
         }
         return
@@ -357,7 +357,7 @@ fun LoginScreen(
                     PortalTextField(
                         value = ra,
                         onValueChange = { if (it.length <= 11) ra = it },
-                        label = "RA (usuário)",
+                        label = "RA",
                         leadingIcon = PortalIcons.Person,
                         modifier = Modifier.onPreviewKeyEvent { ev ->
                             if (ev.type == KeyEventType.KeyDown && (ev.key == Key.Enter || ev.key == Key.NumPadEnter)) {
@@ -570,7 +570,7 @@ fun LoginScreen(
                                 GroupedLoginFieldRow(
                                     value = ra,
                                     onValueChange = { if (it.length <= 11) ra = it },
-                                    placeholder = "RA (usuário)",
+                                    placeholder = "RA",
                                     icon = PortalIcons.Person,
                                     inputModifier = Modifier.onPreviewKeyEvent { ev ->
                                         if (ev.type == KeyEventType.KeyDown && (ev.key == Key.Enter || ev.key == Key.NumPadEnter)) {
