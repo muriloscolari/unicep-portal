@@ -117,10 +117,19 @@ Sempre execute os checks relevantes antes de commitar ou publicar:
    - O script compila a imagem e envia para `git.muriloscolari.me/murilo/unicep-portal:latest`.
    - No homelab (`192.168.0.30` em `~/docker/portal-unicep`), o container `unicep-watchtower` verifica novas imagens a cada 5 minutos (`300s`) e reinicia `unicep-portal` automaticamente mantendo o volume `unicep_data`.
 3. **Nova Release do App Android (Auto-Update In-App):**
-   - Incremente `versionCode` e `versionName` em `app/androidApp/build.gradle.kts` (ex: `1.2.2`).
+   - Incremente `versionCode` e `versionName` em `app/androidApp/build.gradle.kts` (ex: `1.12.3`).
    - Compile o APK release (`cd app && ./gradlew :androidApp:assembleRelease`).
-   - Crie a tag (`git tag -a v1.2.2 -m "..."`), faça push (`git push origin main v1.2.2`) e publique a release no Forgejo com o APK anexado:
+   - Faça commit e push **apenas da branch `main`** (`git push origin main`).
+   - **Atenção (peculiaridade do Forgejo):** **NÃO** crie nem faça `git push` da tag antes de publicar a release. Quando a tag já existe no remoto antes do `tea release create`, o Forgejo pode gravar a release com `published_at = 1969-12-31` (epoch `0`), fazendo o endpoint `/api/v1/repos/murilo/unicep-portal/releases/latest` continuar retornando a versão anterior e quebrando o auto-update no Android.
+   - Deixe o próprio `tea release create` criar a tag na branch `main` e anexar o APK:
      ```bash
-     tea release create --tag v1.2.2 --title "UNICEP Portal v1.2.2" --note "Resumo das novidades" --asset app/androidApp/build/outputs/apk/release/androidApp-release.apk
+     tea release create v1.12.3 app/androidApp/build/outputs/apk/release/androidApp-release.apk \
+       --target main \
+       --title "UNICEP Portal v1.12.3" \
+       --notes "Resumo das novidades"
      ```
-   - Assim que a release estiver no ar, todos os celulares com o app instalado detectarão automaticamente a atualização ao abrir o aplicativo.
+   - Após publicar, valide que a API já aponta para a nova versão com timestamp atual e o APK anexado:
+     ```bash
+     curl -sS https://git.muriloscolari.me/api/v1/repos/murilo/unicep-portal/releases/latest | grep -oE '"tag_name":"[^"]+"|"published_at":"[^"]+"'
+     ```
+   - Assim que `/releases/latest` retornar a nova tag, todos os celulares com o app instalado detectarão automaticamente a atualização ao abrir o aplicativo.
