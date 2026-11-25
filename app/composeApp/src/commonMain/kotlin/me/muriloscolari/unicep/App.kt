@@ -153,7 +153,6 @@ fun App(initialTab: Int = 0) {
     var ignoringBatteryOptimizations by remember {
         mutableStateOf(PlatformBridge.isIgnoringBatteryOptimizations())
     }
-    var showBatteryOptDialog by remember { mutableStateOf(false) }
     var selectedCalendarDate by remember { mutableStateOf(currentLocalCalendarDate()) }
     var showCalendarEditor by remember { mutableStateOf(false) }
     var editingCalendarEvent by remember { mutableStateOf<UserCalendarEvent?>(null) }
@@ -534,10 +533,6 @@ fun App(initialTab: Int = 0) {
             showUpdateDialog = false
             true
         }
-        showBatteryOptDialog -> {
-            showBatteryOptDialog = false
-            true
-        }
         confirmLogoutDialog -> {
             confirmLogoutDialog = false
             true
@@ -585,7 +580,6 @@ fun App(initialTab: Int = 0) {
     val hasAnyOverlay = state.activeDocumentViewer != null ||
         backOverlayController.hasOverlay ||
         confirmLogoutDialog ||
-        showBatteryOptDialog ||
         confirmDeleteCalendarEvent != null ||
         showCalendarEditor ||
         showUpdateDialog ||
@@ -691,12 +685,7 @@ fun App(initialTab: Int = 0) {
 
     LaunchedEffect(state.loggedIn) {
         if (state.loggedIn && PlatformBridge.supportsBackgroundBatterySettings()) {
-            val ignoring = PlatformBridge.isIgnoringBatteryOptimizations()
-            ignoringBatteryOptimizations = ignoring
-            if (!ignoring && PlatformBridge.getString(PrefKeys.BATTERY_OPT_PROMPTED) != "1") {
-                PlatformBridge.putString(PrefKeys.BATTERY_OPT_PROMPTED, "1")
-                showBatteryOptDialog = true
-            }
+            ignoringBatteryOptimizations = PlatformBridge.isIgnoringBatteryOptimizations()
         }
     }
 
@@ -943,6 +932,8 @@ fun App(initialTab: Int = 0) {
                     onTestNotification = { scope.launch { repo.sendTestNotification() } },
                     freqAlertThreshold = state.freqAlertThreshold,
                     onSelectFreqAlertThreshold = { repo.setFrequencyAlertThreshold(it) },
+                    bgSyncIntervalMinutes = state.bgSyncIntervalMinutes,
+                    onSelectBgSyncInterval = { repo.setBackgroundSyncIntervalMinutes(it) },
                     virtualNotifyNewAssignment = state.virtualNotifyNewAssignment,
                     onToggleVirtualNotifyNewAssignment = { scope.launch { repo.setVirtualNotifyNewAssignment(it) } },
                     virtualDeadlineLeadHours = state.virtualDeadlineLeadHours,
@@ -959,7 +950,7 @@ fun App(initialTab: Int = 0) {
                     onCheckUpdate = { checkAppUpdate(manual = true) },
                     onInstallUpdate = { installAppUpdate() },
                     ignoringBatteryOptimizations = ignoringBatteryOptimizations,
-                    onRequestBackgroundBattery = { PlatformBridge.requestIgnoreBatteryOptimizations() },
+                    onRequestBackgroundBattery = { PlatformBridge.openAppBackgroundSettings() },
                     onLogout = { scope.launch { repo.logout() } },
                     loading = state.loading,
                     listState = centralListState,
@@ -1584,20 +1575,6 @@ fun App(initialTab: Int = 0) {
                             }
                         }
                     }
-                }
-
-                if (showBatteryOptDialog) {
-                    AppleAlert(
-                        title = "Notificações com app fechado",
-                        message = "Para receber alertas de novas notas, materiais e atividades da Sala Virtual mesmo com o aplicativo fechado, permita que o UNICEP Portal rode sem restrição de bateria.",
-                        confirmText = "Permitir",
-                        dismissText = "Agora não",
-                        onConfirm = {
-                            showBatteryOptDialog = false
-                            PlatformBridge.requestIgnoreBatteryOptimizations()
-                        },
-                        onDismiss = { showBatteryOptDialog = false }
-                    )
                 }
 
                 state.documentLoadingLabel?.let { label ->

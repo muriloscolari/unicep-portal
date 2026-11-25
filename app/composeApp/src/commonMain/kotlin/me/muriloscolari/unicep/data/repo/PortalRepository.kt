@@ -57,6 +57,9 @@ object PrefKeys {
     const val CALENDAR_REMINDERS_NOTIFIED = "calendar_reminders_notified_json"
     const val LAST_BG_FULL_SYNC_MS = "last_bg_full_sync_ms"
     const val CALENDAR_ALARM_IDS = "calendar_alarm_ids_json"
+    const val CALENDAR_ALARMS_SIGNATURE = "calendar_alarms_signature"
+    const val BG_SYNC_INTERVAL_MINUTES = "bg_sync_interval_minutes"
+    const val BG_SYNC_SCHEDULE_SPEC = "bg_sync_schedule_spec"
     const val BATTERY_OPT_PROMPTED = "battery_opt_prompted"
 }
 
@@ -108,6 +111,7 @@ data class PortalUiState(
     val serverUrl: String = PlatformBridge.capabilities().defaultServerUrl,
     val stylePreference: DesignStylePreference = DesignStylePreference.AUTO,
     val freqAlertThreshold: Int = 80,
+    val bgSyncIntervalMinutes: Int = DEFAULT_BG_SYNC_INTERVAL_MINUTES,
     val downloadFolderLabel: String = PlatformBridge.getDownloadFolderLabel(),
     val virtualNotifyNewAssignment: Boolean = true,
     val virtualDeadlineLeadHours: List<Int> = DEFAULT_VIRTUAL_DEADLINE_LEAD_HOURS,
@@ -178,6 +182,7 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
                 ?: PlatformBridge.capabilities().defaultServerUrl,
             stylePreference = loadStylePreference(),
             freqAlertThreshold = readFrequencyAlertThreshold(),
+            bgSyncIntervalMinutes = readBackgroundSyncIntervalMinutes(),
             downloadFolderLabel = PlatformBridge.getDownloadFolderLabel(),
             virtualNotifyNewAssignment = readVirtualNotifyNewAssignment(),
             virtualDeadlineLeadHours = readVirtualDeadlineLeadHours()
@@ -201,6 +206,14 @@ class PortalRepository(private val api: PortalApiClient = PortalApiClient()) {
         _state.update { it.copy(freqAlertThreshold = clean) }
         _state.value.dashboard?.currentReport?.items?.let { items ->
             evaluateFrequencyAlerts(items, clean)
+        }
+    }
+
+    fun setBackgroundSyncIntervalMinutes(minutes: Int) {
+        val saved = saveBackgroundSyncIntervalMinutes(minutes)
+        _state.update { it.copy(bgSyncIntervalMinutes = saved) }
+        if (!PlatformBridge.getString(PrefKeys.JWT_TOKEN).isNullOrBlank()) {
+            PlatformBridge.scheduleGradeSync()
         }
     }
 

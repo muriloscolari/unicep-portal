@@ -58,7 +58,10 @@ import me.muriloscolari.unicep.data.api.DashboardResponse
 import me.muriloscolari.unicep.data.api.FinanceResponse
 import me.muriloscolari.unicep.data.api.NotificationItem
 import me.muriloscolari.unicep.data.api.ServicesResponse
+import me.muriloscolari.unicep.data.repo.DEFAULT_BG_SYNC_INTERVAL_MINUTES
 import me.muriloscolari.unicep.data.repo.DEFAULT_VIRTUAL_DEADLINE_LEAD_HOURS
+import me.muriloscolari.unicep.data.repo.PRESET_BG_SYNC_INTERVAL_MINUTES
+import me.muriloscolari.unicep.data.repo.formatBackgroundSyncIntervalLabel
 import me.muriloscolari.unicep.data.repo.PRESET_VIRTUAL_DEADLINE_HOURS
 import me.muriloscolari.unicep.data.repo.formatLeadHoursLabel
 import me.muriloscolari.unicep.platform.AppUpdateInfo
@@ -110,6 +113,8 @@ fun CentralScreen(
     onTestNotification: () -> Unit,
     freqAlertThreshold: Int = 80,
     onSelectFreqAlertThreshold: (Int) -> Unit = {},
+    bgSyncIntervalMinutes: Int = DEFAULT_BG_SYNC_INTERVAL_MINUTES,
+    onSelectBgSyncInterval: (Int) -> Unit = {},
     virtualNotifyNewAssignment: Boolean = true,
     onToggleVirtualNotifyNewAssignment: (Boolean) -> Unit = {},
     virtualDeadlineLeadHours: List<Int> = DEFAULT_VIRTUAL_DEADLINE_LEAD_HOURS,
@@ -327,23 +332,30 @@ fun CentralScreen(
                                 onToggleLeadHour = onToggleVirtualDeadlineLeadHour,
                                 onAddCustomLeadHour = onAddCustomVirtualDeadlineHour
                             )
+                            if (!capabilities.isWeb) {
+                                PortalDivider(Modifier.padding(start = 58.dp))
+                                BackgroundSyncIntervalRow(
+                                    selectedIntervalMinutes = bgSyncIntervalMinutes,
+                                    onSelect = onSelectBgSyncInterval
+                                )
+                            }
                             if (PlatformBridge.supportsBackgroundBatterySettings()) {
                                 PortalDivider(Modifier.padding(start = 58.dp))
                                 PortalListRow(
-                                    title = "Notificações com app fechado",
+                                    title = "Modo de bateria no Android",
                                     subtitle = if (ignoringBatteryOptimizations) {
-                                        "Sem restrição de bateria (verificação contínua ativa)"
+                                        "Sem restrição (consome mais bateria em standby). Toque para mudar para Otimizado."
                                     } else {
-                                        "Toque para liberar bateria em segundo plano no aparelho"
+                                        "Otimizado pelo Android (recomendado para economizar bateria em standby)"
                                     },
                                     leadingIcon = PortalIcons.Bell,
-                                    leadingTint = if (ignoringBatteryOptimizations) colors.green else colors.orange,
+                                    leadingTint = if (ignoringBatteryOptimizations) colors.orange else colors.green,
                                     onClick = onRequestBackgroundBattery,
                                     showChevron = false,
                                     trailing = {
                                         PortalBadge(
-                                            text = if (ignoringBatteryOptimizations) "Ativo" else "Liberar",
-                                            color = if (ignoringBatteryOptimizations) colors.green else colors.orange
+                                            text = if (ignoringBatteryOptimizations) "Sem restrição" else "Otimizado",
+                                            color = if (ignoringBatteryOptimizations) colors.orange else colors.green
                                         )
                                     }
                                 )
@@ -358,10 +370,13 @@ fun CentralScreen(
                             }
                         }
                         PortalSectionFooter(
-                            text = if (capabilities.isWeb) {
-                                "Verificamos novas notas e Sala Virtual automaticamente a cada 5 minutos no servidor."
-                            } else {
-                                "Verificamos novas notas e Sala Virtual em segundo plano mesmo com o app fechado."
+                            text = when {
+                                capabilities.isWeb ->
+                                    "Verificamos novas notas e Sala Virtual automaticamente a cada 5 minutos no servidor."
+                                bgSyncIntervalMinutes <= 0 ->
+                                    "Sincronização automática em segundo plano desativada. Atualizações são verificadas ao abrir o app."
+                                else ->
+                                    "Sincronizamos em segundo plano via WorkManager respeitando o modo economia/standby do Android."
                             }
                         )
                     }
@@ -689,6 +704,67 @@ private fun NotificationAlertRow(n: NotificationItem) {
                 color = colors.textSecondary,
                 style = appleType.footnote
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun BackgroundSyncIntervalRow(
+    selectedIntervalMinutes: Int,
+    onSelect: (Int) -> Unit
+) {
+    val colors = LocalPortalColors.current
+    val appleType = LocalAppleTypography.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+    ) {
+        Text(
+            text = "Frequência em segundo plano",
+            color = colors.textPrimary,
+            style = appleType.body,
+            fontWeight = FontWeight.Medium
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = if (selectedIntervalMinutes <= 0) {
+                "Economia máxima: verifica atualizações somente ao abrir o aplicativo"
+            } else {
+                "WorkManager sem alarme WAKEUP a cada ${formatBackgroundSyncIntervalLabel(selectedIntervalMinutes)} (agrupado em standby)"
+            },
+            color = colors.textSecondary,
+            style = appleType.footnote
+        )
+        Spacer(Modifier.height(10.dp))
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            PRESET_BG_SYNC_INTERVAL_MINUTES.forEach { minutes ->
+                val selected = selectedIntervalMinutes == minutes
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (selected) colors.accent else colors.surfaceSecondary)
+                        .pointerHoverIcon(PointerIcon.Hand)
+                        .clickable {
+                            PlatformBridge.performHaptic(PortalHapticType.SELECTION)
+                            onSelect(minutes)
+                        }
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = formatBackgroundSyncIntervalLabel(minutes),
+                        color = if (selected) Color.White else colors.textPrimary,
+                        style = appleType.footnote,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
+                    )
+                }
+            }
         }
     }
 }

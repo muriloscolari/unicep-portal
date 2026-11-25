@@ -14,6 +14,8 @@ import javax.crypto.spec.GCMParameterSpec
 internal class AndroidSecureStore(context: Context) {
     private val prefs: SharedPreferences =
         context.getSharedPreferences("unicep_secure_prefs", Context.MODE_PRIVATE)
+    @Volatile
+    private var cachedKey: SecretKey? = null
 
     fun getString(key: String): String? {
         val raw = prefs.getString(key, null) ?: return null
@@ -36,9 +38,13 @@ internal class AndroidSecureStore(context: Context) {
 
     @Synchronized
     private fun getOrCreateKey(): SecretKey {
+        cachedKey?.let { return it }
         val ks = KeyStore.getInstance(KEYSTORE_PROVIDER).apply { load(null) }
         val existing = ks.getKey(KEY_ALIAS, null) as? SecretKey
-        if (existing != null) return existing
+        if (existing != null) {
+            cachedKey = existing
+            return existing
+        }
 
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEYSTORE_PROVIDER)
         val spec = KeyGenParameterSpec.Builder(
@@ -50,7 +56,7 @@ internal class AndroidSecureStore(context: Context) {
             .setKeySize(256)
             .build()
         generator.init(spec)
-        return generator.generateKey()
+        return generator.generateKey().also { cachedKey = it }
     }
 
     private fun encrypt(plaintext: String): String {

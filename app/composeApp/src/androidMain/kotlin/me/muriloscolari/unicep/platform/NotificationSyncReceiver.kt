@@ -3,14 +3,10 @@ package me.muriloscolari.unicep.platform
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
-import android.os.PowerManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import me.muriloscolari.unicep.data.api.UserCalendarEvent
 import me.muriloscolari.unicep.data.repo.PrefKeys
@@ -31,6 +27,7 @@ class NotificationSyncReceiver : BroadcastReceiver() {
             Intent.ACTION_MY_PACKAGE_REPLACED,
             Intent.ACTION_TIME_CHANGED,
             Intent.ACTION_TIMEZONE_CHANGED -> {
+                NotificationSyncScheduler.cancelSyncAlarm(appCtx)
                 val token = PlatformBridge.getString(PrefKeys.JWT_TOKEN)
                 if (!token.isNullOrBlank()) {
                     NotificationSyncScheduler.schedulePeriodicSync(appCtx)
@@ -40,6 +37,8 @@ class NotificationSyncReceiver : BroadcastReceiver() {
                             json.decodeFromString<List<UserCalendarEvent>>(rawEvents)
                         }.getOrNull().orEmpty()
                         if (events.isNotEmpty()) {
+                            // Reboot / time change clears system alarms; clear signature so they are re-armed.
+                            PlatformBridge.remove(PrefKeys.CALENDAR_ALARMS_SIGNATURE)
                             PlatformBridge.syncCalendarReminders(events)
                         }
                     }
@@ -71,56 +70,15 @@ class NotificationSyncReceiver : BroadcastReceiver() {
             }
 
             NotificationSyncScheduler.ACTION_BACKGROUND_SYNC -> {
+                // Legacy alarm from <= 1.12.2: disarm permanently and rely solely on WorkManager.
+                NotificationSyncScheduler.cancelSyncAlarm(appCtx)
                 val token = PlatformBridge.getString(PrefKeys.JWT_TOKEN)
                 if (token.isNullOrBlank()) {
                     NotificationSyncScheduler.cancelPeriodicSync(appCtx)
-                    return
-                }
-
-                // Re-arm the next wake-up immediately so the chain never breaks.
-                NotificationSyncScheduler.scheduleNextSyncAlarm(appCtx)
-
-                if (!isNetworkAvailable(appCtx)) {
-                    BackgroundSyncEngine.evaluateCachedCalendarReminders(appCtx)
-                    NotificationSyncScheduler.enqueueImmediateFallbackSync(appCtx)
-                    return
-                }
-
-                val pending = goAsync()
-                val pm = appCtx.getSystemService(Context.POWER_SERVICE) as? PowerManager
-                val wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "unicep:bg_sync")?.apply {
-                    setReferenceCounted(false)
-                    runCatching { acquire(10_000L) }
-                }
-
-                CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-                    try {
-                        val outcome = withTimeoutOrNull(7_500L) {
-                            BackgroundSyncEngine.sync(appCtx, fastOnly = true)
-                        }
-                        if (outcome == null ||
-                            outcome == SyncOutcome.RETRY_NEEDED ||
-                            BackgroundSyncEngine.isFullSyncDue()
-                        ) {
-                            NotificationSyncScheduler.enqueueImmediateFallbackSync(appCtx)
-                        }
-                    } finally {
-                        runCatching {
-                            if (wakeLock != null && wakeLock.isHeld) {
-                                wakeLock.release()
-                            }
-                        }
-                        pending.finish()
-                    }
+                } else {
+                    NotificationSyncScheduler.schedulePeriodicSync(appCtx)
                 }
             }
         }
-    }
-
-    private fun isNetworkAvailable(context: Context): Boolean {
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
-        val network = cm.activeNetwork ?: return false
-        val caps = cm.getNetworkCapabilities(network) ?: return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 }

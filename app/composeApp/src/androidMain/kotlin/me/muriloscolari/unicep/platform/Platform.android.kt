@@ -42,14 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
-import androidx.work.Constraints
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
-import androidx.work.workDataOf
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.okhttp.OkHttp
 import java.io.File
@@ -58,13 +51,15 @@ import java.lang.ref.WeakReference
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import me.muriloscolari.unicep.data.api.UserCalendarEvent
+import me.muriloscolari.unicep.data.repo.MAX_SCHEDULED_CALENDAR_REMINDERS
+import me.muriloscolari.unicep.data.repo.PrefKeys
+import me.muriloscolari.unicep.data.repo.buildCalendarTriggerSignature
 import me.muriloscolari.unicep.data.repo.computeUpcomingReminderTriggers
 
 actual object PlatformBridge {
@@ -452,45 +447,31 @@ actual object PlatformBridge {
 
     actual fun syncCalendarReminders(events: List<UserCalendarEvent>) {
         val ctx = appContext ?: return
-        val wm = WorkManager.getInstance(ctx)
-        wm.cancelAllWorkByTag(CALENDAR_REMINDER_TAG)
-
         val nowMs = System.currentTimeMillis()
         val offsetMins = currentLocalDateTime().utcOffsetMinutes
         val triggers = computeUpcomingReminderTriggers(
             events = events,
             nowMillis = nowMs,
             utcOffsetMinutes = offsetMins
-        ).take(60)
+        ).take(MAX_SCHEDULED_CALENDAR_REMINDERS)
 
-        triggers.forEach { rem ->
-            val delayMs = (rem.triggerAtMillis - nowMs).coerceAtLeast(1_000L)
-            val data = workDataOf(
-                CalendarReminderWorker.KEY_EVENT_ID to rem.eventId,
-                CalendarReminderWorker.KEY_REMINDER_KEY to rem.reminderKey,
-                CalendarReminderWorker.KEY_NOTIF_ID to rem.notifId,
-                CalendarReminderWorker.KEY_TITLE to rem.title,
-                CalendarReminderWorker.KEY_BODY to rem.body
-            )
-            val req = OneTimeWorkRequestBuilder<CalendarReminderWorker>()
-                .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
-                .addTag(CALENDAR_REMINDER_TAG)
-                .setInputData(data)
-                .build()
-            wm.enqueueUniqueWork(
-                "cal_rem_${rem.reminderKey}",
-                ExistingWorkPolicy.REPLACE,
-                req
-            )
+        val signature = buildCalendarTriggerSignature(triggers)
+        if (signature == getString(PrefKeys.CALENDAR_ALARMS_SIGNATURE)) {
+            return
         }
 
+        // Clean up any legacy WorkManager duplicates from versions <= 1.12.2;
+        // calendar reminders are delivered exclusively via AlarmManager.
+        WorkManager.getInstance(ctx).cancelAllWorkByTag(CALENDAR_REMINDER_TAG)
         NotificationSyncScheduler.scheduleCalendarAlarms(ctx, triggers)
+        putStringSync(PrefKeys.CALENDAR_ALARMS_SIGNATURE, signature)
     }
 
     actual fun cancelAllCalendarReminders() {
         val ctx = appContext ?: return
         WorkManager.getInstance(ctx).cancelAllWorkByTag(CALENDAR_REMINDER_TAG)
         NotificationSyncScheduler.cancelCalendarAlarms(ctx)
+        remove(PrefKeys.CALENDAR_ALARMS_SIGNATURE)
     }
 
     actual fun requestNotificationPermissionIfNeeded() {
@@ -518,22 +499,7 @@ actual object PlatformBridge {
         return pm.isIgnoringBatteryOptimizations(ctx.packageName)
     }
 
-    actual fun requestIgnoreBatteryOptimizations(): Boolean {
-        val ctx = appContext ?: return false
-        val hostCtx = activityRef?.get() ?: ctx
-        val reqIntent = Intent(
-            android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-            Uri.parse("package:${ctx.packageName}")
-        ).apply {
-            if (hostCtx !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        val launched = runCatching {
-            hostCtx.startActivity(reqIntent)
-            true
-        }.getOrDefault(false)
-        if (launched) return true
-        return openAppBackgroundSettings()
-    }
+    actual fun requestIgnoreBatteryOptimizations(): Boolean = openAppBackgroundSettings()
 
     actual fun openAppBackgroundSettings(): Boolean {
         val ctx = appContext ?: return false

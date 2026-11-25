@@ -14,7 +14,6 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import me.muriloscolari.unicep.data.repo.PrefKeys
 
 class GradeSyncWorker(
     private val appContext: Context,
@@ -23,20 +22,10 @@ class GradeSyncWorker(
 
     override suspend fun doWork(): Result {
         PlatformBridge.initContext(appContext)
-        return when (BackgroundSyncEngine.sync(appContext, fastOnly = false)) {
-            SyncOutcome.SUCCESS -> {
-                if (!PlatformBridge.getString(PrefKeys.JWT_TOKEN).isNullOrBlank()) {
-                    NotificationSyncScheduler.scheduleNextSyncAlarm(appContext)
-                }
-                Result.success()
-            }
+        return when (BackgroundSyncEngine.sync(appContext)) {
+            SyncOutcome.SUCCESS -> Result.success()
             SyncOutcome.NO_SESSION -> Result.success()
-            SyncOutcome.RETRY_NEEDED -> {
-                if (!PlatformBridge.getString(PrefKeys.JWT_TOKEN).isNullOrBlank()) {
-                    NotificationSyncScheduler.scheduleNextSyncAlarm(appContext)
-                }
-                Result.retry()
-            }
+            SyncOutcome.RETRY_NEEDED -> Result.retry()
         }
     }
 

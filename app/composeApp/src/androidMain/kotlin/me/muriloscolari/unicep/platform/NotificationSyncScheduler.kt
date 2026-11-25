@@ -8,22 +8,21 @@ import android.os.Build
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import me.muriloscolari.unicep.data.repo.PrefKeys
 import me.muriloscolari.unicep.data.repo.ScheduledCalendarReminder
+import me.muriloscolari.unicep.data.repo.computeFlexIntervalMinutes
+import me.muriloscolari.unicep.data.repo.readBackgroundSyncIntervalMinutes
 import java.util.concurrent.TimeUnit
 
 internal object NotificationSyncScheduler {
+    // Kept only to cancel legacy RTC_WAKEUP alarms scheduled by versions <= 1.12.2.
     const val ACTION_BACKGROUND_SYNC = "me.muriloscolari.unicep.ACTION_BACKGROUND_SYNC"
     const val ACTION_CALENDAR_REMINDER = "me.muriloscolari.unicep.ACTION_CALENDAR_REMINDER"
-    const val SYNC_ALARM_INTERVAL_MS = 10L * 60_000L
 
     private const val REQ_CODE_BACKGROUND_SYNC = 41_001
     private const val UNIQUE_PERIODIC_WORK = "unicep_grade_sync"
@@ -34,40 +33,58 @@ internal object NotificationSyncScheduler {
         coerceInputValues = true
     }
 
-    fun schedulePeriodicSync(context: Context) {
+    fun schedulePeriodicSync(context: Context, forceUpdate: Boolean = false) {
         val appCtx = context.applicationContext
         PlatformBridge.initContext(appCtx)
 
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
-        val request = PeriodicWorkRequestBuilder<GradeSyncWorker>(15, TimeUnit.MINUTES)
-            .setConstraints(constraints)
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
-            .build()
+        // Always disarm any legacy AlarmManager RTC_WAKEUP polling loop.
+        cancelSyncAlarm(appCtx)
 
-        WorkManager.getInstance(appCtx).enqueueUniquePeriodicWork(
-            UNIQUE_PERIODIC_WORK,
-            ExistingPeriodicWorkPolicy.UPDATE,
-            request
-        )
-
-        scheduleNextSyncAlarm(appCtx, SYNC_ALARM_INTERVAL_MS)
-    }
-
-    fun scheduleNextSyncAlarm(context: Context, delayMs: Long = SYNC_ALARM_INTERVAL_MS) {
-        val appCtx = context.applicationContext
-        PlatformBridge.initContext(appCtx)
         val token = PlatformBridge.getString(PrefKeys.JWT_TOKEN)
         if (token.isNullOrBlank()) {
-            cancelSyncAlarm(appCtx)
+            cancelPeriodicSync(appCtx)
             return
         }
 
-        val am = appCtx.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
-        val pi = buildSyncAlarmPendingIntent(appCtx, create = true) ?: return
-        val triggerAt = System.currentTimeMillis() + delayMs.coerceAtLeast(60_000L)
-        am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pi)
+        val wm = WorkManager.getInstance(appCtx)
+        val intervalMinutes = readBackgroundSyncIntervalMinutes()
+        if (intervalMinutes <= 0) {
+            wm.cancelUniqueWork(UNIQUE_PERIODIC_WORK)
+            wm.cancelUniqueWork(UNIQUE_NOW_WORK)
+            PlatformBridge.putString(PrefKeys.BG_SYNC_SCHEDULE_SPEC, "disabled")
+            return
+        }
+
+        val flexMinutes = computeFlexIntervalMinutes(intervalMinutes)
+        val spec = "wm_v2_${intervalMinutes}_${flexMinutes}"
+        val previousSpec = PlatformBridge.getString(PrefKeys.BG_SYNC_SCHEDULE_SPEC)
+        val policy = if (forceUpdate || previousSpec != spec) {
+            ExistingPeriodicWorkPolicy.UPDATE
+        } else {
+            ExistingPeriodicWorkPolicy.KEEP
+        }
+
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .setRequiresBatteryNotLow(true)
+            .build()
+
+        val request = PeriodicWorkRequestBuilder<GradeSyncWorker>(
+            intervalMinutes.toLong(),
+            TimeUnit.MINUTES,
+            flexMinutes,
+            TimeUnit.MINUTES
+        )
+            .setConstraints(constraints)
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 5, TimeUnit.MINUTES)
+            .build()
+
+        wm.enqueueUniquePeriodicWork(
+            UNIQUE_PERIODIC_WORK,
+            policy,
+            request
+        )
+        PlatformBridge.putString(PrefKeys.BG_SYNC_SCHEDULE_SPEC, spec)
     }
 
     fun cancelPeriodicSync(context: Context) {
@@ -76,24 +93,14 @@ internal object NotificationSyncScheduler {
         wm.cancelUniqueWork(UNIQUE_PERIODIC_WORK)
         wm.cancelUniqueWork(UNIQUE_NOW_WORK)
         cancelSyncAlarm(appCtx)
+        PlatformBridge.remove(PrefKeys.BG_SYNC_SCHEDULE_SPEC)
     }
 
-    fun enqueueImmediateFallbackSync(context: Context) {
-        val appCtx = context.applicationContext
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
-        val builder = OneTimeWorkRequestBuilder<GradeSyncWorker>()
-            .setConstraints(constraints)
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-        }
-        WorkManager.getInstance(appCtx).enqueueUniqueWork(
-            UNIQUE_NOW_WORK,
-            ExistingWorkPolicy.REPLACE,
-            builder.build()
-        )
+    fun cancelSyncAlarm(context: Context) {
+        val am = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        val pi = buildSyncAlarmPendingIntent(context) ?: return
+        am.cancel(pi)
+        pi.cancel()
     }
 
     fun scheduleCalendarAlarms(context: Context, triggers: List<ScheduledCalendarReminder>) {
@@ -164,22 +171,15 @@ internal object NotificationSyncScheduler {
         PlatformBridge.remove(PrefKeys.CALENDAR_ALARM_IDS)
     }
 
-    private fun cancelSyncAlarm(context: Context) {
-        val am = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
-        val pi = buildSyncAlarmPendingIntent(context, create = false) ?: return
-        am.cancel(pi)
-        pi.cancel()
-    }
-
-    private fun buildSyncAlarmPendingIntent(context: Context, create: Boolean): PendingIntent? {
+    private fun buildSyncAlarmPendingIntent(context: Context): PendingIntent? {
         val intent = Intent(context, NotificationSyncReceiver::class.java).apply {
             action = ACTION_BACKGROUND_SYNC
         }
-        val flags = if (create) {
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        } else {
+        return PendingIntent.getBroadcast(
+            context,
+            REQ_CODE_BACKGROUND_SYNC,
+            intent,
             PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
-        }
-        return PendingIntent.getBroadcast(context, REQ_CODE_BACKGROUND_SYNC, intent, flags)
+        )
     }
 }

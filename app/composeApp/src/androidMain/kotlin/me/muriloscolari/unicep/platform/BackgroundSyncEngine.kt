@@ -9,10 +9,12 @@ import me.muriloscolari.unicep.data.api.LoginRequest
 import me.muriloscolari.unicep.data.api.PortalApiClient
 import me.muriloscolari.unicep.data.api.UnauthorizedException
 import me.muriloscolari.unicep.data.api.UserCalendarEvent
+import me.muriloscolari.unicep.data.repo.BG_FULL_SYNC_INTERVAL_MS
 import me.muriloscolari.unicep.data.repo.PrefKeys
 import me.muriloscolari.unicep.data.repo.evaluateCalendarReminders
 import me.muriloscolari.unicep.data.repo.evaluateFrequencyAlerts
 import me.muriloscolari.unicep.data.repo.evaluateVirtualDeadlineAlerts
+import me.muriloscolari.unicep.data.repo.isQuietHoursForFullSync
 import me.muriloscolari.unicep.data.repo.readFrequencyAlertThreshold
 import me.muriloscolari.unicep.data.repo.readVirtualDeadlineLeadHours
 import me.muriloscolari.unicep.data.repo.readVirtualNotifyNewAssignment
@@ -26,7 +28,6 @@ internal enum class SyncOutcome {
 internal object BackgroundSyncEngine {
     private val syncMutex = Mutex()
     private val calendarLock = Any()
-    private const val FULL_SYNC_INTERVAL_MS = 60L * 60_000L
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -35,10 +36,10 @@ internal object BackgroundSyncEngine {
 
     fun isFullSyncDue(nowMillis: Long = System.currentTimeMillis()): Boolean {
         val last = PlatformBridge.getString(PrefKeys.LAST_BG_FULL_SYNC_MS)?.toLongOrNull() ?: 0L
-        return nowMillis - last >= FULL_SYNC_INTERVAL_MS
+        return nowMillis - last >= BG_FULL_SYNC_INTERVAL_MS
     }
 
-    suspend fun sync(context: Context, fastOnly: Boolean): SyncOutcome = syncMutex.withLock {
+    suspend fun sync(context: Context): SyncOutcome = syncMutex.withLock {
         val appCtx = context.applicationContext
         PlatformBridge.initContext(appCtx)
 
@@ -49,15 +50,11 @@ internal object BackgroundSyncEngine {
             ?.takeIf { it.isNotBlank() }
             ?: return@withLock SyncOutcome.NO_SESSION
 
-        val api = if (fastOnly) {
-            PortalApiClient(
-                connectTimeoutMs = 4_000L,
-                requestTimeoutMs = 6_500L,
-                socketTimeoutMs = 6_500L
-            )
-        } else {
-            PortalApiClient()
-        }
+        val api = PortalApiClient(
+            connectTimeoutMs = 10_000L,
+            requestTimeoutMs = 25_000L,
+            socketTimeoutMs = 25_000L
+        )
 
         try {
             val unread = try {
@@ -122,7 +119,8 @@ internal object BackgroundSyncEngine {
 
             evaluateCachedCalendarReminders(appCtx)
 
-            if (!fastOnly && isFullSyncDue()) {
+            val localNow = PlatformBridge.currentLocalDateTime()
+            if (isFullSyncDue() && !isQuietHoursForFullSync(localNow.hour)) {
                 val freqThreshold = readFrequencyAlertThreshold()
                 if (freqThreshold > 0) {
                     runCatching { api.dashboard(server, token) }.getOrNull()?.let { dash ->
